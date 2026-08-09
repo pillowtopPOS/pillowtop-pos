@@ -197,14 +197,15 @@ export async function createJourney(input: NewJourneyInput) {
   const supabase = createClient();
 
   const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.refreshSession();
 
-  if (userError || !user) {
+  if (sessionError || !session?.user) {
     throw new Error("Not authenticated");
   }
 
+  const user = session.user;
   const customerId = crypto.randomUUID();
 
   const { error: customerError } = await supabase.from("customers").insert({
@@ -239,13 +240,15 @@ export async function recordJourneyEvent(
   const supabase = createClient();
 
   const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.refreshSession();
 
-  if (userError || !user) {
+  if (sessionError || !session?.user) {
     throw new Error("Not authenticated");
   }
+
+  const user = session.user;
 
   const { error } = await supabase.from("journey_events").insert({
     journey_id: journeyId,
@@ -263,13 +266,15 @@ export async function cancelJourney(journeyId: string, reason: string) {
   const supabase = createClient();
 
   const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.refreshSession();
 
-  if (userError || !user) {
+  if (sessionError || !session?.user) {
     throw new Error("Not authenticated");
   }
+
+  const user = session.user;
 
   const { error } = await supabase.from("journey_events").insert({
     journey_id: journeyId,

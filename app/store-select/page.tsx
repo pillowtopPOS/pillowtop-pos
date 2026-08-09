@@ -42,6 +42,10 @@ export default function StoreSelectPage() {
       data: { active_store_id: storeId },
     });
 
+    if (!error) {
+      await supabase.auth.refreshSession();
+    }
+
     setLoading(false);
 
     if (error) {
