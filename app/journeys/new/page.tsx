@@ -64,6 +64,7 @@ export default function NewJourneyPage() {
 
     try {
       await createJourney(form);
+      router.push("/board");
     } catch (e: any) {
       setSaving(false);
       setError(e.message ?? "Failed to create journey");

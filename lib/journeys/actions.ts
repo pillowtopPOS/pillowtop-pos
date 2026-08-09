@@ -3,7 +3,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import type { JourneyEventType } from "./state";
 
 export async function recordEvent(
@@ -115,7 +114,7 @@ export async function createJourney(input: NewJourneyInput) {
   }
 
   revalidatePath("/board");
-  redirect(`/board`);
+  return journey.id as string;
 }
 
 export async function processAutomaticTransitions() {
