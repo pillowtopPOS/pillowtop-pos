@@ -112,6 +112,15 @@ as $$
   select * from public.employees where auth_user_id = auth.uid() limit 1;
 $$;
 
+create or replace function public.current_employee_role()
+returns public.employee_role
+language sql
+security definer
+stable
+as $$
+  select role from public.employees where auth_user_id = auth.uid() limit 1;
+$$;
+
 -- Helper: is the user allowed to see a given store?
 create or replace function public.is_store_visible(check_store_id uuid)
 returns boolean
@@ -123,7 +132,7 @@ declare
   user_role public.employee_role;
   active_store_id uuid;
 begin
-  select role into user_role from public.employees where auth_user_id = auth.uid() limit 1;
+  user_role := public.current_employee_role();
 
   if user_role in ('owner', 'manager') then
     return true;
@@ -180,8 +189,9 @@ create policy "Employees viewable by authenticated users"
   on public.employees for select
   to authenticated
   using (
-    (select role from public.employees where auth_user_id = auth.uid() limit 1) in ('owner','manager')
+    public.current_employee_role() in ('owner','manager')
     or home_store_id = (auth.jwt() -> 'user_metadata' ->> 'active_store_id')::uuid
+    or auth_user_id = auth.uid()
   );
 
 drop policy if exists "Customers viewable by authenticated users" on public.customers;
