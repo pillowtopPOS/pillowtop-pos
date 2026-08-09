@@ -103,9 +103,9 @@ create index if not exists idx_employees_auth_user on public.employees (auth_use
 create index if not exists idx_employees_store on public.employees (home_store_id);
 
 -- Clean up helpers from earlier attempts if present
-drop function if exists public.current_employee();
-drop function if exists public.is_customer_visible(uuid);
-drop function if exists public.is_journey_visible(uuid);
+drop function if exists public.current_employee() cascade;
+drop function if exists public.is_customer_visible(uuid) cascade;
+drop function if exists public.is_journey_visible(uuid) cascade;
 
 -- Helper: current user's role (bypasses RLS)
 create or replace function public.current_employee_role()
