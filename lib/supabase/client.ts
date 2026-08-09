@@ -19,19 +19,28 @@ export function createClient() {
           return parseCookies();
         },
         setAll(cookiesToSet: { name: string; value: string; options?: any }[]) {
+          const isHttp = typeof window !== "undefined" && window.location.protocol === "http:";
           cookiesToSet.forEach(({ name, value, options }) => {
-            let cookie = `${name}=${value}`;
-            if (options) {
-              if (options.domain) cookie += `; Domain=${options.domain}`;
-              if (options.path) cookie += `; Path=${options.path}`;
-              if (typeof options.maxAge === "number")
-                cookie += `; Max-Age=${options.maxAge}`;
-              if (options.expires)
-                cookie += `; Expires=${options.expires.toUTCString()}`;
-              if (options.sameSite)
-                cookie += `; SameSite=${options.sameSite}`;
-              if (options.secure) cookie += `; Secure`;
+            const safeOptions = { ...options };
+            if (isHttp) {
+              safeOptions.secure = false;
+              if (safeOptions.sameSite?.toLowerCase() === "none") {
+                safeOptions.sameSite = "Lax";
+              }
             }
+            safeOptions.path = safeOptions.path ?? "/";
+
+            let cookie = `${name}=${value}`;
+            if (safeOptions.domain) cookie += `; Domain=${safeOptions.domain}`;
+            cookie += `; Path=${safeOptions.path}`;
+            if (typeof safeOptions.maxAge === "number")
+              cookie += `; Max-Age=${safeOptions.maxAge}`;
+            if (safeOptions.expires)
+              cookie += `; Expires=${safeOptions.expires.toUTCString()}`;
+            if (safeOptions.sameSite)
+              cookie += `; SameSite=${safeOptions.sameSite}`;
+            if (safeOptions.secure) cookie += `; Secure`;
+
             document.cookie = cookie;
           });
         },
