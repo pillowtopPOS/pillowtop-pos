@@ -105,7 +105,7 @@ create index if not exists idx_employees_store on public.employees (home_store_i
 -- Helper: current user's employee record (security definer to bypass RLS)
 create or replace function public.current_employee()
 returns public.employees
-language plpgsql
+language sql
 security definer
 stable
 as $$
