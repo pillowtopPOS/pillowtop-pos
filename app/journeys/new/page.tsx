@@ -51,7 +51,10 @@ export default function NewJourneyPage() {
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) {
     const { name, value } = e.target;
-    setForm((f) => ({ ...f, [name]: value === "" ? null : value }));
+    setForm((f) => ({
+      ...f,
+      [name]: name === "assignedEmployeeId" && value === "" ? null : value,
+    }));
   }
 
   async function handleSubmit(e: React.FormEvent) {
