@@ -146,29 +146,33 @@ $$;
 -- Helper: is a customer visible through at least one accessible journey?
 create or replace function public.is_customer_visible(check_customer_id uuid)
 returns boolean
-language sql
+language plpgsql
 security definer
 stable
 as $$
-  select exists (
+begin
+  return exists (
     select 1 from public.sleep_journeys sj
     where sj.customer_id = check_customer_id
       and public.is_store_visible(sj.store_id)
   );
+end;
 $$;
 
 -- Helper: is a journey visible?
 create or replace function public.is_journey_visible(check_journey_id uuid)
 returns boolean
-language sql
+language plpgsql
 security definer
 stable
 as $$
-  select exists (
+begin
+  return exists (
     select 1 from public.sleep_journeys sj
     where sj.id = check_journey_id
       and public.is_store_visible(sj.store_id)
   );
+end;
 $$;
 
 -- Row Level Security
