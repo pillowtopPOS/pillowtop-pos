@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { processAutomaticTransitions } from "@/lib/journeys/actions";
+import { processAutomaticTransitions } from "@/lib/journeys/automation";
 
 export async function GET(request: Request) {
   const cronSecret = process.env.CRON_SECRET;

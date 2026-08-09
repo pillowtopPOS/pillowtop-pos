@@ -31,17 +31,13 @@ import {
   fetchCurrentEmployee,
   fetchStores,
   subscribeToJourneyChanges,
+  recordJourneyEvent,
+  cancelJourney,
   type JourneyWithDetails,
   type JourneyEvent,
   type Employee,
   type Store,
 } from "@/lib/journeys/queries";
-import {
-  recordEvent,
-  cancelJourney,
-  processAutomaticTransitions,
-  type NewJourneyInput,
-} from "@/lib/journeys/actions";
 import {
   getTransitionForTarget,
   getTransitionForEvent,
@@ -130,9 +126,9 @@ export default function BoardPage() {
       });
     });
 
-    processAutomaticTransitions().catch(console.error);
+    fetch("/api/cron").catch(console.error);
     const interval = setInterval(() => {
-      processAutomaticTransitions().catch(console.error);
+      fetch("/api/cron").catch(console.error);
     }, 60000);
 
     return () => {
@@ -206,7 +202,7 @@ export default function BoardPage() {
     }
 
     try {
-      await recordEvent(journey.id, transition.event, eventData);
+      await recordJourneyEvent(journey.id, transition.event, eventData);
       setPendingTransition(null);
       setPendingFieldValues({});
     } catch (e: any) {

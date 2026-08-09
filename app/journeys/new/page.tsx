@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { createJourney, type NewJourneyInput } from "@/lib/journeys/actions";
+import { createJourney, type NewJourneyInput } from "@/lib/journeys/queries";
 import { fetchEmployees, fetchStores, type Employee, type Store } from "@/lib/journeys/queries";
 
 export default function NewJourneyPage() {

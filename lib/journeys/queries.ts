@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/client";
 import type { SleepJourneyState } from "@/lib/constants";
+import type { JourneyEventType } from "./state";
 
 export type JourneyWithDetails = {
   id: string;
@@ -180,4 +181,104 @@ export function subscribeToJourneyChanges(callback: () => void) {
   return () => {
     supabase.removeChannel(channel);
   };
+}
+
+export type NewJourneyInput = {
+  firstName: string;
+  lastName: string;
+  phone: string;
+  email: string;
+  productSummary: string;
+  storeId: string;
+  assignedEmployeeId: string | null;
+};
+
+export async function createJourney(input: NewJourneyInput) {
+  const supabase = createClient();
+
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    throw new Error("Not authenticated");
+  }
+
+  const customerId = crypto.randomUUID();
+
+  const { error: customerError } = await supabase.from("customers").insert({
+    id: customerId,
+    first_name: input.firstName,
+    last_name: input.lastName,
+    phone: input.phone,
+    email: input.email,
+  });
+
+  if (customerError) {
+    throw new Error(customerError.message);
+  }
+
+  const { error: journeyError } = await supabase.from("sleep_journeys").insert({
+    customer_id: customerId,
+    store_id: input.storeId,
+    assigned_employee_id: input.assignedEmployeeId,
+    product_summary: input.productSummary,
+  });
+
+  if (journeyError) {
+    throw new Error(journeyError.message);
+  }
+}
+
+export async function recordJourneyEvent(
+  journeyId: string,
+  eventType: JourneyEventType,
+  eventData: Record<string, unknown> = {}
+) {
+  const supabase = createClient();
+
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    throw new Error("Not authenticated");
+  }
+
+  const { error } = await supabase.from("journey_events").insert({
+    journey_id: journeyId,
+    event_type: eventType,
+    event_data: eventData,
+    triggered_by: user.id,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function cancelJourney(journeyId: string, reason: string) {
+  const supabase = createClient();
+
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    throw new Error("Not authenticated");
+  }
+
+  const { error } = await supabase.from("journey_events").insert({
+    journey_id: journeyId,
+    event_type: "journey_cancelled",
+    event_data: { reason },
+    triggered_by: user.id,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
 }
