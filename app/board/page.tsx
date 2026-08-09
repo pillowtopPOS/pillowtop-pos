@@ -143,16 +143,16 @@ export default function BoardPage() {
     }
   }, [selectedJourney]);
 
-  const visibleJourneys = useMemo(() => {
+  const boardJourneys = useMemo(() => {
     return journeys.filter((j) => !j.cancelled_at);
   }, [journeys]);
 
   const columns = useMemo(() => {
     return SLEEP_JOURNEY_STATES.map((state) => ({
       state,
-      journeys: visibleJourneys.filter((j) => j.current_state === state),
+      journeys: boardJourneys.filter((j) => j.current_state === state),
     }));
-  }, [visibleJourneys]);
+  }, [boardJourneys]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -325,14 +325,17 @@ export default function BoardPage() {
                 <th className="px-4 py-2 font-medium text-slate-700">State</th>
                 <th className="px-4 py-2 font-medium text-slate-700">Store</th>
                 <th className="px-4 py-2 font-medium text-slate-700">Assigned</th>
+                <th className="px-4 py-2 font-medium text-slate-700">Cancelled</th>
               </tr>
             </thead>
             <tbody>
-              {visibleJourneys.map((j) => (
+              {journeys.map((j) => (
                 <tr
                   key={j.id}
                   onClick={() => setSelectedJourney(j)}
-                  className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
+                  className={`cursor-pointer border-b border-slate-100 hover:bg-slate-50 ${
+                    j.cancelled_at ? "opacity-60" : ""
+                  }`}
                 >
                   <td className="px-4 py-2">
                     {j.customer
@@ -344,6 +347,9 @@ export default function BoardPage() {
                   <td className="px-4 py-2">{j.current_state}</td>
                   <td className="px-4 py-2">{j.store?.name ?? "—"}</td>
                   <td className="px-4 py-2">{j.employee?.name ?? "—"}</td>
+                  <td className="px-4 py-2">
+                    {j.cancelled_at ? "Yes" : "No"}
+                  </td>
                 </tr>
               ))}
             </tbody>
