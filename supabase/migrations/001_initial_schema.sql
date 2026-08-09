@@ -137,7 +137,7 @@ $$;
 -- Helper: is a customer visible through at least one accessible journey?
 create or replace function public.is_customer_visible(check_customer_id uuid)
 returns boolean
-language plpgsql
+language sql
 security definer
 stable
 as $$
@@ -151,7 +151,7 @@ $$;
 -- Helper: is a journey visible?
 create or replace function public.is_journey_visible(check_journey_id uuid)
 returns boolean
-language plpgsql
+language sql
 security definer
 stable
 as $$
