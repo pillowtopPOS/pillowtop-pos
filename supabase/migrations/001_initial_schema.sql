@@ -102,23 +102,21 @@ create index if not exists idx_journey_events_type on public.journey_events (eve
 create index if not exists idx_employees_auth_user on public.employees (auth_user_id);
 create index if not exists idx_employees_store on public.employees (home_store_id);
 
--- Helper: current user's employee record (security definer to bypass RLS)
-create or replace function public.current_employee()
-returns public.employees
-language sql
-security definer
-stable
-as $$
-  select * from public.employees where auth_user_id = auth.uid() limit 1;
-$$;
+-- Clean up helpers from earlier attempts if present
+drop function if exists public.current_employee();
+drop function if exists public.is_customer_visible(uuid);
+drop function if exists public.is_journey_visible(uuid);
 
+-- Helper: current user's role (bypasses RLS)
 create or replace function public.current_employee_role()
 returns public.employee_role
-language sql
+language plpgsql
 security definer
 stable
 as $$
-  select role from public.employees where auth_user_id = auth.uid() limit 1;
+begin
+  return (select role from public.employees where auth_user_id = auth.uid() limit 1);
+end;
 $$;
 
 -- Helper: is the user allowed to see a given store?
@@ -140,38 +138,6 @@ begin
 
   active_store_id := (auth.jwt() -> 'user_metadata' ->> 'active_store_id')::uuid;
   return active_store_id is not null and active_store_id = check_store_id;
-end;
-$$;
-
--- Helper: is a customer visible through at least one accessible journey?
-create or replace function public.is_customer_visible(check_customer_id uuid)
-returns boolean
-language plpgsql
-security definer
-stable
-as $$
-begin
-  return exists (
-    select 1 from public.sleep_journeys sj
-    where sj.customer_id = check_customer_id
-      and public.is_store_visible(sj.store_id)
-  );
-end;
-$$;
-
--- Helper: is a journey visible?
-create or replace function public.is_journey_visible(check_journey_id uuid)
-returns boolean
-language plpgsql
-security definer
-stable
-as $$
-begin
-  return exists (
-    select 1 from public.sleep_journeys sj
-    where sj.id = check_journey_id
-      and public.is_store_visible(sj.store_id)
-  );
 end;
 $$;
 
@@ -202,7 +168,13 @@ drop policy if exists "Customers viewable by authenticated users" on public.cust
 create policy "Customers viewable by authenticated users"
   on public.customers for select
   to authenticated
-  using (public.is_customer_visible(id));
+  using (
+    exists (
+      select 1 from public.sleep_journeys sj
+      where sj.customer_id = customers.id
+        and public.is_store_visible(sj.store_id)
+    )
+  );
 
 drop policy if exists "Customers insertable by authenticated users" on public.customers;
 create policy "Customers insertable by authenticated users"
@@ -235,21 +207,34 @@ drop policy if exists "Journey events viewable by authenticated users" on public
 create policy "Journey events viewable by authenticated users"
   on public.journey_events for select
   to authenticated
-  using (public.is_journey_visible(journey_id));
+  using (
+    exists (
+      select 1 from public.sleep_journeys sj
+      where sj.id = journey_events.journey_id
+        and public.is_store_visible(sj.store_id)
+    )
+  );
 
 drop policy if exists "Journey events insertable by authenticated users" on public.journey_events;
 create policy "Journey events insertable by authenticated users"
   on public.journey_events for insert
   to authenticated
-  with check (public.is_journey_visible(journey_id));
+  with check (
+    exists (
+      select 1 from public.sleep_journeys sj
+      where sj.id = journey_events.journey_id
+        and public.is_store_visible(sj.store_id)
+    )
+  );
 
 -- State machine: event -> from -> to
 create or replace function public.event_to_state(evt public.journey_event_type)
 returns public.journey_state
-language sql
-immutable
+language plpgsql
+stable
 as $$
-  select case evt
+begin
+  return case evt
     when 'quote_created' then 'Quoted'::public.journey_state
     when 'deposit_received' then 'Deposit Made'::public.journey_state
     when 'payment_completed' then 'Sold'::public.journey_state
@@ -260,6 +245,7 @@ as $$
     when 'trial_completed' then 'Completed'::public.journey_state
     when 'journey_cancelled' then 'Active Opportunity'::public.journey_state
   end;
+end;
 $$;
 
 -- Keep current_state in sync with the latest event
@@ -308,5 +294,30 @@ begin
 end
 $$;
 
-alter publication supabase_realtime add table public.sleep_journeys;
-alter publication supabase_realtime add table public.journey_events;
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_rel pr
+    join pg_publication p on pr.prpubid = p.oid
+    where p.pubname = 'supabase_realtime'
+      and pr.prrelid = 'public.sleep_journeys'::regclass
+  ) then
+    alter publication supabase_realtime add table public.sleep_journeys;
+  end if;
+end
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_rel pr
+    join pg_publication p on pr.prpubid = p.oid
+    where p.pubname = 'supabase_realtime'
+      and pr.prrelid = 'public.journey_events'::regclass
+  ) then
+    alter publication supabase_realtime add table public.journey_events;
+  end if;
+end
+$$;
