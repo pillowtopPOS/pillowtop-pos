@@ -39,6 +39,7 @@ import {
 import {
   recordEvent,
   cancelJourney,
+  processAutomaticTransitions,
   type NewJourneyInput,
 } from "@/lib/journeys/actions";
 import {
@@ -129,7 +130,15 @@ export default function BoardPage() {
       });
     });
 
-    return unsubscribe;
+    processAutomaticTransitions().catch(console.error);
+    const interval = setInterval(() => {
+      processAutomaticTransitions().catch(console.error);
+    }, 60000);
+
+    return () => {
+      unsubscribe();
+      clearInterval(interval);
+    };
   }, [router, search, employeeFilter, storeFilter]);
 
   useEffect(() => {
