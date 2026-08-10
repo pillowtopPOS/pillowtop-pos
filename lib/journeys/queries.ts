@@ -219,7 +219,7 @@ export async function createStore(store: Partial<Store>) {
 
 export async function updateStore(id: string, updates: Partial<Store>) {
   const supabase = createClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("stores")
     .update({
       name: updates.name,
@@ -231,9 +231,12 @@ export async function updateStore(id: string, updates: Partial<Store>) {
       is_active: updates.is_active,
       trial_length_nights: updates.trial_length_nights,
     })
-    .eq("id", id);
+    .eq("id", id)
+    .select("id")
+    .maybeSingle();
 
   if (error) throw new Error(error.message);
+  if (!data) throw new Error("Store update failed — row not found or not authorized.");
 }
 
 export async function countActiveJourneysForStore(storeId: string): Promise<number> {
