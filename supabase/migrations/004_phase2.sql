@@ -227,6 +227,12 @@ begin
         cancelled_reason = coalesce(new.event_data->>'reason', 'No reason provided'),
         updated_at = now()
     where id = new.journey_id;
+
+    update public.follow_ups
+    set completed_at = now()
+    where journey_id = new.journey_id
+      and completed_at is null;
+
     return new;
   end if;
 
@@ -262,6 +268,14 @@ begin
       price = coalesce(price, new_price),
       updated_at = now()
   where id = new.journey_id;
+
+  -- Sold or cancelled journeys no longer need follow-ups
+  if target = 'Sold'::public.journey_state then
+    update public.follow_ups
+    set completed_at = now()
+    where journey_id = new.journey_id
+      and completed_at is null;
+  end if;
 
   -- Quote follow-ups: create one for each cadence entry
   if new.event_type = 'quote_sent' then
@@ -397,3 +411,13 @@ where current_state = 'Quoted'
   and cancelled_at is null
   and price is not null
   and public.total_paid(id) >= price;
+
+-- Clean up stale open follow-ups for journeys that are already Sold or Cancelled
+update public.follow_ups
+set completed_at = now()
+where completed_at is null
+  and journey_id in (
+    select id from public.sleep_journeys
+    where current_state = 'Sold'
+      or cancelled_at is not null
+  );
