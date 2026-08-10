@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Store as StoreIcon,
+  Settings as SettingsIcon,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -65,6 +66,7 @@ export default function Sidebar({
   }
 
   const activeStore = stores.find((s) => s.id === activeStoreId);
+  const isAdmin = employee?.role === "owner" || employee?.role === "admin";
 
   return (
     <div className="flex min-h-screen">
@@ -93,7 +95,7 @@ export default function Sidebar({
         </div>
 
         <nav className="flex-1 space-y-1 p-2">
-          {NAV.map((item) => {
+          {[...NAV, ...(isAdmin ? [{ href: "/settings", label: "Settings", icon: SettingsIcon }] : [])].map((item) => {
             const Icon = item.icon;
             const isActive =
               pathname === item.href || pathname.startsWith(`${item.href}/`);
