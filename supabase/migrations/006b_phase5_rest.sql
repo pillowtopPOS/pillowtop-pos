@@ -84,7 +84,7 @@ declare
   journey_price numeric;
   paid numeric;
   new_state public.journey_state;
-  emp_id uuid;
+  emp_id text;
 begin
   select current_state, price into current, journey_price
   from public.sleep_journeys
@@ -94,7 +94,7 @@ begin
     return;
   end if;
 
-  select id into emp_id
+  select id::text into emp_id
   from public.employees
   where auth_user_id = auth.uid();
 
@@ -125,7 +125,7 @@ begin
         'price', journey_price,
         'balance_due', journey_price - paid
       ),
-      emp_id
+      coalesce(emp_id, 'system')
     );
   else
     insert into public.journey_events (journey_id, event_type, event_data, triggered_by)
@@ -137,7 +137,7 @@ begin
         'price', journey_price,
         'balance_due', journey_price - paid
       ),
-      emp_id
+      coalesce(emp_id, 'system')
     );
   end if;
 end;
@@ -159,11 +159,11 @@ declare
   new_summary text;
   event_type public.journey_event_type;
   event_data jsonb;
-  emp_id uuid;
+  emp_id text;
 begin
   target_journey_id := coalesce(new.journey_id, old.journey_id);
 
-  select id into emp_id
+  select id::text into emp_id
   from public.employees
   where auth_user_id = auth.uid();
 
@@ -222,7 +222,7 @@ begin
   end if;
 
   insert into public.journey_events (journey_id, event_type, event_data, triggered_by)
-  values (target_journey_id, event_type, event_data, emp_id);
+  values (target_journey_id, event_type, event_data, coalesce(emp_id, 'system'));
 
   perform public.reevaluate_journey_balance(target_journey_id);
 
@@ -254,4 +254,8 @@ select
   coalesce(sj.price, 0),
   sj.created_at
 from public.sleep_journeys sj
-where sj.price is not null;
+where sj.price is not null
+  and not exists (
+    select 1 from public.journey_line_items jli
+    where jli.journey_id = sj.id
+  );
