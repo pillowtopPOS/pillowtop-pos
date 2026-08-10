@@ -130,7 +130,7 @@ begin
       jsonb_build_object(
         'total_paid', paid,
         'price', journey_price,
-        'balance_due', 0
+        'balance_due', journey_price - paid
       ),
       emp_id
     );
