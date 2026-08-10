@@ -95,9 +95,20 @@ export async function fetchProductsWithStock(
 
 export async function upsertProduct(product: Partial<Product> & { company_id: string; sku: string }) {
   const supabase = createClient();
+
+  const payload = {
+    company_id: product.company_id,
+    sku: product.sku,
+    item_name: product.item_name,
+    brand: product.brand,
+    cost: product.cost,
+    price: product.price,
+    sale_price: product.sale_price,
+  };
+
   const { data, error } = await supabase
     .from("products")
-    .upsert(product, { onConflict: "company_id,sku", ignoreDuplicates: false })
+    .upsert(payload, { onConflict: "company_id,sku", ignoreDuplicates: false })
     .select("id")
     .single();
 
