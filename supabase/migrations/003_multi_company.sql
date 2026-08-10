@@ -38,7 +38,7 @@ create index if not exists idx_stores_company_id on public.stores (company_id);
 
 -- 3. Replace visibility helpers to scope by company
 
-create or replace function public.is_store_visible(store_id uuid)
+create or replace function public.is_store_visible(check_store_id uuid)
 returns boolean
 language plpgsql
 security definer
@@ -65,21 +65,21 @@ begin
   if my_role in ('owner','manager') then
     return exists (
       select 1 from public.stores
-      where id = store_id
+      where id = check_store_id
         and company_id = my_company_id
     );
   end if;
 
-  return active_store_id = store_id
+  return active_store_id = check_store_id
     and exists (
       select 1 from public.stores
-      where id = store_id
+      where id = check_store_id
         and company_id = my_company_id
     );
 end;
 $$;
 
-create or replace function public.is_journey_visible(journey_id uuid)
+create or replace function public.is_journey_visible(check_journey_id uuid)
 returns boolean
 language plpgsql
 security definer
@@ -88,13 +88,13 @@ as $$
 begin
   return exists (
     select 1 from public.sleep_journeys
-    where id = journey_id
+    where id = check_journey_id
       and public.is_store_visible(store_id)
   );
 end;
 $$;
 
-create or replace function public.is_customer_visible(customer_id uuid)
+create or replace function public.is_customer_visible(check_customer_id uuid)
 returns boolean
 language plpgsql
 security definer
@@ -103,13 +103,13 @@ as $$
 begin
   return exists (
     select 1 from public.sleep_journeys
-    where customer_id = customer_id
+    where customer_id = check_customer_id
       and public.is_journey_visible(id)
   );
 end;
 $$;
 
-create or replace function public.is_employee_visible(employee_id uuid)
+create or replace function public.is_employee_visible(check_employee_id uuid)
 returns boolean
 language plpgsql
 security definer
@@ -130,7 +130,7 @@ begin
   return exists (
     select 1 from public.employees e
     join public.stores s on s.id = e.home_store_id
-    where e.id = employee_id
+    where e.id = check_employee_id
       and s.company_id = my_company_id
   );
 end;
