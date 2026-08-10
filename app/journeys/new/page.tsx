@@ -55,7 +55,7 @@ export default function NewJourneyPage() {
 
       const activeStore = session.user.user_metadata?.active_store_id;
 
-      Promise.all([fetchStores(), fetchEmployees()]).then(([s, e]) => {
+      Promise.all([fetchStores(true), fetchEmployees()]).then(([s, e]) => {
         setStores(s);
         setEmployees(e);
         setStoreId(activeStore && s.find((st) => st.id === activeStore) ? activeStore : (s[0]?.id ?? ""));

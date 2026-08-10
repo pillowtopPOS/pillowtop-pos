@@ -22,7 +22,7 @@ export default function StoreSelectPage() {
         return;
       }
 
-      fetchStores().then(setStores);
+      fetchStores(true).then(setStores);
       fetchCurrentEmployee().then((emp) => {
         setRole(emp?.role ?? null);
       });

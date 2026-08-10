@@ -78,6 +78,12 @@ export type Store = {
   company_id: string;
   name: string;
   address: string | null;
+  street_address: string | null;
+  city: string | null;
+  state: string | null;
+  zip_code: string | null;
+  phone: string | null;
+  is_active: boolean;
   trial_length_nights: number;
 };
 
@@ -170,14 +176,80 @@ export async function fetchJourneyFollowUps(journeyId: string): Promise<FollowUp
   return (data as unknown as FollowUp[]) ?? [];
 }
 
-export async function fetchStores(): Promise<Store[]> {
+export async function fetchStores(activeOnly = false): Promise<Store[]> {
   const supabase = createClient();
-  const { data, error } = await supabase.from("stores").select("id, company_id, name, address, trial_length_nights").order("name");
+  let query = supabase
+    .from("stores")
+    .select(
+      "id, company_id, name, address, street_address, city, state, zip_code, phone, is_active, trial_length_nights"
+    )
+    .order("name");
+  if (activeOnly) {
+    query = query.eq("is_active", true);
+  }
+  const { data, error } = await query;
   if (error) {
     console.error("fetchStores error", error);
     return [];
   }
   return (data as unknown as Store[]) ?? [];
+}
+
+export async function createStore(store: Partial<Store>) {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("stores")
+    .insert({
+      company_id: store.company_id,
+      name: store.name,
+      street_address: store.street_address,
+      city: store.city,
+      state: store.state,
+      zip_code: store.zip_code,
+      phone: store.phone,
+      is_active: store.is_active ?? true,
+      trial_length_nights: store.trial_length_nights ?? 120,
+    })
+    .select("id")
+    .single();
+
+  if (error) throw new Error(error.message);
+  return (data as { id: string } | null)?.id;
+}
+
+export async function updateStore(id: string, updates: Partial<Store>) {
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("stores")
+    .update({
+      name: updates.name,
+      street_address: updates.street_address,
+      city: updates.city,
+      state: updates.state,
+      zip_code: updates.zip_code,
+      phone: updates.phone,
+      is_active: updates.is_active,
+      trial_length_nights: updates.trial_length_nights,
+    })
+    .eq("id", id);
+
+  if (error) throw new Error(error.message);
+}
+
+export async function countActiveJourneysForStore(storeId: string): Promise<number> {
+  const supabase = createClient();
+  const { count, error } = await supabase
+    .from("sleep_journeys")
+    .select("id", { count: "exact", head: true })
+    .eq("store_id", storeId)
+    .not("current_state", "in", "('Completed','Cancelled')")
+    .is("cancelled_at", null);
+
+  if (error) {
+    console.error("countActiveJourneysForStore error", error);
+    return 0;
+  }
+  return count ?? 0;
 }
 
 export async function fetchEmployees(): Promise<Employee[]> {
