@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import * as XLSX from "xlsx";
-import { Search, Package, Upload, Plus, X } from "lucide-react";
+import { Search, Package, Upload, Download, Plus, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchCurrentEmployee, fetchStores, type Employee, type Store } from "@/lib/journeys/queries";
 import {
@@ -142,6 +142,25 @@ export default function InventoryPage() {
       setUploadStep("mapping");
     };
     reader.readAsArrayBuffer(file);
+  }
+
+  function downloadTemplate() {
+    const headers = ["SKU", "Item Name", "Cost", "Price", "Sales Price", "Brand"];
+    const ws = XLSX.utils.aoa_to_sheet([headers]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Inventory Template");
+    const data = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const blob = new Blob([data], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "pillowtop-inventory-template.xlsx";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   function canPreview() {
@@ -297,6 +316,12 @@ export default function InventoryPage() {
                 }}
               />
             </label>
+            <button
+              onClick={downloadTemplate}
+              className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              <Download className="h-4 w-4" /> Template
+            </button>
             <button
               onClick={() =>
                 setEditingProduct({
