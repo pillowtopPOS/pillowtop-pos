@@ -18,9 +18,7 @@ import {
   Table2,
   LayoutGrid,
   X,
-  Calendar,
   Check,
-  Package,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { BOARD_STATES, type SleepJourneyState } from "@/lib/constants";
@@ -249,24 +247,6 @@ export default function BoardPage() {
       <header className="mb-4 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold text-slate-900">Sleep Journey Board</h1>
         <div className="flex items-center gap-2">
-          <Link
-            href="/my-work"
-            className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            <Calendar className="h-4 w-4" /> My Work
-          </Link>
-          <Link
-            href="/inventory"
-            className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            <Package className="h-4 w-4" /> Inventory
-          </Link>
-          <Link
-            href="/opportunities"
-            className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            Opportunities
-          </Link>
           <Link
             href="/journeys/new"
             className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
@@ -532,6 +512,18 @@ export default function BoardPage() {
   );
 }
 
+const STATE_ACCENT: Record<SleepJourneyState, string> = {
+  "Active Opportunity": "border-l-slate-300",
+  Quoted: "border-l-amber-300",
+  "Deposit Made": "border-l-amber-300",
+  Sold: "border-l-green-300",
+  "Waiting for Inventory": "border-l-blue-300",
+  "Ready to Schedule": "border-l-indigo-300",
+  Scheduled: "border-l-purple-300",
+  "Sleep Trial": "border-l-teal-300",
+  Completed: "border-l-slate-300",
+};
+
 function Column({
   state,
   journeys,
@@ -597,7 +589,7 @@ function JourneyCard({
       {...listeners}
       {...attributes}
       onClick={() => onSelect(journey)}
-      className="cursor-grab space-y-0.5 rounded-md border border-slate-200 bg-white p-2 shadow-sm active:cursor-grabbing"
+      className={`cursor-grab space-y-0.5 rounded-md border border-slate-200 bg-white p-2 shadow-sm active:cursor-grabbing border-l-2 ${STATE_ACCENT[journey.current_state]}`}
     >
       <p className="truncate text-xs font-medium leading-tight text-slate-900">
         {journey.customer
