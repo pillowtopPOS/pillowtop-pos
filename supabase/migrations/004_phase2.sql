@@ -241,8 +241,7 @@ begin
     from public.sleep_journeys
     where id = new.journey_id;
 
-    paid := public.total_paid(new.journey_id)
-      + coalesce((new.event_data->>'amount')::numeric, 0);
+    paid := public.total_paid(new.journey_id);
 
     if journey_price is not null and paid >= journey_price then
       target := 'Sold'::public.journey_state;
@@ -360,3 +359,9 @@ update public.sleep_journeys
 set current_state = 'Quoted'
 where current_state = 'Deposit Made'
   and cancelled_at is null;
+
+-- Backfill price for fully-paid journeys so their balance is zero; leave other old journeys as null
+update public.sleep_journeys
+set price = public.total_paid(id)
+where current_state = 'Sold'
+  and price is null;
