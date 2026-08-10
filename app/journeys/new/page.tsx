@@ -6,6 +6,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { createJourney, fetchEmployees, fetchStores, type Employee, type Store } from "@/lib/journeys/queries";
 import type { CreateJourneyInput } from "@/lib/journeys/queries";
+import ProductPicker, { type ProductSelection } from "@/components/ProductPicker";
 
 export default function NewJourneyPage() {
   const router = useRouter();
@@ -24,6 +25,7 @@ export default function NewJourneyPage() {
     email: "",
   });
   const [product, setProduct] = useState({
+    productId: null as string | null,
     productSummary: "",
     storeId: "",
     assignedEmployeeId: null as string | null,
@@ -91,6 +93,7 @@ export default function NewJourneyPage() {
 
     const base = {
       customer,
+      productId: product.productId,
       productSummary: product.productSummary,
       storeId: product.storeId,
       assignedEmployeeId: product.assignedEmployeeId,
@@ -237,16 +240,20 @@ export default function NewJourneyPage() {
         {step === 2 && (
           <div className="space-y-4">
             <h2 className="text-sm font-semibold text-slate-700">Product</h2>
-            <div>
-              <label className="block text-sm font-medium text-slate-700">Product summary</label>
-              <textarea
-                value={product.productSummary}
-                onChange={(e) => setProduct((p) => ({ ...p, productSummary: e.target.value }))}
-                placeholder="e.g. King, Firm, Sealy Posturepedic"
-                rows={3}
-                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              />
-            </div>
+            <ProductPicker
+              storeId={product.storeId}
+              onSelect={(selection) => {
+                setProduct((p) => ({
+                  ...p,
+                  productId: selection.productId,
+                  productSummary: selection.productSummary,
+                }));
+                if (mode === "purchase" && selection.price !== null) {
+                  const price = selection.price;
+                  setPurchase((p) => ({ ...p, price: price.toFixed(2) }));
+                }
+              }}
+            />
             <div>
               <label className="block text-sm font-medium text-slate-700">Store</label>
               <select

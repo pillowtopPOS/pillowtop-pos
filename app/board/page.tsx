@@ -20,6 +20,7 @@ import {
   X,
   Calendar,
   Check,
+  Package,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { BOARD_STATES, type SleepJourneyState } from "@/lib/constants";
@@ -253,6 +254,12 @@ export default function BoardPage() {
             className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
             <Calendar className="h-4 w-4" /> My Work
+          </Link>
+          <Link
+            href="/inventory"
+            className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <Package className="h-4 w-4" /> Inventory
           </Link>
           <Link
             href="/opportunities"

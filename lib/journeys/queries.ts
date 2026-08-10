@@ -64,6 +64,7 @@ export type Opportunity = {
 
 export type Store = {
   id: string;
+  company_id: string;
   name: string;
   address: string | null;
   trial_length_nights: number;
@@ -160,7 +161,7 @@ export async function fetchJourneyFollowUps(journeyId: string): Promise<FollowUp
 
 export async function fetchStores(): Promise<Store[]> {
   const supabase = createClient();
-  const { data, error } = await supabase.from("stores").select("id, name, address, trial_length_nights").order("name");
+  const { data, error } = await supabase.from("stores").select("id, company_id, name, address, trial_length_nights").order("name");
   if (error) {
     console.error("fetchStores error", error);
     return [];
@@ -289,6 +290,7 @@ export type CustomerInput = {
 
 type BaseCreateInput = {
   customer: CustomerInput;
+  productId: string | null;
   productSummary: string;
   storeId: string;
   assignedEmployeeId: string | null;
@@ -345,6 +347,7 @@ export async function createJourney(input: CreateJourneyInput) {
       customer_id: customerId,
       store_id: input.storeId,
       assigned_employee_id: input.assignedEmployeeId,
+      product_id: input.productId,
       product_summary: input.productSummary,
       price,
     })
