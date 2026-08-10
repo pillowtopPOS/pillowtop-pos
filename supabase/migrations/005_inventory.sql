@@ -51,26 +51,16 @@ create index if not exists idx_product_stock_store on public.product_stock (stor
 alter table public.sleep_journeys
   add column if not exists product_id uuid references public.products (id) on delete set null;
 
--- 5. Helper: is a product in the user’s company?
+-- 5. Helper: is a company visible to the current user?
 
-create or replace function public.is_product_visible(check_product_id uuid)
+create or replace function public.is_product_visible_by_company(product_company_id uuid)
 returns boolean
 language plpgsql
 stable
 security definer
 set search_path = public
 as $$
-declare
-  product_company_id uuid;
 begin
-  select company_id into product_company_id
-  from public.products
-  where id = check_product_id;
-
-  if product_company_id is null then
-    return false;
-  end if;
-
   return exists (
     select 1
     from public.stores s
@@ -88,20 +78,20 @@ drop policy if exists "Products viewable by authenticated users" on public.produ
 create policy "Products viewable by authenticated users"
   on public.products for select
   to authenticated
-  using (public.is_product_visible(id));
+  using (public.is_product_visible_by_company(company_id));
 
 drop policy if exists "Products insertable by authenticated users" on public.products;
 create policy "Products insertable by authenticated users"
   on public.products for insert
   to authenticated
-  with check (public.is_product_visible(id));
+  with check (public.is_product_visible_by_company(company_id));
 
 drop policy if exists "Products updatable by authenticated users" on public.products;
 create policy "Products updatable by authenticated users"
   on public.products for update
   to authenticated
-  using (public.is_product_visible(id))
-  with check (public.is_product_visible(id));
+  using (public.is_product_visible_by_company(company_id))
+  with check (public.is_product_visible_by_company(company_id));
 
 alter table public.product_stock enable row level security;
 
