@@ -242,7 +242,8 @@ export async function countActiveJourneysForStore(storeId: string): Promise<numb
     .from("sleep_journeys")
     .select("id", { count: "exact", head: true })
     .eq("store_id", storeId)
-    .not("current_state", "in", "('Completed','Cancelled')")
+    .neq("current_state", "Completed")
+    .neq("current_state", "Cancelled")
     .is("cancelled_at", null);
 
   if (error) {
