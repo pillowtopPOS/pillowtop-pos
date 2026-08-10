@@ -19,6 +19,7 @@ import {
   LayoutGrid,
   X,
   Check,
+  Trash2,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { BOARD_STATES, type SleepJourneyState } from "@/lib/constants";
@@ -26,6 +27,7 @@ import {
   fetchJourneys,
   fetchJourneyEvents,
   fetchJourneyFollowUps,
+  fetchJourneyLineItems,
   fetchEmployees,
   fetchCurrentEmployee,
   fetchStores,
@@ -33,12 +35,17 @@ import {
   recordJourneyEvent,
   cancelJourney,
   completeFollowUp,
+  createJourneyLineItem,
+  updateJourneyLineItem,
+  deleteJourneyLineItem,
   type JourneyWithDetails,
   type JourneyEvent,
   type FollowUp,
   type Employee,
   type Store,
+  type JourneyLineItem,
 } from "@/lib/journeys/queries";
+import ProductPicker, { type ProductSelection } from "@/components/ProductPicker";
 import {
   getTransitionForTarget,
   getTransitionForEvent,
@@ -577,11 +584,6 @@ function JourneyCard({
     opacity: isDragging ? 0.5 : 1,
   };
 
-  const balance =
-    journey.price !== null && journey.price !== undefined
-      ? journey.price - (journey.price ?? 0)
-      : null;
-
   return (
     <div
       ref={setNodeRef}
@@ -607,11 +609,6 @@ function JourneyCard({
       {journey.employee && (
         <p className="truncate text-[10px] leading-tight text-slate-500">
           {journey.employee.name}
-        </p>
-      )}
-      {journey.current_state === "Quoted" && journey.price !== null && (balance ?? 0) > 0 && (
-        <p className="truncate text-[10px] leading-tight text-amber-600">
-          Balance due: ${balance?.toFixed(2)}
         </p>
       )}
     </div>
@@ -648,6 +645,53 @@ function JourneyDetailPanel({
   const nextFollowUp = followUps
     .filter((f) => !f.completed_at)
     .sort((a, b) => new Date(a.due_at).getTime() - new Date(b.due_at).getTime())[0];
+
+  const [lineItems, setLineItems] = useState<JourneyLineItem[]>([]);
+  const [lineItemsLoading, setLineItemsLoading] = useState(false);
+
+  useEffect(() => {
+    setLineItemsLoading(true);
+    fetchJourneyLineItems(journey.id).then((items) => {
+      setLineItems(items);
+      setLineItemsLoading(false);
+    });
+  }, [journey.id, events]);
+
+  async function addLineItem(selection: ProductSelection) {
+    try {
+      const unitPrice = selection.salePrice ?? selection.price ?? 0;
+      await createJourneyLineItem({
+        journey_id: journey.id,
+        product_id: selection.productId,
+        item_name: selection.productSummary,
+        quantity: 1,
+        unit_price: unitPrice,
+      });
+      onRefresh();
+    } catch (e: any) {
+      window.alert(e.message ?? "Failed to add item");
+    }
+  }
+
+  async function updateLineItem(id: string, updates: { quantity?: number; unit_price?: number }) {
+    try {
+      await updateJourneyLineItem(id, updates);
+      onRefresh();
+    } catch (e: any) {
+      window.alert(e.message ?? "Failed to update item");
+    }
+  }
+
+  async function removeLineItem(id: string) {
+    try {
+      await deleteJourneyLineItem(id);
+      onRefresh();
+    } catch (e: any) {
+      window.alert(e.message ?? "Failed to remove item");
+    }
+  }
+
+  const lineTotal = lineItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
 
   async function markFollowUpComplete(id: string) {
     try {
@@ -686,7 +730,16 @@ function JourneyDetailPanel({
             </div>
           )}
 
-          {balance !== null && (
+          {journey.price !== null && paid > journey.price && (
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500">Credit due</span>
+              <span className="font-medium text-blue-600">
+                ${(paid - journey.price).toFixed(2)}
+              </span>
+            </div>
+          )}
+
+          {balance !== null && paid <= (journey.price ?? 0) && (
             <div className="flex items-center justify-between">
               <span className="text-slate-500">Balance due</span>
               <span className={`font-medium ${balance > 0 ? "text-amber-600" : "text-green-600"}`}>
@@ -714,9 +767,73 @@ function JourneyDetailPanel({
             <span className="text-slate-700">{journey.customer?.email ?? "—"}</span>
           </div>
 
-          <div className="flex items-center justify-between">
-            <span className="text-slate-500">Product</span>
-            <span className="text-right text-slate-700">{journey.product_summary ?? "—"}</span>
+          <div className="border-t border-slate-200 pt-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-slate-500">Line Items</span>
+              <span className="font-medium text-slate-900">
+                Total: ${(journey.price ?? 0).toFixed(2)}
+              </span>
+            </div>
+
+            {lineItemsLoading && (
+              <p className="text-sm text-slate-500">Loading items…</p>
+            )}
+
+            {!lineItemsLoading && lineItems.length === 0 && (
+              <p className="text-sm text-slate-500">No items on this journey.</p>
+            )}
+
+            {!lineItemsLoading && lineItems.length > 0 && (
+              <div className="space-y-2">
+                {lineItems.map((item) => (
+                  <div
+                    key={item.id}
+                    className="grid grid-cols-12 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-2 text-xs"
+                  >
+                    <div className="col-span-5 truncate text-slate-900">{item.item_name}</div>
+                    <div className="col-span-2">
+                      <input
+                        type="number"
+                        min={1}
+                        defaultValue={item.quantity}
+                        onBlur={(e) =>
+                          updateLineItem(item.id, { quantity: Math.max(1, parseInt(e.target.value) || 1) })
+                        }
+                        className="w-full rounded-md border border-slate-300 px-1 py-1 text-center text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                      />
+                    </div>
+                    <div className="col-span-3">
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        defaultValue={item.unit_price.toFixed(2)}
+                        onBlur={(e) =>
+                          updateLineItem(item.id, { unit_price: parseFloat(e.target.value) || 0 })
+                        }
+                        className="w-full rounded-md border border-slate-300 px-1 py-1 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                      />
+                    </div>
+                    <div className="col-span-1 text-right text-slate-600">
+                      ${(item.quantity * item.unit_price).toFixed(2)}
+                    </div>
+                    <div className="col-span-1 flex justify-end">
+                      <button
+                        onClick={() => removeLineItem(item.id)}
+                        className="rounded p-1 text-slate-400 hover:bg-red-100 hover:text-red-600"
+                        aria-label="Remove"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="mt-3">
+              <ProductPicker storeId={journey.store_id} onSelect={addLineItem} />
+            </div>
           </div>
 
           <div className="flex items-center justify-between">

@@ -8,12 +8,21 @@ export type ProductSelection = {
   productId: string | null;
   productSummary: string;
   price: number | null;
+  salePrice: number | null;
 };
 
 type ProductPickerProps = {
   storeId?: string;
   onSelect: (selection: ProductSelection) => void;
 };
+
+function priceDisplay(product: Product): { onSale: boolean; unitPrice: number } {
+  const onSale =
+    product.sale_price !== null &&
+    product.sale_price < (product.price ?? Infinity);
+  const unitPrice = onSale ? product.sale_price! : product.price ?? 0;
+  return { onSale, unitPrice };
+}
 
 export default function ProductPicker({ storeId, onSelect }: ProductPickerProps) {
   const [query, setQuery] = useState("");
@@ -50,6 +59,7 @@ export default function ProductPicker({ storeId, onSelect }: ProductPickerProps)
   }, [debouncedQuery, storeId]);
 
   function selectProduct(product: Product) {
+    const { onSale, unitPrice } = priceDisplay(product);
     setSelectedProduct(product);
     setCustom(false);
     setQuery(product.item_name);
@@ -58,6 +68,7 @@ export default function ProductPicker({ storeId, onSelect }: ProductPickerProps)
       productId: product.id,
       productSummary: product.item_name,
       price: product.price ?? null,
+      salePrice: onSale ? product.sale_price : null,
     });
   }
 
@@ -67,12 +78,40 @@ export default function ProductPicker({ storeId, onSelect }: ProductPickerProps)
     setCustomSummary(summary);
     setSelectedProduct(null);
     setResults([]);
-    onSelect({ productId: null, productSummary: summary, price: null });
+    onSelect({ productId: null, productSummary: summary, price: null, salePrice: null });
   }
 
   function updateCustomSummary(value: string) {
     setCustomSummary(value);
-    onSelect({ productId: null, productSummary: value, price: null });
+    onSelect({ productId: null, productSummary: value, price: null, salePrice: null });
+  }
+
+  function renderPrice(product: Product) {
+    const { onSale } = priceDisplay(product);
+    if (!onSale || product.price === null) {
+      return (
+        <span className="text-sm font-medium text-slate-900">
+          ${product.price?.toFixed(2) ?? "—"}
+        </span>
+      );
+    }
+    const savings = product.price - product.sale_price!;
+    const percent = product.price > 0 ? Math.round((savings / product.price) * 100) : 0;
+    return (
+      <div className="flex flex-col items-end text-right">
+        <span className="text-sm font-semibold text-brand-700">
+          ${product.sale_price!.toFixed(2)}
+        </span>
+        <div className="flex items-center gap-1.5 text-xs">
+          <span className="text-slate-400 line-through">
+            ${product.price.toFixed(2)}
+          </span>
+          <span className="font-medium text-green-600">
+            Save ${savings.toFixed(2)} ({percent}%)
+          </span>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -100,23 +139,28 @@ export default function ProductPicker({ storeId, onSelect }: ProductPickerProps)
       {loading && <p className="text-xs text-slate-500">Searching…</p>}
 
       {!loading && results.length > 0 && (
-        <ul className="max-h-48 overflow-y-auto rounded-md border border-slate-200 bg-white shadow-sm">
+        <ul className="max-h-56 overflow-y-auto rounded-md border border-slate-200 bg-white shadow-sm">
           {results.map((product) => (
             <li
               key={product.id}
               onClick={() => selectProduct(product)}
-              className="cursor-pointer border-b border-slate-100 p-2 text-sm hover:bg-slate-50 last:border-b-0"
+              className="cursor-pointer border-b border-slate-100 p-2.5 text-sm hover:bg-slate-50 last:border-b-0"
             >
-              <div className="flex items-center justify-between">
-                <span className="font-medium text-slate-900">{product.item_name}</span>
-                <span className="text-xs text-slate-500">
-                  {product.brand ? `${product.brand} · ` : ""}
-                  ${product.price?.toFixed(2) ?? "—"}
-                </span>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium text-slate-900">{product.item_name}</p>
+                  {product.brand && (
+                    <p className="text-xs text-slate-500">{product.brand} · SKU: {product.sku}</p>
+                  )}
+                  {!product.brand && (
+                    <p className="text-xs text-slate-500">SKU: {product.sku}</p>
+                  )}
+                </div>
+                {renderPrice(product)}
               </div>
               {storeId && (
-                <p className="text-xs text-slate-500">
-                  Stock: {stockMap[product.id] ?? 0} · SKU: {product.sku}
+                <p className="mt-1 text-xs text-slate-500">
+                  Stock: {stockMap[product.id] ?? 0}
                 </p>
               )}
             </li>

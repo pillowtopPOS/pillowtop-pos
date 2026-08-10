@@ -48,6 +48,17 @@ export type FollowUp = {
   journey?: JourneyWithDetails;
 };
 
+export type JourneyLineItem = {
+  id: string;
+  journey_id: string;
+  product_id: string | null;
+  item_name: string;
+  quantity: number;
+  unit_price: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Opportunity = {
   id: string;
   first_name: string;
@@ -281,6 +292,55 @@ export async function cancelJourney(journeyId: string, reason: string) {
   }
 }
 
+export async function fetchJourneyLineItems(
+  journeyId: string
+): Promise<JourneyLineItem[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("journey_line_items")
+    .select("*")
+    .eq("journey_id", journeyId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    console.error("fetchJourneyLineItems error", error);
+    return [];
+  }
+  return (data as unknown as JourneyLineItem[]) ?? [];
+}
+
+export async function createJourneyLineItem(
+  item: Omit<JourneyLineItem, "id" | "created_at" | "updated_at">
+) {
+  const supabase = createClient();
+  const { error } = await supabase.from("journey_line_items").insert({
+    journey_id: item.journey_id,
+    product_id: item.product_id,
+    item_name: item.item_name,
+    quantity: item.quantity,
+    unit_price: item.unit_price,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export async function updateJourneyLineItem(
+  id: string,
+  updates: { quantity?: number; unit_price?: number }
+) {
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("journey_line_items")
+    .update(updates)
+    .eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteJourneyLineItem(id: string) {
+  const supabase = createClient();
+  const { error } = await supabase.from("journey_line_items").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
 export type CustomerInput = {
   firstName: string;
   lastName: string;
@@ -288,23 +348,27 @@ export type CustomerInput = {
   email: string;
 };
 
+export type LineItemInput = {
+  productId: string | null;
+  itemName: string;
+  quantity: number;
+  unitPrice: number;
+};
+
 type BaseCreateInput = {
   customer: CustomerInput;
-  productId: string | null;
-  productSummary: string;
+  lineItems: LineItemInput[];
   storeId: string;
   assignedEmployeeId: string | null;
 };
 
 export type QuoteCreateInput = BaseCreateInput & {
   mode: "quote";
-  quoteAmount?: string;
   quoteNotes?: string;
 };
 
 export type PurchaseCreateInput = BaseCreateInput & {
   mode: "purchase";
-  price: string;
   paymentAmount: string;
   paymentMethod: string;
   followUpDueAt?: string;
@@ -338,8 +402,8 @@ export async function createJourney(input: CreateJourneyInput) {
     throw new Error(customerError.message);
   }
 
-  const price =
-    input.mode === "purchase" ? parseFloat(input.price) || null : null;
+  const firstItem = input.lineItems[0];
+  const firstProductId = firstItem?.productId ?? null;
 
   const { data: journey, error: journeyError } = await supabase
     .from("sleep_journeys")
@@ -347,9 +411,8 @@ export async function createJourney(input: CreateJourneyInput) {
       customer_id: customerId,
       store_id: input.storeId,
       assigned_employee_id: input.assignedEmployeeId,
-      product_id: input.productId,
-      product_summary: input.productSummary,
-      price,
+      product_id: firstProductId,
+      product_summary: firstItem?.itemName ?? null,
     })
     .select("id")
     .single();
@@ -358,20 +421,42 @@ export async function createJourney(input: CreateJourneyInput) {
     throw new Error(journeyError?.message ?? "Failed to create journey");
   }
 
+  if (input.lineItems.length > 0) {
+    const { error: itemsError } = await supabase
+      .from("journey_line_items")
+      .insert(
+        input.lineItems.map((item) => ({
+          journey_id: journey.id,
+          product_id: item.productId,
+          item_name: item.itemName,
+          quantity: item.quantity,
+          unit_price: item.unitPrice,
+        }))
+      );
+
+    if (itemsError) {
+      throw new Error(itemsError.message);
+    }
+  }
+
+  const total = input.lineItems.reduce(
+    (sum, item) => sum + item.quantity * item.unitPrice,
+    0
+  );
+
   if (input.mode === "quote") {
     await recordJourneyEvent(
       journey.id,
       "quote_sent",
       {
-        amount: input.quoteAmount ? parseFloat(input.quoteAmount) : undefined,
+        amount: total,
         notes: input.quoteNotes,
       }
     );
   } else {
-    const priceNum = parseFloat(input.price) || 0;
     const paidNum = parseFloat(input.paymentAmount) || 0;
 
-    if (paidNum >= priceNum) {
+    if (paidNum >= total) {
       await recordJourneyEvent(
         journey.id,
         "payment_completed",
