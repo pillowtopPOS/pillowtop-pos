@@ -176,7 +176,7 @@ $$;
 
 -- Total paid by a journey across deposits and payments; runs with invoker privileges so public callers respect RLS
 
-create or replace function public.total_paid(journey_id uuid)
+create or replace function public.total_paid(p_journey_id uuid)
 returns numeric
 language plpgsql
 stable
@@ -188,7 +188,7 @@ begin
     (
       select sum((event_data->>'amount')::numeric)
       from public.journey_events
-      where journey_id = $1
+      where public.journey_events.journey_id = p_journey_id
         and event_type in ('deposit_received', 'payment_completed')
         and (event_data->>'amount') ~ '^[0-9]+(\.[0-9]+)?$'
     ),
