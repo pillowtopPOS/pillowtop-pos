@@ -131,7 +131,7 @@ as $$
     join public.stores s on s.id = e.home_store_id
     where e.auth_user_id = auth.uid()
   )
-    and similarity(p.search_text, lower(p_query)) > 0.15
-  order by similarity(p.search_text, lower(p_query)) desc
+    and word_similarity(p.search_text, lower(p_query)) > 0.15
+  order by word_similarity(p.search_text, lower(p_query)) desc
   limit 20;
 $$;
