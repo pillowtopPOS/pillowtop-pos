@@ -1,10 +1,8 @@
-import {
-  SLEEP_JOURNEY_STATES,
-  type SleepJourneyState,
-} from "@/lib/constants";
+import { SLEEP_JOURNEY_STATES, type SleepJourneyState } from "@/lib/constants";
 
 export type JourneyEventType =
   | "quote_created"
+  | "quote_sent"
   | "deposit_received"
   | "payment_completed"
   | "inventory_required"
@@ -14,7 +12,12 @@ export type JourneyEventType =
   | "trial_completed"
   | "journey_cancelled";
 
-export type RequiredField = { name: string; label: string; type: "text" | "number" | "date" };
+export type RequiredField = {
+  name: string;
+  label: string;
+  type: "text" | "number" | "date" | "datetime-local";
+  optional?: boolean;
+};
 
 export type StateTransition = {
   to: SleepJourneyState;
@@ -24,15 +27,38 @@ export type StateTransition = {
 };
 
 export const STATE_TRANSITIONS: Record<SleepJourneyState, StateTransition[]> = {
-  "Active Opportunity": [
-    { to: "Quoted", event: "quote_created", label: "Create Quote" },
-  ],
+  "Active Opportunity": [],
   Quoted: [
-    { to: "Deposit Made", event: "deposit_received", label: "Record Deposit" },
+    {
+      to: "Quoted",
+      event: "deposit_received",
+      label: "Record Deposit",
+      requiredFields: [
+        { name: "amount", label: "Amount", type: "number" },
+        { name: "payment_method", label: "Payment method", type: "text" },
+      ],
+    },
+    {
+      to: "Sold",
+      event: "payment_completed",
+      label: "Record Payment",
+      requiredFields: [
+        { name: "amount", label: "Amount", type: "number" },
+        { name: "payment_method", label: "Payment method", type: "text" },
+      ],
+    },
+    {
+      to: "Waiting for Inventory",
+      event: "inventory_required",
+      label: "Need Inventory",
+    },
+    {
+      to: "Ready to Schedule",
+      event: "inventory_received",
+      label: "Mark Inventory Received",
+    },
   ],
-  "Deposit Made": [
-    { to: "Sold", event: "payment_completed", label: "Record Payment" },
-  ],
+  "Deposit Made": [],
   Sold: [
     {
       to: "Waiting for Inventory",

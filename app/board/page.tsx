@@ -19,22 +19,24 @@ import {
   LayoutGrid,
   X,
   Calendar,
-  Trash2,
   Check,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { SLEEP_JOURNEY_STATES, type SleepJourneyState } from "@/lib/constants";
+import { BOARD_STATES, type SleepJourneyState } from "@/lib/constants";
 import {
   fetchJourneys,
   fetchJourneyEvents,
+  fetchJourneyFollowUps,
   fetchEmployees,
   fetchCurrentEmployee,
   fetchStores,
   subscribeToJourneyChanges,
   recordJourneyEvent,
   cancelJourney,
+  completeFollowUp,
   type JourneyWithDetails,
   type JourneyEvent,
+  type FollowUp,
   type Employee,
   type Store,
 } from "@/lib/journeys/queries";
@@ -63,6 +65,7 @@ export default function BoardPage() {
 
   const [selectedJourney, setSelectedJourney] = useState<JourneyWithDetails | null>(null);
   const [events, setEvents] = useState<JourneyEvent[]>([]);
+  const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   const [pendingTransition, setPendingTransition] = useState<{
     journey: JourneyWithDetails;
     transition: StateTransition;
@@ -140,6 +143,7 @@ export default function BoardPage() {
   useEffect(() => {
     if (selectedJourney) {
       fetchJourneyEvents(selectedJourney.id).then(setEvents);
+      fetchJourneyFollowUps(selectedJourney.id).then(setFollowUps);
     }
   }, [selectedJourney]);
 
@@ -147,14 +151,12 @@ export default function BoardPage() {
     return journeys.filter((j) => !j.cancelled_at);
   }, [journeys]);
 
-  const boardStates = SLEEP_JOURNEY_STATES.filter((s) => s !== "Completed");
-
   const columns = useMemo(() => {
-    return boardStates.map((state) => ({
+    return BOARD_STATES.map((state) => ({
       state,
       journeys: boardJourneys.filter((j) => j.current_state === state),
     }));
-  }, [boardJourneys, boardStates]);
+  }, [boardJourneys]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -194,13 +196,16 @@ export default function BoardPage() {
     fieldValues: Record<string, string>
   ) {
     const eventData: Record<string, unknown> = {};
+
     for (const field of transition.requiredFields ?? []) {
-      if (!fieldValues[field.name]) {
+      if (!field.optional && !fieldValues[field.name]) {
         window.alert(`${field.label} is required`);
         return;
       }
-      eventData[field.name] =
-        field.type === "number" ? Number(fieldValues[field.name]) : fieldValues[field.name];
+      if (fieldValues[field.name]) {
+        eventData[field.name] =
+          field.type === "number" ? Number(fieldValues[field.name]) : fieldValues[field.name];
+      }
     }
 
     try {
@@ -212,10 +217,7 @@ export default function BoardPage() {
     }
   }
 
-  async function executeAction(
-    journey: JourneyWithDetails,
-    eventType: JourneyEventType
-  ) {
+  async function executeAction(journey: JourneyWithDetails, eventType: JourneyEventType) {
     const transition = getTransitionForEvent(journey.current_state, eventType);
     if (!transition) return;
 
@@ -246,6 +248,18 @@ export default function BoardPage() {
       <header className="mb-4 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold text-slate-900">Sleep Journey Board</h1>
         <div className="flex items-center gap-2">
+          <Link
+            href="/my-work"
+            className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <Calendar className="h-4 w-4" /> My Work
+          </Link>
+          <Link
+            href="/opportunities"
+            className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Opportunities
+          </Link>
           <Link
             href="/journeys/new"
             className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
@@ -303,7 +317,7 @@ export default function BoardPage() {
 
       {!loading && view === "board" && (
         <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-          <div className="grid min-w-[1152px] grid-cols-8 gap-2 overflow-x-auto pb-2">
+          <div className="grid min-w-[960px] grid-cols-6 gap-2 overflow-x-auto pb-2">
             {columns.map((column) => (
               <Column
                 key={column.state}
@@ -334,24 +348,20 @@ export default function BoardPage() {
               {journeys.map((j) => (
                 <tr
                   key={j.id}
+                  className="border-b border-slate-100 hover:bg-slate-50"
                   onClick={() => setSelectedJourney(j)}
-                  className={`cursor-pointer border-b border-slate-100 hover:bg-slate-50 ${
-                    j.cancelled_at ? "opacity-60" : ""
-                  }`}
                 >
                   <td className="px-4 py-2">
                     {j.customer
                       ? `${j.customer.first_name} ${j.customer.last_name}`
-                      : "—"}
+                      : "Unknown"}
                   </td>
                   <td className="px-4 py-2">{j.customer?.phone ?? "—"}</td>
                   <td className="px-4 py-2">{j.product_summary ?? "—"}</td>
                   <td className="px-4 py-2">{j.current_state}</td>
                   <td className="px-4 py-2">{j.store?.name ?? "—"}</td>
                   <td className="px-4 py-2">{j.employee?.name ?? "—"}</td>
-                  <td className="px-4 py-2">
-                    {j.cancelled_at ? "Yes" : "No"}
-                  </td>
+                  <td className="px-4 py-2">{j.cancelled_at ? "Yes" : "No"}</td>
                 </tr>
               ))}
             </tbody>
@@ -363,10 +373,14 @@ export default function BoardPage() {
         <JourneyDetailPanel
           journey={selectedJourney}
           events={events}
+          followUps={followUps}
           employees={employees}
           onClose={() => setSelectedJourney(null)}
           onAction={executeAction}
           onCancel={setCancelJourneyState}
+          onRefresh={() => {
+            fetchJourneyFollowUps(selectedJourney.id).then(setFollowUps);
+          }}
         />
       )}
 
@@ -391,6 +405,18 @@ export default function BoardPage() {
                   {field.type === "date" ? (
                     <input
                       type="date"
+                      value={pendingFieldValues[field.name] ?? ""}
+                      onChange={(e) =>
+                        setPendingFieldValues({
+                          ...pendingFieldValues,
+                          [field.name]: e.target.value,
+                        })
+                      }
+                      className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    />
+                  ) : field.type === "datetime-local" ? (
+                    <input
+                      type="datetime-local"
                       value={pendingFieldValues[field.name] ?? ""}
                       onChange={(e) =>
                         setPendingFieldValues({
@@ -447,9 +473,6 @@ export default function BoardPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
           <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
             <h2 className="mb-2 text-lg font-semibold text-slate-900">Cancel Journey</h2>
-            <p className="mb-4 text-sm text-slate-600">
-              This will remove the journey from the board. A reason is required.
-            </p>
             <textarea
               value={cancelReason}
               onChange={(e) => setCancelReason(e.target.value)}
@@ -531,6 +554,11 @@ function JourneyCard({
     opacity: isDragging ? 0.5 : 1,
   };
 
+  const balance =
+    journey.price !== null && journey.price !== undefined
+      ? journey.price - (journey.price ?? 0)
+      : null;
+
   return (
     <div
       ref={setNodeRef}
@@ -558,6 +586,11 @@ function JourneyCard({
           {journey.employee.name}
         </p>
       )}
+      {journey.current_state === "Quoted" && journey.price !== null && (balance ?? 0) > 0 && (
+        <p className="truncate text-[10px] leading-tight text-amber-600">
+          Balance due: ${balance?.toFixed(2)}
+        </p>
+      )}
     </div>
   );
 }
@@ -565,19 +598,42 @@ function JourneyCard({
 function JourneyDetailPanel({
   journey,
   events,
+  followUps,
   employees,
   onClose,
   onAction,
   onCancel,
+  onRefresh,
 }: {
   journey: JourneyWithDetails;
   events: JourneyEvent[];
+  followUps: FollowUp[];
   employees: Employee[];
   onClose: () => void;
   onAction: (j: JourneyWithDetails, e: JourneyEventType) => void;
   onCancel: (j: JourneyWithDetails) => void;
+  onRefresh: () => void;
 }) {
   const transitions = STATE_TRANSITIONS[journey.current_state];
+
+  const paid = events
+    .filter((e) => e.event_type === "deposit_received" || e.event_type === "payment_completed")
+    .reduce((sum, e) => sum + (typeof e.event_data?.amount === "number" ? e.event_data.amount : 0), 0);
+
+  const balance = journey.price !== null && journey.price !== undefined ? journey.price - paid : null;
+
+  const nextFollowUp = followUps
+    .filter((f) => !f.completed_at)
+    .sort((a, b) => new Date(a.due_at).getTime() - new Date(b.due_at).getTime())[0];
+
+  async function markFollowUpComplete(id: string) {
+    try {
+      await completeFollowUp(id);
+      onRefresh();
+    } catch (e: any) {
+      window.alert(e.message ?? "Failed to complete follow-up");
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-slate-900/50 p-0">
@@ -592,87 +648,146 @@ function JourneyDetailPanel({
           </button>
         </div>
 
-        <div className="mb-6 space-y-2 text-sm">
-          <p>
-            <span className="font-medium text-slate-700">State:</span>{" "}
-            {journey.current_state}
-          </p>
-          <p>
-            <span className="font-medium text-slate-700">Customer:</span>{" "}
-            {journey.customer
-              ? `${journey.customer.first_name} ${journey.customer.last_name}`
-              : "—"}
-          </p>
-          <p>
-            <span className="font-medium text-slate-700">Phone:</span>{" "}
-            {journey.customer?.phone ?? "—"}
-          </p>
-          <p>
-            <span className="font-medium text-slate-700">Email:</span>{" "}
-            {journey.customer?.email ?? "—"}
-          </p>
-          <p>
-            <span className="font-medium text-slate-700">Product:</span>{" "}
-            {journey.product_summary ?? "—"}
-          </p>
-          <p>
-            <span className="font-medium text-slate-700">Store:</span>{" "}
-            {journey.store?.name ?? "—"}
-          </p>
-          <p>
-            <span className="font-medium text-slate-700">Assigned:</span>{" "}
-            {journey.employee?.name ?? employees.find((e) => e.id === journey.assigned_employee_id)?.name ?? "—"}
-          </p>
+        <div className="space-y-3 text-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-slate-500">State</span>
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-700">
+              {journey.current_state}
+            </span>
+          </div>
+
+          {journey.price !== null && (
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500">Agreed price</span>
+              <span className="font-medium text-slate-900">${journey.price.toFixed(2)}</span>
+            </div>
+          )}
+
+          {balance !== null && (
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500">Balance due</span>
+              <span className={`font-medium ${balance > 0 ? "text-amber-600" : "text-green-600"}`}>
+                ${balance.toFixed(2)}
+              </span>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between">
+            <span className="text-slate-500">Customer</span>
+            <span className="text-right font-medium text-slate-900">
+              {journey.customer
+                ? `${journey.customer.first_name} ${journey.customer.last_name}`
+                : "Unknown"}
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <span className="text-slate-500">Phone</span>
+            <span className="text-slate-700">{journey.customer?.phone ?? "—"}</span>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <span className="text-slate-500">Email</span>
+            <span className="text-slate-700">{journey.customer?.email ?? "—"}</span>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <span className="text-slate-500">Product</span>
+            <span className="text-right text-slate-700">{journey.product_summary ?? "—"}</span>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <span className="text-slate-500">Store</span>
+            <span className="text-slate-700">{journey.store?.name ?? "—"}</span>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <span className="text-slate-500">Assigned</span>
+            <span className="text-slate-700">{journey.employee?.name ?? "—"}</span>
+          </div>
         </div>
 
-        <div className="mb-6 space-y-2">
-          <h3 className="text-sm font-semibold text-slate-900">Actions</h3>
-          {transitions.length > 0 ? (
-            transitions
-              .filter(Boolean)
-              .map((t) => (
-                <button
-                  key={t!.event}
-                  onClick={() => onAction(journey, t!.event)}
-                  className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-                >
-                  {t!.label}
-                </button>
-              ))
-          ) : (
-            <p className="text-sm text-slate-500">No forward actions for this state.</p>
-          )}
-          {journey.current_state !== "Completed" && !journey.cancelled_at && (
+        {nextFollowUp && (
+          <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3">
+            <h3 className="text-xs font-semibold uppercase text-amber-700">Next recommended action</h3>
+            <p className="mt-1 text-sm text-slate-800">{nextFollowUp.notes}</p>
+            <p className="text-xs text-slate-500">
+              Due {new Date(nextFollowUp.due_at).toLocaleString()}
+            </p>
             <button
-              onClick={() => onCancel(journey)}
-              className="mt-2 inline-flex w-full items-center gap-2 rounded-md bg-red-50 px-3 py-2 text-left text-sm font-medium text-red-700 hover:bg-red-100"
+              onClick={() => markFollowUpComplete(nextFollowUp.id)}
+              className="mt-2 inline-flex items-center gap-1 rounded-md bg-white px-2 py-1 text-xs font-medium text-slate-700 border border-slate-200 hover:bg-slate-50"
             >
-              <Trash2 className="h-4 w-4" /> Cancel Journey
+              <Check className="h-3 w-3" /> Mark complete
             </button>
-          )}
+          </div>
+        )}
+
+        <div className="mt-6">
+          <h3 className="mb-2 text-sm font-semibold text-slate-900">Actions</h3>
+          <div className="flex flex-wrap gap-2">
+            {transitions.map((t) => (
+              <button
+                key={t.event}
+                onClick={() => onAction(journey, t.event)}
+                className="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
+              >
+                {t.label}
+              </button>
+            ))}
+            {journey.current_state !== "Completed" && !journey.cancelled_at && (
+              <button
+                onClick={() => onCancel(journey)}
+                className="rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700"
+              >
+                Cancel Journey
+              </button>
+            )}
+          </div>
         </div>
 
-        <div>
+        <div className="mt-6">
+          <h3 className="mb-2 text-sm font-semibold text-slate-900">Follow-up history</h3>
+          <div className="space-y-2">
+            {followUps.length === 0 && (
+              <p className="text-sm text-slate-500">No follow-ups.</p>
+            )}
+            {followUps.map((f) => (
+              <div
+                key={f.id}
+                className={`rounded-md border p-2 text-sm ${
+                  f.completed_at
+                    ? "border-slate-200 bg-slate-50 text-slate-500"
+                    : "border-amber-200 bg-amber-50 text-slate-800"
+                }`}
+              >
+                <p className="font-medium capitalize">{f.type}</p>
+                <p className="text-xs">{f.notes}</p>
+                <p className="text-xs">Due {new Date(f.due_at).toLocaleString()}</p>
+                {f.completed_at && (
+                  <p className="text-xs">Completed {new Date(f.completed_at).toLocaleString()}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-6">
           <h3 className="mb-2 text-sm font-semibold text-slate-900">History</h3>
           <div className="space-y-2">
-            {events.length === 0 && (
-              <p className="text-sm text-slate-500">No events yet.</p>
-            )}
-            {events.map((ev) => (
+            {events.map((e) => (
               <div
-                key={ev.id}
+                key={e.id}
                 className="rounded-md border border-slate-200 bg-slate-50 p-2 text-sm"
               >
-                <p className="font-medium text-slate-800">
-                  {ev.event_type.replace(/_/g, " ")}
-                </p>
-                {ev.event_data && Object.keys(ev.event_data).length > 0 && (
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    {JSON.stringify(ev.event_data)}
+                <p className="font-medium text-slate-700">{e.event_type}</p>
+                {Object.keys(e.event_data ?? {}).length > 0 && (
+                  <p className="text-xs text-slate-500">
+                    {JSON.stringify(e.event_data)}
                   </p>
                 )}
                 <p className="text-xs text-slate-400">
-                  {new Date(ev.created_at).toLocaleString()} · {ev.triggered_by === "system" ? "system" : "employee"}
+                  {new Date(e.created_at).toLocaleString()} by {e.triggered_by === "system" ? "System" : "User"}
                 </p>
               </div>
             ))}

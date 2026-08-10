@@ -6,6 +6,7 @@ export type JourneyWithDetails = {
   id: string;
   current_state: SleepJourneyState;
   product_summary: string | null;
+  price: number | null;
   cancelled_at: string | null;
   created_at: string;
   updated_at: string;
@@ -37,6 +38,30 @@ export type JourneyEvent = {
   created_at: string;
 };
 
+export type FollowUp = {
+  id: string;
+  journey_id: string;
+  type: "quote" | "deposit";
+  due_at: string;
+  completed_at: string | null;
+  notes: string | null;
+  journey?: JourneyWithDetails;
+};
+
+export type Opportunity = {
+  id: string;
+  first_name: string;
+  last_name: string;
+  phone: string;
+  email: string;
+  product_summary: string | null;
+  source: string | null;
+  notes: string | null;
+  status: string;
+  store_id: string;
+  created_at: string;
+};
+
 export type Store = {
   id: string;
   name: string;
@@ -61,7 +86,7 @@ export async function fetchJourneys(
   let query = supabase
     .from("sleep_journeys")
     .select(
-      `id, current_state, product_summary, cancelled_at, created_at, updated_at, store_id, assigned_employee_id,
+      `id, current_state, product_summary, price, cancelled_at, created_at, updated_at, store_id, assigned_employee_id,
       customer:customers!customer_id ( id, first_name, last_name, phone, email ),
       employee:employees!assigned_employee_id ( id, name ),
       store:stores!store_id ( id, name )`
@@ -115,6 +140,22 @@ export async function fetchJourneyEvents(journeyId: string): Promise<JourneyEven
   }
 
   return (data as unknown as JourneyEvent[]) ?? [];
+}
+
+export async function fetchJourneyFollowUps(journeyId: string): Promise<FollowUp[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("follow_ups")
+    .select("*")
+    .eq("journey_id", journeyId)
+    .order("due_at", { ascending: true });
+
+  if (error) {
+    console.error("fetchJourneyFollowUps error", error);
+    return [];
+  }
+
+  return (data as unknown as FollowUp[]) ?? [];
 }
 
 export async function fetchStores(): Promise<Store[]> {
@@ -183,55 +224,6 @@ export function subscribeToJourneyChanges(callback: () => void) {
   };
 }
 
-export type NewJourneyInput = {
-  firstName: string;
-  lastName: string;
-  phone: string;
-  email: string;
-  productSummary: string;
-  storeId: string;
-  assignedEmployeeId: string | null;
-};
-
-export async function createJourney(input: NewJourneyInput) {
-  const supabase = createClient();
-
-  const {
-    data: { session },
-    error: sessionError,
-  } = await supabase.auth.refreshSession();
-
-  if (sessionError || !session?.user) {
-    throw new Error("Not authenticated");
-  }
-
-  const user = session.user;
-  const customerId = crypto.randomUUID();
-
-  const { error: customerError } = await supabase.from("customers").insert({
-    id: customerId,
-    first_name: input.firstName,
-    last_name: input.lastName,
-    phone: input.phone,
-    email: input.email,
-  });
-
-  if (customerError) {
-    throw new Error(customerError.message);
-  }
-
-  const { error: journeyError } = await supabase.from("sleep_journeys").insert({
-    customer_id: customerId,
-    store_id: input.storeId,
-    assigned_employee_id: input.assignedEmployeeId,
-    product_summary: input.productSummary,
-  });
-
-  if (journeyError) {
-    throw new Error(journeyError.message);
-  }
-}
-
 export async function recordJourneyEvent(
   journeyId: string,
   eventType: JourneyEventType,
@@ -286,4 +278,208 @@ export async function cancelJourney(journeyId: string, reason: string) {
   if (error) {
     throw new Error(error.message);
   }
+}
+
+export type CustomerInput = {
+  firstName: string;
+  lastName: string;
+  phone: string;
+  email: string;
+};
+
+type BaseCreateInput = {
+  customer: CustomerInput;
+  productSummary: string;
+  storeId: string;
+  assignedEmployeeId: string | null;
+};
+
+export type QuoteCreateInput = BaseCreateInput & {
+  mode: "quote";
+  quoteAmount?: string;
+  quoteNotes?: string;
+};
+
+export type PurchaseCreateInput = BaseCreateInput & {
+  mode: "purchase";
+  price: string;
+  paymentAmount: string;
+  paymentMethod: string;
+  followUpDueAt?: string;
+};
+
+export type CreateJourneyInput = QuoteCreateInput | PurchaseCreateInput;
+
+export async function createJourney(input: CreateJourneyInput) {
+  const supabase = createClient();
+
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.refreshSession();
+
+  if (sessionError || !session?.user) {
+    throw new Error("Not authenticated");
+  }
+
+  const customerId = crypto.randomUUID();
+
+  const { error: customerError } = await supabase.from("customers").insert({
+    id: customerId,
+    first_name: input.customer.firstName,
+    last_name: input.customer.lastName,
+    phone: input.customer.phone,
+    email: input.customer.email,
+  });
+
+  if (customerError) {
+    throw new Error(customerError.message);
+  }
+
+  const price =
+    input.mode === "purchase" ? parseFloat(input.price) || null : null;
+
+  const { data: journey, error: journeyError } = await supabase
+    .from("sleep_journeys")
+    .insert({
+      customer_id: customerId,
+      store_id: input.storeId,
+      assigned_employee_id: input.assignedEmployeeId,
+      product_summary: input.productSummary,
+      price,
+    })
+    .select("id")
+    .single();
+
+  if (journeyError || !journey) {
+    throw new Error(journeyError?.message ?? "Failed to create journey");
+  }
+
+  if (input.mode === "quote") {
+    await recordJourneyEvent(
+      journey.id,
+      "quote_sent",
+      {
+        amount: input.quoteAmount ? parseFloat(input.quoteAmount) : undefined,
+        notes: input.quoteNotes,
+      }
+    );
+  } else {
+    const priceNum = parseFloat(input.price) || 0;
+    const paidNum = parseFloat(input.paymentAmount) || 0;
+
+    if (paidNum >= priceNum) {
+      await recordJourneyEvent(
+        journey.id,
+        "payment_completed",
+        {
+          amount: paidNum,
+          payment_method: input.paymentMethod,
+        }
+      );
+    } else {
+      await recordJourneyEvent(
+        journey.id,
+        "deposit_received",
+        {
+          amount: paidNum,
+          payment_method: input.paymentMethod,
+          follow_up_due_at: input.followUpDueAt || undefined,
+        }
+      );
+    }
+  }
+}
+
+export async function fetchOpportunities(storeId?: string): Promise<Opportunity[]> {
+  const supabase = createClient();
+  let query = supabase
+    .from("opportunities")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (storeId && storeId !== "all") {
+    query = query.eq("store_id", storeId);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    console.error("fetchOpportunities error", error);
+    return [];
+  }
+
+  return (data as unknown as Opportunity[]) ?? [];
+}
+
+export type MyWorkItem =
+  | { kind: "follow_up"; data: FollowUp & { journey: JourneyWithDetails | null } }
+  | { kind: "opportunity"; data: Opportunity };
+
+export async function fetchMyWork(): Promise<MyWorkItem[]> {
+  const supabase = createClient();
+
+  const [{ data: followUps, error: followError }, { data: opportunities, error: oppError }] =
+    await Promise.all([
+      supabase
+        .from("follow_ups")
+        .select("*")
+        .is("completed_at", null)
+        .order("due_at", { ascending: true }),
+      supabase
+        .from("opportunities")
+        .select("*")
+        .eq("status", "new")
+        .order("created_at", { ascending: false }),
+    ]);
+
+  if (followError) console.error("fetchMyWork follow_ups error", followError);
+  if (oppError) console.error("fetchMyWork opportunities error", oppError);
+
+  const journeyIds = ((followUps as unknown as FollowUp[]) ?? [])
+    .map((f) => f.journey_id)
+    .filter((id, idx, arr) => arr.indexOf(id) === idx);
+
+  const { data: journeys, error: journeyError } = await supabase
+    .from("sleep_journeys")
+    .select(
+      `id, current_state, product_summary, price, cancelled_at, created_at, updated_at, store_id, assigned_employee_id,
+      customer:customers!customer_id ( id, first_name, last_name, phone, email ),
+      employee:employees!assigned_employee_id ( id, name ),
+      store:stores!store_id ( id, name )`
+    )
+    .in("id", journeyIds);
+
+  if (journeyError) console.error("fetchMyWork sleep_journeys error", journeyError);
+
+  const journeyMap = new Map<string, JourneyWithDetails>();
+  for (const j of (journeys as unknown as JourneyWithDetails[]) ?? []) {
+    journeyMap.set(j.id, j);
+  }
+
+  const items: MyWorkItem[] = [];
+
+  for (const f of (followUps as unknown as FollowUp[]) ?? []) {
+    items.push({
+      kind: "follow_up",
+      data: { ...f, journey: journeyMap.get(f.journey_id) ?? null } as FollowUp & {
+        journey: JourneyWithDetails | null;
+      },
+    });
+  }
+
+  for (const o of (opportunities as unknown as Opportunity[]) ?? []) {
+    items.push({ kind: "opportunity", data: o });
+  }
+
+  return items;
+}
+
+export async function completeFollowUp(followUpId: string) {
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("follow_ups")
+    .update({ completed_at: new Date().toISOString() })
+    .eq("id", followUpId);
+
+  if (error) throw new Error(error.message);
 }
