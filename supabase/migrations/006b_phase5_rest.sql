@@ -1,14 +1,7 @@
--- PillowTop POS Phase 5: Multi-product line items and sale-price display
+-- PillowTop POS Phase 5, part B: multi-product line items and sale-price display
+-- Run 006a_phase5_enum.sql first so the new event enum values exist.
 
--- 1. New journey event types for line-item and balance events
-
-alter type public.journey_event_type add value if not exists 'line_item_added';
-alter type public.journey_event_type add value if not exists 'line_item_removed';
-alter type public.journey_event_type add value if not exists 'line_item_updated';
-alter type public.journey_event_type add value if not exists 'journey_updated_to_sold';
-alter type public.journey_event_type add value if not exists 'line_items_changed_balance_due';
-
--- 2. Line items table
+-- 1. Line items table
 
 create table if not exists public.journey_line_items (
   id uuid primary key default gen_random_uuid(),
@@ -24,7 +17,7 @@ create table if not exists public.journey_line_items (
 create index if not exists idx_journey_line_items_journey on public.journey_line_items (journey_id);
 create index if not exists idx_journey_line_items_product on public.journey_line_items (product_id);
 
--- 3. RLS on line items (visible/writable if parent journey is visible)
+-- 2. RLS on line items (visible/writable if parent journey is visible)
 
 alter table public.journey_line_items enable row level security;
 
@@ -53,7 +46,7 @@ create policy "Journey line items deletable by authenticated users"
   to authenticated
   using (public.is_journey_visible(journey_id));
 
--- 4. Update event-to-state mapping (additive; hard-fought Sold logic in derive_journey_state is untouched)
+-- 3. Update event-to-state mapping (additive; hard-fought Sold logic in derive_journey_state is untouched)
 
 create or replace function public.event_to_state(evt public.journey_event_type)
 returns public.journey_state
@@ -78,7 +71,7 @@ begin
 end;
 $$;
 
--- 5. Re-evaluate Quoted/Sold balance whenever line items change the price
+-- 4. Re-evaluate Quoted/Sold balance whenever line items change the price
 
 create or replace function public.reevaluate_journey_balance(p_journey_id uuid)
 returns void
@@ -150,7 +143,7 @@ begin
 end;
 $$;
 
--- 6. Auto-sync sleep_journeys.price/product_summary from line items and log line-item events
+-- 5. Auto-sync sleep_journeys.price/product_summary from line items and log line-item events
 
 create or replace function public.sync_journey_price()
 returns trigger
@@ -243,7 +236,7 @@ create trigger sync_journey_price
   for each row
   execute function public.sync_journey_price();
 
--- 7. Backfill: one line item for each existing journey that has a price, so historical journeys display consistently
+-- 6. Backfill: one line item for each existing journey that has a price, so historical journeys display consistently
 
 insert into public.journey_line_items (
   journey_id,
