@@ -1,7 +1,6 @@
--- Phase 1: Employee roles + Settings access
-
--- 1. Make sure the employee_role enum has owner, admin, and employee values.
--- The original scaffolding used owner/manager/sales, so we adapt it in place.
+-- Phase 1, part A: employee_role enum values
+-- Run this first, separately, because Postgres does not allow a newly-added enum value
+-- to be used in the same transaction in which it was created.
 
 do $$
 begin
@@ -29,22 +28,3 @@ begin
     alter type public.employee_role add value 'employee';
   end if;
 end $$;
-
--- 2. Update the default so new employees are regular employees.
-
-alter table public.employees
-  alter column role set default 'employee';
-
--- 3. Backfill existing rows: manager -> admin, sales -> employee, Zach -> owner.
-
-update public.employees
-set role = 'admin'
-where role = 'manager';
-
-update public.employees
-set role = 'employee'
-where role = 'sales';
-
-update public.employees
-set role = 'owner'
-where name = 'Zach Roesch';
