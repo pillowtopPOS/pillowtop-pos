@@ -209,6 +209,7 @@ declare
   target public.journey_state;
   journey_price numeric;
   paid numeric;
+  new_price numeric;
   store_rec public.stores%rowtype;
   emp_id uuid;
   follow_up_due timestamptz;
@@ -250,8 +251,15 @@ begin
     end if;
   end if;
 
+  if new.event_type in ('quote_created', 'quote_sent')
+    and new.event_data->>'amount' ~ '^[0-9]+(\.[0-9]+)?$'
+  then
+    new_price := (new.event_data->>'amount')::numeric;
+  end if;
+
   update public.sleep_journeys
   set current_state = target,
+      price = coalesce(price, new_price),
       updated_at = now()
   where id = new.journey_id;
 
@@ -365,3 +373,27 @@ update public.sleep_journeys
 set price = public.total_paid(id)
 where current_state = 'Sold'
   and price is null;
+
+-- Backfill price from the most recent quote_sent/quote_created amount for any journey missing a price
+with quote_prices as (
+  select distinct on (journey_id)
+    journey_id,
+    (event_data->>'amount')::numeric as amount
+  from public.journey_events
+  where event_type in ('quote_sent', 'quote_created')
+    and (event_data->>'amount') ~ '^[0-9]+(\.[0-9]+)?$'
+  order by journey_id, created_at desc
+)
+update public.sleep_journeys sj
+set price = coalesce(sj.price, qp.amount)
+from quote_prices qp
+where sj.id = qp.journey_id
+  and sj.cancelled_at is null;
+
+-- Promote any Quoted journey whose total paid now matches/exceeds its price to Sold
+update public.sleep_journeys
+set current_state = 'Sold'
+where current_state = 'Quoted'
+  and cancelled_at is null
+  and price is not null
+  and public.total_paid(id) >= price;

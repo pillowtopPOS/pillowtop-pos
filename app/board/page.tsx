@@ -396,6 +396,30 @@ export default function BoardPage() {
                 : "Journey"}{" "}
               → {pendingTransition.transition.to}
             </p>
+            {pendingTransition.journey.price !== null && pendingTransition.journey.price !== undefined && (
+              <div className="mb-4 rounded-md bg-slate-50 p-3 text-sm">
+                {(() => {
+                  const paid = events
+                    .filter(
+                      (e) =>
+                        e.event_type === "deposit_received" ||
+                        e.event_type === "payment_completed"
+                    )
+                    .reduce(
+                      (sum, e) =>
+                        sum +
+                        (typeof e.event_data?.amount === "number" ? e.event_data.amount : 0),
+                      0
+                    );
+                  const balance = pendingTransition.journey.price - paid;
+                  return (
+                    <p className="font-medium text-slate-700">
+                      Current balance due: ${balance.toFixed(2)}
+                    </p>
+                  );
+                })()}
+              </div>
+            )}
             <div className="space-y-3">
               {pendingTransition.transition.requiredFields?.map((field) => (
                 <div key={field.name}>
