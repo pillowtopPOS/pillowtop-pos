@@ -1,4 +1,5 @@
 const fs = require("fs");
+const WebSocket = require("ws");
 const { createClient } = require("@supabase/supabase-js");
 
 function loadEnv(path = ".env.local") {
@@ -26,6 +27,7 @@ if (!url || !anonKey || !serviceKey) {
 
 const admin = createClient(url, serviceKey, {
   auth: { persistSession: false },
+  realtime: { transport: WebSocket },
 });
 
 async function sleepJourneysFor(client) {
@@ -167,6 +169,7 @@ async function run() {
     // Test Company A employee
     const clientA = createClient(url, anonKey, {
       auth: { persistSession: false },
+      realtime: { transport: WebSocket },
     });
     const { data: sessionA } = await clientA.auth.signInWithPassword({
       email: emailA,
@@ -189,6 +192,7 @@ async function run() {
     // Test Company B employee
     const clientB = createClient(url, anonKey, {
       auth: { persistSession: false },
+      realtime: { transport: WebSocket },
     });
     const { data: sessionB } = await clientB.auth.signInWithPassword({
       email: emailB,
