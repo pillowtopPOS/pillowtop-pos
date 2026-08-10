@@ -147,12 +147,14 @@ export default function BoardPage() {
     return journeys.filter((j) => !j.cancelled_at);
   }, [journeys]);
 
+  const boardStates = SLEEP_JOURNEY_STATES.filter((s) => s !== "Completed");
+
   const columns = useMemo(() => {
-    return SLEEP_JOURNEY_STATES.map((state) => ({
+    return boardStates.map((state) => ({
       state,
       journeys: boardJourneys.filter((j) => j.current_state === state),
     }));
-  }, [boardJourneys]);
+  }, [boardJourneys, boardStates]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -301,7 +303,7 @@ export default function BoardPage() {
 
       {!loading && view === "board" && (
         <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-          <div className="flex gap-3 overflow-x-auto pb-2">
+          <div className="grid min-w-[1152px] grid-cols-8 gap-2 overflow-x-auto pb-2">
             {columns.map((column) => (
               <Column
                 key={column.state}
@@ -490,17 +492,19 @@ function Column({
   return (
     <div
       ref={setNodeRef}
-      className={`flex w-64 shrink-0 flex-col rounded-lg border border-slate-200 bg-slate-100 p-2 ${
+      className={`flex w-full min-w-0 flex-col rounded-lg border border-slate-200 bg-slate-100 p-1.5 ${
         isOver ? "ring-2 ring-brand-400" : ""
       }`}
     >
-      <div className="mb-2 flex items-center justify-between px-1">
-        <h3 className="text-sm font-semibold text-slate-700">{state}</h3>
-        <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-600">
+      <div className="mb-1.5 flex items-center justify-between gap-1 px-1">
+        <h3 className="truncate text-xs font-semibold leading-tight text-slate-700">
+          {state}
+        </h3>
+        <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] text-slate-600">
           {journeys.length}
         </span>
       </div>
-      <div className="min-h-[120px] space-y-2">
+      <div className="min-h-[80px] space-y-1.5">
         {journeys.map((j) => (
           <JourneyCard key={j.id} journey={j} onSelect={onSelect} />
         ))}
@@ -534,23 +538,25 @@ function JourneyCard({
       {...listeners}
       {...attributes}
       onClick={() => onSelect(journey)}
-      className="cursor-grab rounded-md border border-slate-200 bg-white p-3 shadow-sm active:cursor-grabbing"
+      className="cursor-grab space-y-0.5 rounded-md border border-slate-200 bg-white p-2 shadow-sm active:cursor-grabbing"
     >
-      <p className="font-medium text-slate-900">
+      <p className="truncate text-xs font-medium leading-tight text-slate-900">
         {journey.customer
           ? `${journey.customer.first_name} ${journey.customer.last_name}`
           : "Unknown"}
       </p>
-      <p className="text-xs text-slate-500">
+      <p className="truncate text-[10px] leading-tight text-slate-500">
         {journey.customer?.phone ?? "—"}
       </p>
       {journey.product_summary && (
-        <p className="mt-1 truncate text-xs text-slate-600">
+        <p className="truncate text-[10px] leading-tight text-slate-600">
           {journey.product_summary}
         </p>
       )}
       {journey.employee && (
-        <p className="mt-1 text-xs text-slate-500">{journey.employee.name}</p>
+        <p className="truncate text-[10px] leading-tight text-slate-500">
+          {journey.employee.name}
+        </p>
       )}
     </div>
   );
