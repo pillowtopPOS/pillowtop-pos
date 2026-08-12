@@ -296,24 +296,22 @@ export type EmployeeInput = {
   is_active: boolean;
 };
 
+// No `.select()` here: the employees SELECT policy gates on is_employee_visible(),
+// a security-definer function that re-queries employees and cannot see the row being
+// inserted, so a RETURNING clause fails the policy and rolls the insert back.
 export async function createEmployee(input: EmployeeInput) {
   const supabase = createClient();
-  const { data, error } = await supabase
-    .from("employees")
-    .insert({
-      first_name: input.first_name,
-      last_name: input.last_name,
-      role: input.role,
-      home_store_id: input.home_store_id,
-      birthday: input.birthday,
-      hire_date: input.hire_date,
-      is_active: input.is_active,
-    })
-    .select("id")
-    .single();
+  const { error } = await supabase.from("employees").insert({
+    first_name: input.first_name,
+    last_name: input.last_name,
+    role: input.role,
+    home_store_id: input.home_store_id,
+    birthday: input.birthday,
+    hire_date: input.hire_date,
+    is_active: input.is_active,
+  });
 
   if (error) throw new Error(error.message);
-  return (data as { id: string } | null)?.id;
 }
 
 export async function updateEmployee(
