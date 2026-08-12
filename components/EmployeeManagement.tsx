@@ -27,8 +27,18 @@ const ROLES: { value: EmployeeRole; label: string; description: string }[] = [
     description: "Manages stores, employees, and settings.",
   },
   {
+    value: "manager",
+    label: "Manager",
+    description: "Sees every store's journeys, but not settings.",
+  },
+  {
     value: "employee",
     label: "Employee",
+    description: "Works journeys at their assigned store.",
+  },
+  {
+    value: "sales",
+    label: "Sales",
     description: "Works journeys at their assigned store.",
   },
 ];
@@ -115,9 +125,7 @@ export default function EmployeeManagement() {
     setForm({
       first_name: employee.first_name,
       last_name: employee.last_name,
-      role: (ROLES.some((r) => r.value === employee.role)
-        ? employee.role
-        : "employee") as EmployeeRole,
+      role: employee.role as EmployeeRole,
       home_store_id: employee.home_store_id,
       birthday: employee.birthday,
       hire_date: employee.hire_date,

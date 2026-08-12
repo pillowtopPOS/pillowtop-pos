@@ -87,7 +87,12 @@ export type Store = {
   trial_length_nights: number;
 };
 
-export type EmployeeRole = "owner" | "admin" | "employee";
+export type EmployeeRole =
+  | "owner"
+  | "manager"
+  | "sales"
+  | "admin"
+  | "employee";
 
 export type Employee = {
   id: string;
