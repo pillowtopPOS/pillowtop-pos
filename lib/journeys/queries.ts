@@ -87,12 +87,23 @@ export type Store = {
   trial_length_nights: number;
 };
 
+export type EmployeeRole = "owner" | "admin" | "employee";
+
 export type Employee = {
   id: string;
   name: string;
+  first_name: string;
+  last_name: string | null;
   role: string;
   home_store_id: string | null;
+  auth_user_id: string | null;
+  birthday: string | null;
+  hire_date: string | null;
+  is_active: boolean;
 };
+
+const EMPLOYEE_COLUMNS =
+  "id, name, first_name, last_name, role, home_store_id, auth_user_id, birthday, hire_date, is_active";
 
 export async function fetchJourneys(
   storeId?: string,
@@ -256,17 +267,84 @@ export async function countActiveJourneysForStore(storeId: string): Promise<numb
   return count ?? 0;
 }
 
-export async function fetchEmployees(): Promise<Employee[]> {
+export async function fetchEmployees(activeOnly = false): Promise<Employee[]> {
   const supabase = createClient();
-  const { data, error } = await supabase
-    .from("employees")
-    .select("id, name, role, home_store_id")
-    .order("name");
+  let query = supabase.from("employees").select(EMPLOYEE_COLUMNS).order("name");
+  if (activeOnly) {
+    query = query.eq("is_active", true);
+  }
+  const { data, error } = await query;
   if (error) {
     console.error("fetchEmployees error", error);
     return [];
   }
   return (data as unknown as Employee[]) ?? [];
+}
+
+export type EmployeeInput = {
+  first_name: string;
+  last_name: string | null;
+  role: EmployeeRole;
+  home_store_id: string | null;
+  birthday: string | null;
+  hire_date: string | null;
+  is_active: boolean;
+};
+
+export async function createEmployee(input: EmployeeInput) {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("employees")
+    .insert({
+      first_name: input.first_name,
+      last_name: input.last_name,
+      role: input.role,
+      home_store_id: input.home_store_id,
+      birthday: input.birthday,
+      hire_date: input.hire_date,
+      is_active: input.is_active,
+    })
+    .select("id")
+    .single();
+
+  if (error) throw new Error(error.message);
+  return (data as { id: string } | null)?.id;
+}
+
+export async function updateEmployee(
+  id: string,
+  updates: Partial<EmployeeInput>
+) {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("employees")
+    .update(updates)
+    .eq("id", id)
+    .select("id")
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) {
+    throw new Error("Employee update failed — row not found or not authorized.");
+  }
+}
+
+export async function countActiveJourneysForEmployee(
+  employeeId: string
+): Promise<number> {
+  const supabase = createClient();
+  const { count, error } = await supabase
+    .from("sleep_journeys")
+    .select("id", { count: "exact", head: true })
+    .eq("assigned_employee_id", employeeId)
+    .neq("current_state", "Completed")
+    .is("cancelled_at", null);
+
+  if (error) {
+    console.error("countActiveJourneysForEmployee error", error);
+    return 0;
+  }
+  return count ?? 0;
 }
 
 export async function fetchCurrentEmployee(): Promise<Employee | null> {
@@ -278,7 +356,7 @@ export async function fetchCurrentEmployee(): Promise<Employee | null> {
 
   const { data, error } = await supabase
     .from("employees")
-    .select("id, name, role, home_store_id")
+    .select(EMPLOYEE_COLUMNS)
     .eq("auth_user_id", user.id)
     .maybeSingle();
 
