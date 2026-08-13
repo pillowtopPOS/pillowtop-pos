@@ -332,6 +332,62 @@ export async function updateEmployee(
   }
 }
 
+export type Celebration = {
+  employee_id: string;
+  first_name: string;
+  type: "birthday" | "anniversary";
+  years: number | null;
+};
+
+function isSameMonthDay(date: string, today: Date) {
+  const [, month, day] = date.split("-").map(Number);
+  return month === today.getMonth() + 1 && day === today.getDate();
+}
+
+function yearsSince(date: string, today: Date) {
+  const [year, month, day] = date.split("-").map(Number);
+  let years = today.getFullYear() - year;
+  const monthDayPassed =
+    today.getMonth() + 1 > month ||
+    (today.getMonth() + 1 === month && today.getDate() >= day);
+  if (!monthDayPassed) years -= 1;
+  return years;
+}
+
+// Company-wide: RLS already scopes employees to the caller's company, and celebrations
+// are intentionally not filtered by store. Matching ignores the year.
+export async function fetchTodaysCelebrations(
+  today: Date = new Date()
+): Promise<Celebration[]> {
+  const employees = await fetchEmployees(true);
+  const celebrations: Celebration[] = [];
+
+  for (const employee of employees) {
+    if (employee.birthday && isSameMonthDay(employee.birthday, today)) {
+      celebrations.push({
+        employee_id: employee.id,
+        first_name: employee.first_name,
+        type: "birthday",
+        years: null,
+      });
+    }
+
+    if (employee.hire_date && isSameMonthDay(employee.hire_date, today)) {
+      const years = yearsSince(employee.hire_date, today);
+      if (years > 0) {
+        celebrations.push({
+          employee_id: employee.id,
+          first_name: employee.first_name,
+          type: "anniversary",
+          years,
+        });
+      }
+    }
+  }
+
+  return celebrations;
+}
+
 export async function countActiveJourneysForEmployee(
   employeeId: string
 ): Promise<number> {

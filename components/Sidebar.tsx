@@ -13,6 +13,7 @@ import {
   Store as StoreIcon,
   Settings as SettingsIcon,
 } from "lucide-react";
+import CelebrationBanner from "@/components/CelebrationBanner";
 import { createClient } from "@/lib/supabase/client";
 import {
   fetchCurrentEmployee,
@@ -144,7 +145,10 @@ export default function Sidebar({
         </div>
       </aside>
 
-      <div className="flex-1 overflow-auto bg-slate-50">{children}</div>
+      <div className="flex-1 overflow-auto bg-slate-50">
+        <CelebrationBanner />
+        {children}
+      </div>
     </div>
   );
 }
