@@ -146,7 +146,8 @@ export default function EmployeeManagement() {
   }
 
   async function handleSave() {
-    if (!form.first_name.trim() || !form.home_store_id) return;
+    if (!form.first_name.trim() || !form.last_name?.trim() || !form.home_store_id)
+      return;
     setSaving(true);
     setError(null);
 
@@ -360,7 +361,7 @@ export default function EmployeeManagement() {
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">
-                    Last Name
+                    Last Name <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
@@ -470,7 +471,10 @@ export default function EmployeeManagement() {
               <button
                 onClick={handleSave}
                 disabled={
-                  saving || !form.first_name.trim() || !form.home_store_id
+                  saving ||
+                  !form.first_name.trim() ||
+                  !form.last_name?.trim() ||
+                  !form.home_store_id
                 }
                 className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
               >
