@@ -104,12 +104,28 @@ export type Store = {
   trial_length_nights: number;
 };
 
+export type EmployeeRole =
+  | "owner"
+  | "manager"
+  | "sales"
+  | "admin"
+  | "employee";
+
 export type Employee = {
   id: string;
   name: string;
+  first_name: string;
+  last_name: string | null;
   role: string;
   home_store_id: string | null;
+  auth_user_id: string | null;
+  birthday: string | null;
+  hire_date: string | null;
+  is_active: boolean;
 };
+
+const EMPLOYEE_COLUMNS =
+  "id, name, first_name, last_name, role, home_store_id, auth_user_id, birthday, hire_date, is_active";
 
 export async function fetchJourneys(
   storeId?: string,
@@ -372,17 +388,138 @@ export async function countActiveJourneysForStore(storeId: string): Promise<numb
   return count ?? 0;
 }
 
-export async function fetchEmployees(): Promise<Employee[]> {
+export async function fetchEmployees(activeOnly = false): Promise<Employee[]> {
   const supabase = createClient();
-  const { data, error } = await supabase
-    .from("employees")
-    .select("id, name, role, home_store_id")
-    .order("name");
+  let query = supabase.from("employees").select(EMPLOYEE_COLUMNS).order("name");
+  if (activeOnly) {
+    query = query.eq("is_active", true);
+  }
+  const { data, error } = await query;
   if (error) {
     console.error("fetchEmployees error", error);
     return [];
   }
   return (data as unknown as Employee[]) ?? [];
+}
+
+export type EmployeeInput = {
+  first_name: string;
+  last_name: string | null;
+  role: EmployeeRole;
+  home_store_id: string | null;
+  birthday: string | null;
+  hire_date: string | null;
+  is_active: boolean;
+};
+
+// No `.select()` here: the employees SELECT policy gates on is_employee_visible(),
+// a security-definer function that re-queries employees and cannot see the row being
+// inserted, so a RETURNING clause fails the policy and rolls the insert back.
+export async function createEmployee(input: EmployeeInput) {
+  const supabase = createClient();
+  const { error } = await supabase.from("employees").insert({
+    first_name: input.first_name,
+    last_name: input.last_name,
+    role: input.role,
+    home_store_id: input.home_store_id,
+    birthday: input.birthday,
+    hire_date: input.hire_date,
+    is_active: input.is_active,
+  });
+
+  if (error) throw new Error(error.message);
+}
+
+export async function updateEmployee(
+  id: string,
+  updates: Partial<EmployeeInput>
+) {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("employees")
+    .update(updates)
+    .eq("id", id)
+    .select("id")
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) {
+    throw new Error("Employee update failed — row not found or not authorized.");
+  }
+}
+
+export type Celebration = {
+  employee_id: string;
+  first_name: string;
+  type: "birthday" | "anniversary";
+  years: number | null;
+};
+
+function isSameMonthDay(date: string, today: Date) {
+  const [, month, day] = date.split("-").map(Number);
+  return month === today.getMonth() + 1 && day === today.getDate();
+}
+
+function yearsSince(date: string, today: Date) {
+  const [year, month, day] = date.split("-").map(Number);
+  let years = today.getFullYear() - year;
+  const monthDayPassed =
+    today.getMonth() + 1 > month ||
+    (today.getMonth() + 1 === month && today.getDate() >= day);
+  if (!monthDayPassed) years -= 1;
+  return years;
+}
+
+// Company-wide: RLS already scopes employees to the caller's company, and celebrations
+// are intentionally not filtered by store. Matching ignores the year.
+export async function fetchTodaysCelebrations(
+  today: Date = new Date()
+): Promise<Celebration[]> {
+  const employees = await fetchEmployees(true);
+  const celebrations: Celebration[] = [];
+
+  for (const employee of employees) {
+    if (employee.birthday && isSameMonthDay(employee.birthday, today)) {
+      celebrations.push({
+        employee_id: employee.id,
+        first_name: employee.first_name,
+        type: "birthday",
+        years: null,
+      });
+    }
+
+    if (employee.hire_date && isSameMonthDay(employee.hire_date, today)) {
+      const years = yearsSince(employee.hire_date, today);
+      if (years > 0) {
+        celebrations.push({
+          employee_id: employee.id,
+          first_name: employee.first_name,
+          type: "anniversary",
+          years,
+        });
+      }
+    }
+  }
+
+  return celebrations;
+}
+
+export async function countActiveJourneysForEmployee(
+  employeeId: string
+): Promise<number> {
+  const supabase = createClient();
+  const { count, error } = await supabase
+    .from("sleep_journeys")
+    .select("id", { count: "exact", head: true })
+    .eq("assigned_employee_id", employeeId)
+    .neq("current_state", "Completed")
+    .is("cancelled_at", null);
+
+  if (error) {
+    console.error("countActiveJourneysForEmployee error", error);
+    return 0;
+  }
+  return count ?? 0;
 }
 
 export async function fetchCurrentEmployee(): Promise<Employee | null> {
@@ -394,7 +531,7 @@ export async function fetchCurrentEmployee(): Promise<Employee | null> {
 
   const { data, error } = await supabase
     .from("employees")
-    .select("id, name, role, home_store_id")
+    .select(EMPLOYEE_COLUMNS)
     .eq("auth_user_id", user.id)
     .maybeSingle();
 
