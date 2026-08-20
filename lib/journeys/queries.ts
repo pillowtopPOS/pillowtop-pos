@@ -38,6 +38,23 @@ export type JourneyEvent = {
   created_at: string;
 };
 
+export type JourneyReassignmentEvent = {
+  id: string;
+  journey_id: string;
+  from_store_id: string | null;
+  to_store_id: string | null;
+  from_employee_id: string | null;
+  to_employee_id: string | null;
+  reason: string | null;
+  actor_employee_id: string | null;
+  created_at: string;
+  from_store: { id: string; name: string } | null;
+  to_store: { id: string; name: string } | null;
+  from_employee: { id: string; name: string } | null;
+  to_employee: { id: string; name: string } | null;
+  actor: { id: string; name: string } | null;
+};
+
 export type FollowUp = {
   id: string;
   journey_id: string;
@@ -158,6 +175,105 @@ export async function fetchJourneyEvents(journeyId: string): Promise<JourneyEven
   }
 
   return (data as unknown as JourneyEvent[]) ?? [];
+}
+
+export const REASSIGNMENT_ROLES = ["owner", "admin", "manager"];
+
+export function canReassignJourneys(role: string | null | undefined): boolean {
+  return !!role && REASSIGNMENT_ROLES.includes(role);
+}
+
+export async function fetchJourneyById(
+  journeyId: string
+): Promise<JourneyWithDetails | null> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("sleep_journeys")
+    .select(
+      `id, current_state, product_summary, price, cancelled_at, created_at, updated_at, store_id, assigned_employee_id,
+      customer:customers!customer_id ( id, first_name, last_name, phone, email ),
+      employee:employees!assigned_employee_id ( id, name ),
+      store:stores!store_id ( id, name )`
+    )
+    .eq("id", journeyId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("fetchJourneyById error", error);
+    return null;
+  }
+
+  return (data as unknown as JourneyWithDetails) ?? null;
+}
+
+export async function fetchJourneyReassignments(
+  journeyId: string
+): Promise<JourneyReassignmentEvent[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("journey_reassignment_events")
+    .select(
+      `id, journey_id, from_store_id, to_store_id, from_employee_id, to_employee_id, reason, actor_employee_id, created_at,
+      from_store:stores!from_store_id ( id, name ),
+      to_store:stores!to_store_id ( id, name ),
+      from_employee:employees!from_employee_id ( id, name ),
+      to_employee:employees!to_employee_id ( id, name ),
+      actor:employees!actor_employee_id ( id, name )`
+    )
+    .eq("journey_id", journeyId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("fetchJourneyReassignments error", error);
+    return [];
+  }
+
+  return (data as unknown as JourneyReassignmentEvent[]) ?? [];
+}
+
+async function insertReassignment(row: {
+  journey_id: string;
+  to_store_id?: string;
+  to_employee_id?: string;
+  reason: string | null;
+}) {
+  const supabase = createClient();
+
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.refreshSession();
+
+  if (sessionError || !session?.user) {
+    throw new Error("Not authenticated");
+  }
+
+  const { error } = await supabase.from("journey_reassignment_events").insert(row);
+  if (error) throw new Error(error.message);
+}
+
+export async function reassignJourneyStore(
+  journeyId: string,
+  toStoreId: string,
+  reason?: string
+) {
+  await insertReassignment({
+    journey_id: journeyId,
+    to_store_id: toStoreId,
+    reason: reason?.trim() ? reason.trim() : null,
+  });
+}
+
+export async function reassignJourneyEmployee(
+  journeyId: string,
+  toEmployeeId: string,
+  reason?: string
+) {
+  await insertReassignment({
+    journey_id: journeyId,
+    to_employee_id: toEmployeeId,
+    reason: reason?.trim() ? reason.trim() : null,
+  });
 }
 
 export async function fetchJourneyFollowUps(journeyId: string): Promise<FollowUp[]> {

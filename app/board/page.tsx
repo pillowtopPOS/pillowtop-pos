@@ -26,6 +26,8 @@ import { BOARD_STATES, type SleepJourneyState } from "@/lib/constants";
 import {
   fetchJourneys,
   fetchJourneyEvents,
+  fetchJourneyById,
+  fetchJourneyReassignments,
   fetchJourneyFollowUps,
   fetchJourneyLineItems,
   fetchEmployees,
@@ -34,12 +36,16 @@ import {
   subscribeToJourneyChanges,
   recordJourneyEvent,
   cancelJourney,
+  canReassignJourneys,
+  reassignJourneyStore,
+  reassignJourneyEmployee,
   completeFollowUp,
   createJourneyLineItem,
   updateJourneyLineItem,
   deleteJourneyLineItem,
   type JourneyWithDetails,
   type JourneyEvent,
+  type JourneyReassignmentEvent,
   type FollowUp,
   type Employee,
   type Store,
@@ -72,6 +78,7 @@ export default function BoardPage() {
   const [selectedJourney, setSelectedJourney] = useState<JourneyWithDetails | null>(null);
   const [events, setEvents] = useState<JourneyEvent[]>([]);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
+  const [reassignments, setReassignments] = useState<JourneyReassignmentEvent[]>([]);
   const [pendingTransition, setPendingTransition] = useState<{
     journey: JourneyWithDetails;
     transition: StateTransition;
@@ -150,8 +157,25 @@ export default function BoardPage() {
     if (selectedJourney) {
       fetchJourneyEvents(selectedJourney.id).then(setEvents);
       fetchJourneyFollowUps(selectedJourney.id).then(setFollowUps);
+      fetchJourneyReassignments(selectedJourney.id).then(setReassignments);
+    } else {
+      setReassignments([]);
     }
   }, [selectedJourney]);
+
+  async function handleReassigned(journeyId: string) {
+    const [fresh, history] = await Promise.all([
+      fetchJourneyById(journeyId),
+      fetchJourneyReassignments(journeyId),
+    ]);
+    setReassignments(history);
+    if (fresh) {
+      setSelectedJourney(fresh);
+      setJourneys((prev) => prev.map((j) => (j.id === fresh.id ? fresh : j)));
+    } else {
+      setSelectedJourney(null);
+    }
+  }
 
   const boardJourneys = useMemo(() => {
     return journeys.filter((j) => !j.cancelled_at);
@@ -369,6 +393,10 @@ export default function BoardPage() {
           events={events}
           followUps={followUps}
           employees={employees}
+          stores={stores}
+          reassignments={reassignments}
+          canReassign={canReassignJourneys(currentEmployee?.role)}
+          onReassigned={handleReassigned}
           onClose={() => setSelectedJourney(null)}
           onAction={executeAction}
           onCancel={setCancelJourneyState}
@@ -620,6 +648,10 @@ function JourneyDetailPanel({
   events,
   followUps,
   employees,
+  stores,
+  reassignments,
+  canReassign,
+  onReassigned,
   onClose,
   onAction,
   onCancel,
@@ -629,6 +661,10 @@ function JourneyDetailPanel({
   events: JourneyEvent[];
   followUps: FollowUp[];
   employees: Employee[];
+  stores: Store[];
+  reassignments: JourneyReassignmentEvent[];
+  canReassign: boolean;
+  onReassigned: (journeyId: string) => void | Promise<void>;
   onClose: () => void;
   onAction: (j: JourneyWithDetails, e: JourneyEventType) => void;
   onCancel: (j: JourneyWithDetails) => void;
@@ -648,6 +684,45 @@ function JourneyDetailPanel({
 
   const [lineItems, setLineItems] = useState<JourneyLineItem[]>([]);
   const [lineItemsLoading, setLineItemsLoading] = useState(false);
+  const [reassignMode, setReassignMode] = useState<"store" | "employee" | null>(null);
+  const [reassignTarget, setReassignTarget] = useState("");
+  const [reassignReason, setReassignReason] = useState("");
+  const [reassignSaving, setReassignSaving] = useState(false);
+
+  const storeOptions = stores.filter((s) => s.is_active && s.id !== journey.store_id);
+  const employeeOptions = employees.filter(
+    (e) => e.home_store_id === journey.store_id && e.id !== journey.assigned_employee_id
+  );
+
+  function openReassign(mode: "store" | "employee") {
+    setReassignMode(mode);
+    setReassignTarget("");
+    setReassignReason("");
+  }
+
+  function closeReassign() {
+    setReassignMode(null);
+    setReassignTarget("");
+    setReassignReason("");
+  }
+
+  async function submitReassign() {
+    if (!reassignMode || !reassignTarget) return;
+    setReassignSaving(true);
+    try {
+      if (reassignMode === "store") {
+        await reassignJourneyStore(journey.id, reassignTarget, reassignReason);
+      } else {
+        await reassignJourneyEmployee(journey.id, reassignTarget, reassignReason);
+      }
+      closeReassign();
+      await onReassigned(journey.id);
+    } catch (e: any) {
+      window.alert(e.message ?? "Failed to reassign journey");
+    } finally {
+      setReassignSaving(false);
+    }
+  }
 
   useEffect(() => {
     setLineItemsLoading(true);
@@ -845,6 +920,78 @@ function JourneyDetailPanel({
             <span className="text-slate-500">Assigned</span>
             <span className="text-slate-700">{journey.employee?.name ?? "—"}</span>
           </div>
+
+          {canReassign && (
+            <div className="border-t border-slate-200 pt-3">
+              <h3 className="mb-2 text-sm font-semibold text-slate-900">Reassign</h3>
+              {reassignMode === null ? (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => openReassign("store")}
+                    className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Reassign Store
+                  </button>
+                  <button
+                    onClick={() => openReassign("employee")}
+                    className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Reassign Employee
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+                  <label className="block text-xs font-medium text-slate-700">
+                    {reassignMode === "store" ? "New store" : "New employee"}
+                  </label>
+                  <select
+                    value={reassignTarget}
+                    onChange={(e) => setReassignTarget(e.target.value)}
+                    className="w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  >
+                    <option value="">
+                      {reassignMode === "store" ? "Select a store" : "Select an employee"}
+                    </option>
+                    {(reassignMode === "store" ? storeOptions : employeeOptions).map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  {reassignMode === "employee" && employeeOptions.length === 0 && (
+                    <p className="text-xs text-slate-500">
+                      No other employees at {journey.store?.name ?? "this store"}.
+                    </p>
+                  )}
+
+                  <textarea
+                    value={reassignReason}
+                    onChange={(e) => setReassignReason(e.target.value)}
+                    placeholder="Reason (optional)"
+                    rows={2}
+                    className="w-full rounded-md border border-slate-300 px-2 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  />
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={submitReassign}
+                      disabled={!reassignTarget || reassignSaving}
+                      className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                    >
+                      {reassignSaving ? "Saving…" : "Confirm"}
+                    </button>
+                    <button
+                      onClick={closeReassign}
+                      className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {nextFollowUp && (
@@ -907,6 +1054,32 @@ function JourneyDetailPanel({
                 {f.completed_at && (
                   <p className="text-xs">Completed {new Date(f.completed_at).toLocaleString()}</p>
                 )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-6">
+          <h3 className="mb-2 text-sm font-semibold text-slate-900">Reassignment history</h3>
+          <div className="space-y-2">
+            {reassignments.length === 0 && (
+              <p className="text-sm text-slate-500">No reassignments.</p>
+            )}
+            {reassignments.map((r) => (
+              <div
+                key={r.id}
+                className="rounded-md border border-slate-200 bg-slate-50 p-2 text-sm"
+              >
+                <p className="font-medium text-slate-700">
+                  {r.to_store_id ? "Store" : "Employee"}:{" "}
+                  {r.to_store_id
+                    ? `${r.from_store?.name ?? "—"} → ${r.to_store?.name ?? "—"}`
+                    : `${r.from_employee?.name ?? "Unassigned"} → ${r.to_employee?.name ?? "—"}`}
+                </p>
+                {r.reason && <p className="text-xs text-slate-500">{r.reason}</p>}
+                <p className="text-xs text-slate-400">
+                  {new Date(r.created_at).toLocaleString()} by {r.actor?.name ?? "Unknown"}
+                </p>
               </div>
             ))}
           </div>
