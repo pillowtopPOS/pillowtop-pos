@@ -15,7 +15,8 @@ export type JourneyEventType =
 export type RequiredField = {
   name: string;
   label: string;
-  type: "text" | "number" | "date" | "datetime-local";
+  type: "text" | "number" | "date" | "datetime-local" | "select";
+  options?: string[];
   optional?: boolean;
 };
 
@@ -30,21 +31,27 @@ export const STATE_TRANSITIONS: Record<SleepJourneyState, StateTransition[]> = {
   "Active Opportunity": [],
   Quoted: [
     {
-      to: "Quoted",
-      event: "deposit_received",
-      label: "Record Deposit",
-      requiredFields: [
-        { name: "amount", label: "Amount", type: "number" },
-        { name: "payment_method", label: "Payment method", type: "text" },
-      ],
-    },
-    {
       to: "Sold",
       event: "payment_completed",
       label: "Record Payment",
       requiredFields: [
         { name: "amount", label: "Amount", type: "number" },
-        { name: "payment_method", label: "Payment method", type: "text" },
+        {
+          name: "payment_method",
+          label: "Payment method",
+          type: "select",
+          options: [
+            "Credit card",
+            "Debit card",
+            "Cash",
+            "Check",
+            "Financing",
+            "Other",
+            "Simulated card — success",
+            "Simulated card — timeout",
+            "Simulated card — failure",
+          ],
+        },
       ],
     },
     {

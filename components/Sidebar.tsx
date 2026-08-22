@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   LayoutGrid,
@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import CelebrationBanner from "@/components/CelebrationBanner";
 import { createClient } from "@/lib/supabase/client";
+import { isStoreConfirmedToday, storeSelectUrl } from "@/lib/journeys/storeConfirm";
 import {
   fetchCurrentEmployee,
   fetchStores,
@@ -37,13 +38,22 @@ export default function Sidebar({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [stores, setStores] = useState<Store[]>([]);
   const [activeStoreId, setActiveStoreId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const hide = HIDDEN_PATHS.includes(pathname ?? "");
+  if (pathname == null) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="text-sm text-slate-500">Loading…</p>
+      </div>
+    );
+  }
+
+  const hide = HIDDEN_PATHS.includes(pathname);
 
   useEffect(() => {
     if (hide) {
@@ -51,19 +61,34 @@ export default function Sidebar({
       return;
     }
 
+    setLoading(true);
+
     const supabase = createClient();
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setActiveStoreId(session?.user?.user_metadata?.active_store_id ?? null);
+      if (!session?.user || !isStoreConfirmedToday(session.user)) {
+        router.push(storeSelectUrl(pathname ?? "/board"));
+        return;
+      }
+
+      setActiveStoreId(session.user.user_metadata?.active_store_id ?? null);
       Promise.all([fetchCurrentEmployee(), fetchStores()]).then(([e, s]) => {
         setEmployee(e);
         setStores(s);
         setLoading(false);
       });
     });
-  }, [hide]);
+  }, [hide, router]);
 
   if (hide) {
     return <>{children}</>;
+  }
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="text-sm text-slate-500">Loading…</p>
+      </div>
+    );
   }
 
   const activeStore = stores.find((s) => s.id === activeStoreId);

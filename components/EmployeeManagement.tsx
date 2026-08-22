@@ -6,7 +6,8 @@ import {
   fetchCurrentEmployee,
   fetchEmployees,
   fetchStores,
-  createEmployee,
+  fetchEmployeeRoles,
+  createEmployeeWithLogin,
   updateEmployee,
   countActiveJourneysForEmployee,
   type Employee,
@@ -43,10 +44,17 @@ const ROLES: { value: EmployeeRole; label: string; description: string }[] = [
   },
 ];
 
-const emptyForm: EmployeeInput = {
+type EmployeeForm = EmployeeInput & {
+  email: string;
+  password: string;
+};
+
+const emptyForm: EmployeeForm = {
   first_name: "",
   last_name: "",
-  role: "employee",
+  email: "",
+  password: "",
+  role: "sales",
   home_store_id: null,
   birthday: null,
   hire_date: null,
@@ -72,13 +80,14 @@ export default function EmployeeManagement() {
   const [saving, setSaving] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<EmployeeInput>(emptyForm);
+  const [form, setForm] = useState<EmployeeForm>(emptyForm);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<{
     employee: Employee;
     activeJourneys: number;
     reactivate: boolean;
   } | null>(null);
+  const [roles, setRoles] = useState<string[]>([]);
 
   const isAdmin =
     currentEmployee?.role === "owner" || currentEmployee?.role === "admin";
@@ -101,10 +110,12 @@ export default function EmployeeManagement() {
       fetchCurrentEmployee(),
       fetchEmployees(),
       fetchStores(true),
-    ]).then(([me, emps, s]) => {
+      fetchEmployeeRoles(),
+    ]).then(([me, emps, s, r]) => {
       setCurrentEmployee(me);
       setEmployees(emps);
       setStores(s);
+      setRoles(r);
       setLoading(false);
     });
   }, []);
@@ -125,6 +136,8 @@ export default function EmployeeManagement() {
     setForm({
       first_name: employee.first_name,
       last_name: employee.last_name,
+      email: "",
+      password: "",
       role: employee.role as EmployeeRole,
       home_store_id: employee.home_store_id,
       birthday: employee.birthday,
@@ -148,22 +161,29 @@ export default function EmployeeManagement() {
   async function handleSave() {
     if (!form.first_name.trim() || !form.last_name?.trim() || !form.home_store_id)
       return;
+    if (!editingId && (!form.email.trim() || !form.password)) return;
     setSaving(true);
     setError(null);
 
     const payload: EmployeeInput = {
-      ...form,
       first_name: form.first_name.trim(),
       last_name: form.last_name?.trim() || null,
+      role: form.role,
+      home_store_id: form.home_store_id,
       birthday: form.birthday || null,
       hire_date: form.hire_date || null,
+      is_active: form.is_active,
     };
 
     try {
       if (editingId) {
         await updateEmployee(editingId, payload);
       } else {
-        await createEmployee(payload);
+        await createEmployeeWithLogin({
+          ...payload,
+          email: form.email.trim(),
+          password: form.password,
+        });
       }
       await reload();
       closeModal();
@@ -374,6 +394,37 @@ export default function EmployeeManagement() {
                 </div>
               </div>
 
+              {!editingId && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
+                      Email <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="email"
+                      value={form.email}
+                      onChange={(e) =>
+                        setForm((f) => ({ ...f, email: e.target.value }))
+                      }
+                      className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
+                      Initial Password <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="password"
+                      value={form.password}
+                      onChange={(e) =>
+                        setForm((f) => ({ ...f, password: e.target.value }))
+                      }
+                      className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    />
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700">
                   Role <span className="text-red-500">*</span>
@@ -389,9 +440,9 @@ export default function EmployeeManagement() {
                   }
                   className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:bg-slate-100 disabled:text-slate-500"
                 >
-                  {ROLES.map((r) => (
-                    <option key={r.value} value={r.value}>
-                      {r.label}
+                  {roles.map((r) => (
+                    <option key={r} value={r}>
+                      {roleLabel(r)}
                     </option>
                   ))}
                 </select>
@@ -474,7 +525,8 @@ export default function EmployeeManagement() {
                   saving ||
                   !form.first_name.trim() ||
                   !form.last_name?.trim() ||
-                  !form.home_store_id
+                  !form.home_store_id ||
+                  (!editingId && (!form.email.trim() || !form.password))
                 }
                 className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
               >

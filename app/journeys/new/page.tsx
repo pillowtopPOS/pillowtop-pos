@@ -5,11 +5,37 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Plus, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { createJourney, fetchEmployees, fetchStores, type Employee, type Store } from "@/lib/journeys/queries";
+import {
+  createJourney,
+  fetchEmployees,
+  fetchStores,
+  recordPaymentEvent,
+  reconcilePayment,
+  type Employee,
+  type Store,
+  type PaymentOutcome,
+} from "@/lib/journeys/queries";
 import type { CreateJourneyInput } from "@/lib/journeys/queries";
 import ProductPicker, { type ProductSelection } from "@/components/ProductPicker";
+import { isStoreConfirmedToday, storeSelectUrl } from "@/lib/journeys/storeConfirm";
 
-const PAYMENT_METHODS = ["Credit card", "Debit card", "Cash", "Check", "Financing", "Other"];
+const PAYMENT_METHODS = [
+  "Credit card",
+  "Debit card",
+  "Cash",
+  "Check",
+  "Financing",
+  "Other",
+  "Simulated card — success",
+  "Simulated card — timeout",
+  "Simulated card — failure",
+];
+
+function paymentOutcomeForMethod(method: string): PaymentOutcome {
+  if (method.includes("timeout")) return "UNKNOWN";
+  if (method.includes("failure")) return "FAILED";
+  return "SUCCEEDED";
+}
 
 type LineItem = {
   id: string;
@@ -26,6 +52,11 @@ export default function NewJourneyPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [created, setCreated] = useState<{
+    journeyId: string;
+    paymentEventId: string;
+    outcome: PaymentOutcome;
+  } | null>(null);
   const [step, setStep] = useState<0 | 1 | 2 | 3>(0);
 
   const [mode, setMode] = useState<"quote" | "purchase" | null>(null);
@@ -118,9 +149,17 @@ export default function NewJourneyPage() {
   }
 
   async function handleSubmit() {
-    if (!mode) return;
+    if (!mode || saving) return;
     setSaving(true);
     setError(null);
+
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user || !isStoreConfirmedToday(session.user)) {
+      setSaving(false);
+      router.push(storeSelectUrl("/journeys/new"));
+      return;
+    }
 
     const baseInput = {
       customer,
@@ -148,15 +187,127 @@ export default function NewJourneyPage() {
     }
 
     try {
-      await createJourney(input);
-      router.push("/board");
+      const journeyId = await createJourney(input);
+
+      if (mode === "quote") {
+        router.push("/board");
+        return;
+      }
+
+      const paid = parseFloat(purchase.paymentAmount) || 0;
+      const idempotencyKey = crypto.randomUUID();
+      const outcome = paymentOutcomeForMethod(purchase.paymentMethod);
+
+      const paymentEventId = await recordPaymentEvent({
+        journeyId,
+        amount: paid,
+        paymentMethod: purchase.paymentMethod,
+        idempotencyKey,
+        outcome,
+        followUpDueAt: purchase.followUpDueAt,
+      });
+
+      if (outcome === "SUCCEEDED") {
+        router.push("/board");
+        return;
+      }
+
+      setCreated({
+        journeyId,
+        paymentEventId,
+        outcome,
+      });
     } catch (e: any) {
       setSaving(false);
       setError(e.message ?? "Failed to create journey");
     }
   }
 
+  async function handleReconcile(newOutcome: PaymentOutcome) {
+    if (!created) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await reconcilePayment(created.paymentEventId, newOutcome);
+      if (newOutcome === "SUCCEEDED") {
+        router.push("/board");
+      } else {
+        setCreated({ ...created, outcome: newOutcome });
+        setSaving(false);
+      }
+    } catch (e: any) {
+      setSaving(false);
+      setError(e.message ?? "Reconciliation failed");
+    }
+  }
+
   if (loading) return <p className="p-8 text-sm text-slate-500">Loading…</p>;
+
+  if (created) {
+    return (
+      <main className="min-h-screen bg-slate-50 p-8">
+        <div className="mx-auto max-w-2xl rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+          <h1 className="text-xl font-semibold text-slate-900">Payment outcome</h1>
+
+          {error && (
+            <p className="mt-4 rounded-md bg-amber-50 p-3 text-sm text-amber-700">
+              {error}
+            </p>
+          )}
+
+          {created.outcome === "UNKNOWN" && (
+            <div className="mt-4 space-y-4">
+              <p className="rounded-md bg-amber-50 p-3 text-sm text-amber-700">
+                Confirming payment — please wait. This payment is unresolved, so
+                no new payment can be submitted for this order until it is
+                reconciled.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleReconcile("SUCCEEDED")}
+                  disabled={saving}
+                  className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                >
+                  {saving ? "Reconciling…" : "Mark payment succeeded"}
+                </button>
+                <button
+                  onClick={() => handleReconcile("FAILED")}
+                  disabled={saving}
+                  className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  Mark payment failed
+                </button>
+              </div>
+            </div>
+          )}
+
+          {created.outcome === "FAILED" && (
+            <div className="mt-4 space-y-4">
+              <p className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+                The payment was recorded as failed. No money was collected.
+              </p>
+              <button
+                onClick={() => handleReconcile("SUCCEEDED")}
+                disabled={saving}
+                className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                {saving ? "Reconciling…" : "Reconcile to succeeded"}
+              </button>
+            </div>
+          )}
+
+          <div className="mt-6">
+            <Link
+              href="/board"
+              className="text-sm text-slate-500 hover:text-slate-700"
+            >
+              Back to Board
+            </Link>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   const paid = parseFloat(purchase.paymentAmount) || 0;
   const balance = total - paid;

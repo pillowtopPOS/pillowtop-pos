@@ -22,6 +22,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { isStoreConfirmedToday, storeSelectUrl } from "@/lib/journeys/storeConfirm";
 import { BOARD_STATES, type SleepJourneyState } from "@/lib/constants";
 import {
   fetchJourneys,
@@ -35,7 +36,10 @@ import {
   fetchStores,
   subscribeToJourneyChanges,
   recordJourneyEvent,
+  recordPayment,
+  reconcilePayment,
   cancelJourney,
+  type PaymentOutcome,
   canReassignJourneys,
   reassignJourneyStore,
   reassignJourneyEmployee,
@@ -68,6 +72,7 @@ export default function BoardPage() {
   const [stores, setStores] = useState<Store[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [journeys, setJourneys] = useState<JourneyWithDetails[]>([]);
+  const [unresolvedJourneyIds, setUnresolvedJourneyIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
 
   const [view, setView] = useState<"board" | "table">("board");
@@ -84,10 +89,13 @@ export default function BoardPage() {
     transition: StateTransition;
   } | null>(null);
   const [pendingFieldValues, setPendingFieldValues] = useState<Record<string, string>>({});
+  const [pendingReconcile, setPendingReconcile] = useState<{
+    journey: JourneyWithDetails;
+    paymentEventId: string;
+    outcome: PaymentOutcome;
+  } | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [cancelJourneyState, setCancelJourneyState] = useState<JourneyWithDetails | null>(null);
-
-  const canViewAll = currentEmployee?.role === "owner" || currentEmployee?.role === "manager";
 
   const fetchStoreValue = async (u: any) => {
     const active = u.user_metadata?.active_store_id;
@@ -109,13 +117,28 @@ export default function BoardPage() {
     setEmployees(allEmployees);
 
     const effectiveStore =
-      storeFilter === "all" && canViewAll ? undefined : active ?? undefined;
+      storeFilter === "active"
+        ? active ?? undefined
+        : storeFilter === "all"
+        ? undefined
+        : storeFilter;
     const data = await fetchJourneys(
       effectiveStore,
       search,
       employeeFilter !== "all" ? employeeFilter : undefined
     );
     setJourneys(data);
+
+    const supabase = createClient();
+    const { data: unresolved } = await supabase
+      .from("journey_events")
+      .select("journey_id")
+      .in("event_type", ["deposit_received", "payment_completed"])
+      .eq("outcome", "UNKNOWN");
+    setUnresolvedJourneyIds(
+      new Set((unresolved ?? []).map((e: { journey_id: string }) => e.journey_id))
+    );
+
     setLoading(false);
   };
 
@@ -225,6 +248,13 @@ export default function BoardPage() {
     transition: StateTransition,
     fieldValues: Record<string, string>
   ) {
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user || !isStoreConfirmedToday(session.user)) {
+      router.push(storeSelectUrl("/board"));
+      return;
+    }
+
     const eventData: Record<string, unknown> = {};
 
     for (const field of transition.requiredFields ?? []) {
@@ -239,11 +269,40 @@ export default function BoardPage() {
     }
 
     try {
-      await recordJourneyEvent(journey.id, transition.event, eventData);
+      if (transition.event === "payment_completed") {
+        const amount = parseFloat(fieldValues.amount ?? "0");
+        const method = fieldValues.payment_method ?? "";
+        const { paymentEventId, outcome } = await recordPayment(journey.id, amount, method);
+        if (outcome !== "SUCCEEDED") {
+          setPendingReconcile({ journey, paymentEventId, outcome });
+          setPendingTransition(null);
+          setPendingFieldValues({});
+          return;
+        }
+      } else {
+        await recordJourneyEvent(journey.id, transition.event, eventData);
+      }
       setPendingTransition(null);
       setPendingFieldValues({});
+      fetchJourneyEvents(journey.id).then(setEvents);
     } catch (e: any) {
       window.alert(e.message ?? "Failed to record event");
+    }
+  }
+
+  async function handleReconcile(newOutcome: PaymentOutcome) {
+    if (!pendingReconcile) return;
+    try {
+      await reconcilePayment(pendingReconcile.paymentEventId, newOutcome);
+      const [freshEvents, freshFollowUps] = await Promise.all([
+        fetchJourneyEvents(pendingReconcile.journey.id),
+        fetchJourneyFollowUps(pendingReconcile.journey.id),
+      ]);
+      setEvents(freshEvents);
+      setFollowUps(freshFollowUps);
+      setPendingReconcile(null);
+    } catch (e: any) {
+      window.alert(e.message ?? "Reconciliation failed");
     }
   }
 
@@ -319,16 +378,19 @@ export default function BoardPage() {
           ))}
         </select>
 
-        {canViewAll && (
-          <select
-            value={storeFilter}
-            onChange={(e) => setStoreFilter(e.target.value)}
-            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-          >
-            <option value="active">Active store</option>
-            <option value="all">All stores</option>
-          </select>
-        )}
+        <select
+          value={storeFilter}
+          onChange={(e) => setStoreFilter(e.target.value)}
+          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+        >
+          <option value="active">Active store</option>
+          <option value="all">All stores</option>
+          {stores.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
       </div>
 
       {loading && <p className="text-sm text-slate-500">Loading…</p>}
@@ -341,6 +403,7 @@ export default function BoardPage() {
                 key={column.state}
                 state={column.state}
                 journeys={column.journeys}
+                unresolvedJourneyIds={unresolvedJourneyIds}
                 onSelect={setSelectedJourney}
               />
             ))}
@@ -396,11 +459,17 @@ export default function BoardPage() {
           stores={stores}
           reassignments={reassignments}
           canReassign={canReassignJourneys(currentEmployee?.role)}
+          canReconcile={
+            currentEmployee?.role === "owner" ||
+            currentEmployee?.role === "admin" ||
+            currentEmployee?.role === "manager"
+          }
           onReassigned={handleReassigned}
           onClose={() => setSelectedJourney(null)}
           onAction={executeAction}
           onCancel={setCancelJourneyState}
           onRefresh={() => {
+            fetchJourneyEvents(selectedJourney.id).then(setEvents);
             fetchJourneyFollowUps(selectedJourney.id).then(setFollowUps);
           }}
         />
@@ -424,8 +493,9 @@ export default function BoardPage() {
                   const paid = events
                     .filter(
                       (e) =>
-                        e.event_type === "deposit_received" ||
-                        e.event_type === "payment_completed"
+                        (e.event_type === "deposit_received" ||
+                          e.event_type === "payment_completed") &&
+                        e.outcome === "SUCCEEDED"
                     )
                     .reduce(
                       (sum, e) =>
@@ -472,6 +542,24 @@ export default function BoardPage() {
                       }
                       className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                     />
+                  ) : field.type === "select" ? (
+                    <select
+                      value={pendingFieldValues[field.name] ?? ""}
+                      onChange={(e) =>
+                        setPendingFieldValues({
+                          ...pendingFieldValues,
+                          [field.name]: e.target.value,
+                        })
+                      }
+                      className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    >
+                      <option value="">Select…</option>
+                      {field.options?.map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </select>
                   ) : (
                     <input
                       type={field.type === "number" ? "number" : "text"}
@@ -511,6 +599,41 @@ export default function BoardPage() {
                 Cancel
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {pendingReconcile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+            <h2 className="mb-2 text-lg font-semibold text-slate-900">
+              Payment outcome
+            </h2>
+            <p className="mb-4 text-sm text-slate-600">
+              {pendingReconcile.outcome === "UNKNOWN"
+                ? "Confirming payment — please wait. This payment is unresolved and no new payment can be submitted for this order until it is reconciled."
+                : "The payment was recorded as failed. No money was collected."}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleReconcile("SUCCEEDED")}
+                className="flex-1 rounded-md bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700"
+              >
+                Mark payment succeeded
+              </button>
+              <button
+                onClick={() => handleReconcile("FAILED")}
+                className="flex-1 rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700"
+              >
+                Mark payment failed
+              </button>
+            </div>
+            <button
+              onClick={() => setPendingReconcile(null)}
+              className="mt-4 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Close
+            </button>
           </div>
         </div>
       )}
@@ -559,13 +682,35 @@ const STATE_ACCENT: Record<SleepJourneyState, string> = {
   Completed: "border-l-slate-300",
 };
 
+function formatHistoryEntry(e: JourneyEvent) {
+  const data = e.event_data ?? {};
+  if (
+    e.event_type === "deposit_received" ||
+    e.event_type === "payment_completed"
+  ) {
+    const amount =
+      typeof data.amount === "number" ? data.amount : parseFloat(String(data.amount ?? 0));
+    const method = String(data.payment_method ?? "Unknown");
+    return {
+      title: `Payment recorded: $${amount.toFixed(2)} via ${method}`,
+      detail: undefined,
+    };
+  }
+  return {
+    title: e.event_type,
+    detail: Object.keys(data).length > 0 ? JSON.stringify(data) : undefined,
+  };
+}
+
 function Column({
   state,
   journeys,
+  unresolvedJourneyIds,
   onSelect,
 }: {
   state: SleepJourneyState;
   journeys: JourneyWithDetails[];
+  unresolvedJourneyIds: Set<string>;
   onSelect: (j: JourneyWithDetails) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: state });
@@ -587,7 +732,12 @@ function Column({
       </div>
       <div className="min-h-[80px] space-y-1.5">
         {journeys.map((j) => (
-          <JourneyCard key={j.id} journey={j} onSelect={onSelect} />
+          <JourneyCard
+            key={j.id}
+            journey={j}
+            hasUnresolvedPayment={unresolvedJourneyIds.has(j.id)}
+            onSelect={onSelect}
+          />
         ))}
       </div>
     </div>
@@ -596,9 +746,11 @@ function Column({
 
 function JourneyCard({
   journey,
+  hasUnresolvedPayment,
   onSelect,
 }: {
   journey: JourneyWithDetails;
+  hasUnresolvedPayment: boolean;
   onSelect: (j: JourneyWithDetails) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
@@ -639,6 +791,9 @@ function JourneyCard({
           {journey.employee.name}
         </p>
       )}
+      {hasUnresolvedPayment && (
+        <p className="text-[10px] font-medium text-amber-600">Unresolved payment</p>
+      )}
     </div>
   );
 }
@@ -651,6 +806,7 @@ function JourneyDetailPanel({
   stores,
   reassignments,
   canReassign,
+  canReconcile,
   onReassigned,
   onClose,
   onAction,
@@ -664,6 +820,7 @@ function JourneyDetailPanel({
   stores: Store[];
   reassignments: JourneyReassignmentEvent[];
   canReassign: boolean;
+  canReconcile: boolean;
   onReassigned: (journeyId: string) => void | Promise<void>;
   onClose: () => void;
   onAction: (j: JourneyWithDetails, e: JourneyEventType) => void;
@@ -673,7 +830,12 @@ function JourneyDetailPanel({
   const transitions = STATE_TRANSITIONS[journey.current_state];
 
   const paid = events
-    .filter((e) => e.event_type === "deposit_received" || e.event_type === "payment_completed")
+    .filter(
+              (e) =>
+                (e.event_type === "deposit_received" ||
+                  e.event_type === "payment_completed") &&
+                e.outcome === "SUCCEEDED"
+            )
     .reduce((sum, e) => sum + (typeof e.event_data?.amount === "number" ? e.event_data.amount : 0), 0);
 
   const balance = journey.price !== null && journey.price !== undefined ? journey.price - paid : null;
@@ -774,6 +936,15 @@ function JourneyDetailPanel({
       onRefresh();
     } catch (e: any) {
       window.alert(e.message ?? "Failed to complete follow-up");
+    }
+  }
+
+  async function handleReconcileEvent(paymentEventId: string, newOutcome: PaymentOutcome) {
+    try {
+      await reconcilePayment(paymentEventId, newOutcome);
+      onRefresh();
+    } catch (e: any) {
+      window.alert(e.message ?? "Reconciliation failed");
     }
   }
 
@@ -1088,22 +1259,39 @@ function JourneyDetailPanel({
         <div className="mt-6">
           <h3 className="mb-2 text-sm font-semibold text-slate-900">History</h3>
           <div className="space-y-2">
-            {events.map((e) => (
-              <div
-                key={e.id}
-                className="rounded-md border border-slate-200 bg-slate-50 p-2 text-sm"
-              >
-                <p className="font-medium text-slate-700">{e.event_type}</p>
-                {Object.keys(e.event_data ?? {}).length > 0 && (
-                  <p className="text-xs text-slate-500">
-                    {JSON.stringify(e.event_data)}
+            {events.map((e) => {
+              const entry = formatHistoryEntry(e);
+              return (
+                <div
+                  key={e.id}
+                  className="rounded-md border border-slate-200 bg-slate-50 p-2 text-sm"
+                >
+                  <p className="font-medium text-slate-700">{entry.title}</p>
+                  {entry.detail && (
+                    <p className="text-xs text-slate-500">{entry.detail}</p>
+                  )}
+                  <p className="text-xs text-slate-400">
+                    {new Date(e.created_at).toLocaleString()} by {e.triggered_by === "system" ? "System" : "User"}
                   </p>
-                )}
-                <p className="text-xs text-slate-400">
-                  {new Date(e.created_at).toLocaleString()} by {e.triggered_by === "system" ? "System" : "User"}
-                </p>
+                  {e.outcome === "UNKNOWN" && canReconcile && (
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        onClick={() => handleReconcileEvent(e.id, "SUCCEEDED")}
+                        className="rounded bg-green-600 px-2 py-1 text-xs font-medium text-white hover:bg-green-700"
+                      >
+                        Mark succeeded
+                      </button>
+                      <button
+                        onClick={() => handleReconcileEvent(e.id, "FAILED")}
+                        className="rounded bg-red-600 px-2 py-1 text-xs font-medium text-white hover:bg-red-700"
+                      >
+                        Mark failed
+                      </button>
+                    </div>
+                  )}
               </div>
-            ))}
+            );
+            })}
           </div>
         </div>
       </div>

@@ -34,6 +34,7 @@ export type JourneyEvent = {
   journey_id: string;
   event_type: string;
   event_data: Record<string, unknown> | null;
+  outcome: string | null;
   triggered_by: string;
   created_at: string;
 };
@@ -430,6 +431,37 @@ export async function createEmployee(input: EmployeeInput) {
   if (error) throw new Error(error.message);
 }
 
+export type CreateEmployeeWithLoginInput = EmployeeInput & {
+  email: string;
+  password: string;
+};
+
+export async function createEmployeeWithLogin(input: CreateEmployeeWithLoginInput): Promise<Employee> {
+  const res = await fetch("/api/employees", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error ?? "Failed to create employee");
+  }
+
+  return data.employee;
+}
+
+export async function fetchEmployeeRoles(): Promise<string[]> {
+  const res = await fetch("/api/employee-roles");
+  if (!res.ok) {
+    const data = await res.json();
+    throw new Error(data.error ?? "Failed to load employee roles");
+  }
+
+  const data = await res.json();
+  return data.roles ?? [];
+}
+
 export async function updateEmployee(
   id: string,
   updates: Partial<EmployeeInput>
@@ -705,7 +737,7 @@ export type PurchaseCreateInput = BaseCreateInput & {
 
 export type CreateJourneyInput = QuoteCreateInput | PurchaseCreateInput;
 
-export async function createJourney(input: CreateJourneyInput) {
+export async function createJourney(input: CreateJourneyInput): Promise<string> {
   const supabase = createClient();
 
   const {
@@ -782,30 +814,127 @@ export async function createJourney(input: CreateJourneyInput) {
         notes: input.quoteNotes,
       }
     );
-  } else {
-    const paidNum = parseFloat(input.paymentAmount) || 0;
-
-    if (paidNum >= total) {
-      await recordJourneyEvent(
-        journey.id,
-        "payment_completed",
-        {
-          amount: paidNum,
-          payment_method: input.paymentMethod,
-        }
-      );
-    } else {
-      await recordJourneyEvent(
-        journey.id,
-        "deposit_received",
-        {
-          amount: paidNum,
-          payment_method: input.paymentMethod,
-          follow_up_due_at: input.followUpDueAt || undefined,
-        }
-      );
-    }
   }
+
+  return journey.id;
+}
+
+export type PaymentOutcome =
+  | "SUCCEEDED"
+  | "FAILED"
+  | "UNKNOWN"
+  | "CANCELLED"
+  | "VOIDED"
+  | "REFUNDED";
+
+export async function recordPayment(
+  journeyId: string,
+  amount: number,
+  paymentMethod: string
+): Promise<{ paymentEventId: string; outcome: PaymentOutcome }> {
+  const supabase = createClient();
+
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.refreshSession();
+
+  if (sessionError || !session?.user) {
+    throw new Error("Not authenticated");
+  }
+
+  const outcome: PaymentOutcome = paymentMethod.includes("timeout")
+    ? "UNKNOWN"
+    : paymentMethod.includes("failure")
+    ? "FAILED"
+    : "SUCCEEDED";
+
+  const { data, error } = await supabase.rpc("record_payment_event", {
+    p_journey_id: journeyId,
+    p_event_data: { amount, payment_method: paymentMethod },
+    p_idempotency_key: crypto.randomUUID(),
+    p_outcome: outcome,
+    p_actor_id: session.user.id,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return { paymentEventId: data as string, outcome };
+}
+
+export async function recordPaymentEvent(options: {
+  journeyId: string;
+  amount: number;
+  paymentMethod: string;
+  idempotencyKey: string;
+  outcome: PaymentOutcome;
+  followUpDueAt?: string;
+}) {
+  const supabase = createClient();
+
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.refreshSession();
+
+  if (sessionError || !session?.user) {
+    throw new Error("Not authenticated");
+  }
+
+  const eventData: Record<string, unknown> = {
+    amount: options.amount,
+    payment_method: options.paymentMethod,
+  };
+
+  if (options.followUpDueAt) {
+    eventData.follow_up_due_at = options.followUpDueAt;
+  }
+
+  const { data, error } = await supabase.rpc("record_payment_event", {
+    p_journey_id: options.journeyId,
+    p_event_data: eventData,
+    p_idempotency_key: options.idempotencyKey,
+    p_outcome: options.outcome,
+    p_actor_id: session.user.id,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as string;
+}
+
+export async function reconcilePayment(
+  paymentEventId: string,
+  newOutcome: PaymentOutcome
+): Promise<string> {
+  const supabase = createClient();
+
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.refreshSession();
+
+  if (sessionError || !session?.user) {
+    throw new Error("Not authenticated");
+  }
+
+  const { data, error } = await supabase.rpc("reconcile_payment_event", {
+    p_event_id: paymentEventId,
+    p_new_outcome: newOutcome,
+    p_source: "manual",
+    p_actor_id: session.user.id,
+    p_notes: null,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as string;
 }
 
 export async function fetchOpportunities(storeId?: string): Promise<Opportunity[]> {

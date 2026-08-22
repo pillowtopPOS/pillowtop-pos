@@ -1,15 +1,30 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { fetchCurrentEmployee, fetchStores, type Store } from "@/lib/journeys/queries";
+import { fetchStores, type Store } from "@/lib/journeys/queries";
 
 export default function StoreSelectPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen items-center justify-center p-8">
+          <p className="text-sm text-slate-500">Loading…</p>
+        </main>
+      }
+    >
+      <StoreSelectContent />
+    </Suspense>
+  );
+}
+
+function StoreSelectContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnTo = searchParams.get("returnTo") || "/board";
   const [stores, setStores] = useState<Store[]>([]);
   const [selected, setSelected] = useState<string>("");
-  const [role, setRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,9 +38,6 @@ export default function StoreSelectPage() {
       }
 
       fetchStores(true).then(setStores);
-      fetchCurrentEmployee().then((emp) => {
-        setRole(emp?.role ?? null);
-      });
     });
   }, [router]);
 
@@ -36,10 +48,11 @@ export default function StoreSelectPage() {
     setError(null);
 
     const supabase = createClient();
-    const storeId = selected === "all" ? null : selected;
-
     const { error } = await supabase.auth.updateUser({
-      data: { active_store_id: storeId },
+      data: {
+        active_store_id: selected,
+        active_store_confirmed_at: new Date().toISOString(),
+      },
     });
 
     if (!error) {
@@ -51,12 +64,10 @@ export default function StoreSelectPage() {
     if (error) {
       setError(error.message);
     } else {
-      router.push("/board");
+      router.push(returnTo);
       router.refresh();
     }
   }
-
-  const canViewAll = role === "owner" || role === "manager";
 
   return (
     <main className="flex min-h-screen items-center justify-center p-8">
@@ -95,27 +106,7 @@ export default function StoreSelectPage() {
             </label>
           ))}
 
-          {canViewAll && (
-            <label
-              className={`flex cursor-pointer items-center justify-between rounded-md border p-3 ${
-                selected === "all"
-                  ? "border-brand-500 bg-brand-50"
-                  : "border-slate-200 hover:border-slate-300"
-              }`}
-            >
-              <span className="text-sm font-medium text-slate-800">
-                View all stores
-              </span>
-              <input
-                type="radio"
-                name="store"
-                value="all"
-                checked={selected === "all"}
-                onChange={(e) => setSelected(e.target.value)}
-                className="h-4 w-4 text-brand-600"
-              />
-            </label>
-          )}
+
         </div>
 
         <button
