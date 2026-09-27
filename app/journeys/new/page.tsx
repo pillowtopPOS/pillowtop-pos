@@ -15,8 +15,12 @@ import {
   type Store,
   type PaymentOutcome,
 } from "@/lib/journeys/queries";
+import { requestDepositException } from "@/lib/journeys/deposit";
 import type { CreateJourneyInput } from "@/lib/journeys/queries";
 import ProductPicker, { type ProductSelection } from "@/components/ProductPicker";
+import { fetchProductStock } from "@/lib/inventory/queries";
+import { resolveLineItemLocation } from "@/lib/journeys/fulfillment";
+import Modal from "@/components/Modal";
 import { isStoreConfirmedToday, storeSelectUrl } from "@/lib/journeys/storeConfirm";
 
 const PAYMENT_METHODS = [
@@ -43,6 +47,8 @@ type LineItem = {
   item_name: string;
   quantity: number;
   unit_price: number;
+  fulfillment_type_override: "delivery" | "pickup" | null;
+  pickup_location_id: string | null;
 };
 
 export default function NewJourneyPage() {
@@ -57,6 +63,18 @@ export default function NewJourneyPage() {
     paymentEventId: string;
     outcome: PaymentOutcome;
   } | null>(null);
+  const [pendingOverpayment, setPendingOverpayment] = useState<{
+    paid: number;
+    total: number;
+  } | null>(null);
+  const [pendingDepositException, setPendingDepositException] = useState<{
+    journeyId: string;
+    amount: number;
+    method: string;
+    requestId?: string;
+    reason?: string;
+    error?: string;
+  } | null>(null);
   const [step, setStep] = useState<0 | 1 | 2 | 3>(0);
 
   const [mode, setMode] = useState<"quote" | "purchase" | null>(null);
@@ -65,10 +83,17 @@ export default function NewJourneyPage() {
     lastName: "",
     phone: "",
     email: "",
+    streetAddress: "",
+    streetAddressLine2: "",
+    city: "",
+    state: "",
+    zipCode: "",
   });
   const [storeId, setStoreId] = useState("");
+  const [fulfillmentType, setFulfillmentType] = useState<"delivery" | "pickup">("delivery");
   const [assignedEmployeeId, setAssignedEmployeeId] = useState<string | null>(null);
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
+  const [availability, setAvailability] = useState<Record<string, number>>({});
   const [quoteNotes, setQuoteNotes] = useState("");
   const [purchase, setPurchase] = useState({
     paymentAmount: "",
@@ -100,6 +125,31 @@ export default function NewJourneyPage() {
     [lineItems]
   );
 
+  const inventoryStoreId = useMemo(
+    () =>
+      resolveLineItemLocation(
+        {},
+        { store_id: storeId, fulfillment_type: fulfillmentType },
+        stores
+      ),
+    [stores, storeId, fulfillmentType]
+  );
+
+  async function refreshAvailability(item: LineItem) {
+    if (!item.product_id) return;
+    const productId = item.product_id;
+    const locationId = resolveLineItemLocation(
+      item,
+      { store_id: storeId, fulfillment_type: fulfillmentType },
+      stores
+    );
+    if (!locationId) return;
+    const map = await fetchProductStock([productId], locationId);
+    setAvailability((prev) => ({ ...prev, [item.id]: map[productId]?.ats ?? 0 }));
+  }
+
+  const hasDeliveryAddress = customer.streetAddress.trim() !== "";
+
   const canSubmitQuote = useMemo(() => {
     return (
       customer.firstName &&
@@ -124,32 +174,35 @@ export default function NewJourneyPage() {
 
   function addLineItem(selection: ProductSelection) {
     const unitPrice = selection.salePrice ?? selection.price ?? 0;
-    setLineItems((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        product_id: selection.productId,
-        item_name: selection.productSummary,
-        quantity: 1,
-        unit_price: unitPrice,
-      },
-    ]);
+    const item: LineItem = {
+      id: crypto.randomUUID(),
+      product_id: selection.productId,
+      item_name: selection.productSummary,
+      quantity: 1,
+      unit_price: unitPrice,
+      fulfillment_type_override: null,
+      pickup_location_id: null,
+    };
+    setLineItems((prev) => [...prev, item]);
+    void refreshAvailability(item);
   }
 
   function updateLineItem(id: string, updates: Partial<LineItem>) {
-    setLineItems((prev) =>
-      prev.map((item) =>
+    setLineItems((prev) => {
+      const next = prev.map((item) =>
         item.id === id ? { ...item, ...updates } : item
-      )
-    );
+      );
+      const changed = next.find((item) => item.id === id);
+      if (changed) void refreshAvailability(changed);
+      return next;
+    });
   }
 
   function removeLineItem(id: string) {
     setLineItems((prev) => prev.filter((item) => item.id !== id));
   }
 
-  async function handleSubmit() {
-    if (!mode || saving) return;
+  async function performSubmit() {
     setSaving(true);
     setError(null);
 
@@ -168,8 +221,11 @@ export default function NewJourneyPage() {
         itemName: item.item_name,
         quantity: item.quantity,
         unitPrice: item.unit_price,
+        fulfillmentTypeOverride: item.fulfillment_type_override,
+        pickupLocationId: item.pickup_location_id,
       })),
       storeId,
+      fulfillmentType,
       assignedEmployeeId,
     };
 
@@ -186,8 +242,10 @@ export default function NewJourneyPage() {
       };
     }
 
+    let journeyId: string | undefined;
+
     try {
-      const journeyId = await createJourney(input);
+      journeyId = await createJourney(input);
 
       if (mode === "quote") {
         router.push("/board");
@@ -218,9 +276,108 @@ export default function NewJourneyPage() {
         outcome,
       });
     } catch (e: any) {
+      const msg = e.message ?? "";
+      if (
+        journeyId &&
+        (msg.includes("below the required deposit") ||
+          msg.includes("below the approved minimum"))
+      ) {
+        setPendingDepositException({
+          journeyId,
+          amount: paid,
+          method: purchase.paymentMethod,
+        });
+        setSaving(false);
+        return;
+      }
       setSaving(false);
-      setError(e.message ?? "Failed to create journey");
+      setError(msg || "Failed to create journey");
     }
+  }
+
+  async function handleSubmit() {
+    if (!mode || saving) return;
+
+    if (mode === "purchase") {
+      const paid = parseFloat(purchase.paymentAmount) || 0;
+      if (paid > total) {
+        setPendingOverpayment({ paid, total });
+        return;
+      }
+    }
+
+    await performSubmit();
+  }
+
+  function confirmOverpayment() {
+    setPendingOverpayment(null);
+    performSubmit();
+  }
+
+  function cancelOverpayment() {
+    setPendingOverpayment(null);
+  }
+
+  async function submitDepositException() {
+    if (!pendingDepositException || !pendingDepositException.reason?.trim()) return;
+    setSaving(true);
+    try {
+      const requestId = await requestDepositException(
+        pendingDepositException.journeyId,
+        pendingDepositException.amount,
+        pendingDepositException.reason.trim()
+      );
+      setPendingDepositException((prev) =>
+        prev ? { ...prev, requestId } : null
+      );
+    } catch (e: any) {
+      setPendingDepositException((prev) =>
+        prev ? { ...prev, error: e.message ?? "Request failed" } : null
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function recordPaymentWithException() {
+    if (!pendingDepositException?.requestId) return;
+    setSaving(true);
+    try {
+      const idempotencyKey = crypto.randomUUID();
+      const outcome = paymentOutcomeForMethod(pendingDepositException.method);
+      const paymentEventId = await recordPaymentEvent({
+        journeyId: pendingDepositException.journeyId,
+        amount: pendingDepositException.amount,
+        paymentMethod: pendingDepositException.method,
+        idempotencyKey,
+        outcome,
+        followUpDueAt: purchase.followUpDueAt,
+        depositApprovalId: pendingDepositException.requestId,
+      });
+
+      setPendingDepositException(null);
+
+      if (outcome === "SUCCEEDED") {
+        router.push("/board");
+        return;
+      }
+
+      setCreated({
+        journeyId: pendingDepositException.journeyId,
+        paymentEventId,
+        outcome,
+      });
+    } catch (e: any) {
+      setPendingDepositException((prev) =>
+        prev ? { ...prev, error: e.message ?? "Payment failed" } : null
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function closeDepositException() {
+    setPendingDepositException(null);
   }
 
   async function handleReconcile(newOutcome: PaymentOutcome) {
@@ -402,6 +559,28 @@ export default function NewJourneyPage() {
                 className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
             </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700">Street address</label>
+              <input
+                value={customer.streetAddress}
+                onChange={(e) => setCustomer((c) => ({ ...c, streetAddress: e.target.value }))}
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700">Address Line 2</label>
+              <input
+                value={customer.streetAddressLine2}
+                onChange={(e) => setCustomer((c) => ({ ...c, streetAddressLine2: e.target.value }))}
+                placeholder="Apartment, suite, etc. (optional)"
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <input placeholder="City" value={customer.city} onChange={(e) => setCustomer((c) => ({ ...c, city: e.target.value }))} className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
+              <input placeholder="State" value={customer.state} onChange={(e) => setCustomer((c) => ({ ...c, state: e.target.value }))} className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
+              <input placeholder="ZIP" value={customer.zipCode} onChange={(e) => setCustomer((c) => ({ ...c, zipCode: e.target.value }))} className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
+            </div>
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setStep(0)}
@@ -425,7 +604,7 @@ export default function NewJourneyPage() {
             <h2 className="text-sm font-semibold text-slate-700">Line Items</h2>
 
             <ProductPicker
-              storeId={storeId}
+              storeId={inventoryStoreId}
               onSelect={addLineItem}
             />
 
@@ -436,8 +615,48 @@ export default function NewJourneyPage() {
                     key={item.id}
                     className="grid grid-cols-12 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-2 text-sm"
                   >
-                    <div className="col-span-5 truncate text-slate-900">
-                      {item.item_name}
+                    <div className="col-span-5 min-w-0 text-slate-900">
+                      <div className="truncate">{item.item_name}</div>
+                      <select
+                        value={item.fulfillment_type_override ?? "inherit"}
+                        onChange={(e) =>
+                          updateLineItem(item.id, {
+                            fulfillment_type_override:
+                              e.target.value === "inherit"
+                                ? null
+                                : (e.target.value as "delivery" | "pickup"),
+                            pickup_location_id:
+                              e.target.value === "pickup"
+                                ? item.pickup_location_id ?? storeId
+                                : null,
+                          })
+                        }
+                        className="mt-1 w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs"
+                      >
+                        <option value="inherit">Inherit Journey ({fulfillmentType})</option>
+                        <option value="delivery" disabled={!hasDeliveryAddress}>Delivery</option>
+                        <option value="pickup">Pickup</option>
+                      </select>
+                      {(item.fulfillment_type_override ?? fulfillmentType) === "pickup" && (
+                        <select
+                          value={item.pickup_location_id ?? storeId}
+                          onChange={(e) =>
+                            updateLineItem(item.id, { pickup_location_id: e.target.value })
+                          }
+                          className="mt-1 w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs"
+                        >
+                          {stores
+                            .filter((s) => s.location_type !== "WAREHOUSE_QUARANTINE")
+                            .map((s) => (
+                              <option key={s.id} value={s.id}>{s.name}</option>
+                            ))}
+                        </select>
+                      )}
+                      {item.product_id && (
+                        <div className="mt-1 text-xs text-slate-500">
+                          Availability: {availability[item.id] ?? "Loading…"}
+                        </div>
+                      )}
                     </div>
                     <div className="col-span-2">
                       <input
@@ -501,6 +720,19 @@ export default function NewJourneyPage() {
               </select>
             </div>
             <div>
+              <label className="block text-sm font-medium text-slate-700">Fulfillment</label>
+              <select
+                value={fulfillmentType}
+                onChange={(e) =>
+                  setFulfillmentType(e.target.value as "delivery" | "pickup")
+                }
+                className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              >
+                <option value="delivery" disabled={!hasDeliveryAddress}>Delivery</option>
+                <option value="pickup">Pickup</option>
+              </select>
+            </div>
+            <div>
               <label className="block text-sm font-medium text-slate-700">Assigned employee</label>
               <select
                 value={assignedEmployeeId ?? ""}
@@ -523,8 +755,8 @@ export default function NewJourneyPage() {
                 Back
               </button>
               <button
-                onClick={() => lineItems.length > 0 && setStep(3)}
-                disabled={lineItems.length === 0}
+                onClick={() => lineItems.length > 0 && (fulfillmentType === "pickup" || hasDeliveryAddress) && setStep(3)}
+                disabled={lineItems.length === 0 || (fulfillmentType === "delivery" && !hasDeliveryAddress)}
                 className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
               >
                 Continue
@@ -643,6 +875,119 @@ export default function NewJourneyPage() {
           </div>
         )}
       </div>
+
+      {pendingOverpayment && (
+        <Modal onClose={cancelOverpayment} saving={saving}>
+          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+            <h2 className="mb-2 text-lg font-semibold text-slate-900">
+              Overpayment confirmation
+            </h2>
+            <p className="mb-4 text-sm text-slate-600">
+              This payment is{" "}
+              <strong>${(pendingOverpayment.paid - pendingOverpayment.total).toFixed(2)}</strong>{" "}
+              more than the{" "}
+              <strong>${pendingOverpayment.total.toFixed(2)}</strong> owed. The customer will
+              have a{" "}
+              <strong>${(pendingOverpayment.paid - pendingOverpayment.total).toFixed(2)}</strong>{" "}
+              credit on their account. Continue?
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={confirmOverpayment}
+                className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
+              >
+                Record payment
+              </button>
+              <button
+                onClick={cancelOverpayment}
+                className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {pendingDepositException && (
+        <Modal
+          onClose={closeDepositException}
+          dirty={!!pendingDepositException.reason?.trim() && !pendingDepositException.requestId}
+          saving={saving}
+        >
+          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+            <h2 className="mb-2 text-lg font-semibold text-slate-900">
+              Deposit exception
+            </h2>
+            <p className="mb-4 text-sm text-slate-600">
+              The proposed payment of{" "}
+              <strong>${pendingDepositException.amount.toFixed(2)}</strong> is below the
+              required deposit for this order.
+            </p>
+
+            {pendingDepositException.error && (
+              <p className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                {pendingDepositException.error}
+              </p>
+            )}
+
+            {!pendingDepositException.requestId ? (
+              <div className="space-y-3">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Reason for exception
+                  </label>
+                  <textarea
+                    value={pendingDepositException.reason ?? ""}
+                    onChange={(e) =>
+                      setPendingDepositException((prev) =>
+                        prev ? { ...prev, reason: e.target.value } : null
+                      )
+                    }
+                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    rows={3}
+                    placeholder="Explain why this below-floor payment should be accepted"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={submitDepositException}
+                    disabled={!pendingDepositException.reason?.trim()}
+                    className="flex-1 rounded-md bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                  >
+                    Request approval
+                  </button>
+                  <button
+                    onClick={closeDepositException}
+                    className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="rounded-md bg-slate-50 p-3 text-sm text-slate-700">
+                  Exception request submitted. An owner, admin, or manager must approve it in
+                  Settings &gt; Deposit Approvals before the payment can be recorded.
+                </p>
+                <button
+                    onClick={recordPaymentWithException}
+                    className="w-full rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
+                  >
+                    Try recording payment now
+                  </button>
+                  <button
+                    onClick={closeDepositException}
+                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Close
+                  </button>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
     </main>
   );
 }

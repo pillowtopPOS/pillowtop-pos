@@ -28,7 +28,7 @@ export default function ProductPicker({ storeId, onSelect }: ProductPickerProps)
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [results, setResults] = useState<Product[]>([]);
-  const [stockMap, setStockMap] = useState<Record<string, number>>({});
+  const [stockMap, setStockMap] = useState<Record<string, { physical: number | null; ats: number }>>({});
   const [loading, setLoading] = useState(false);
   const [custom, setCustom] = useState(false);
   const [customSummary, setCustomSummary] = useState("");
@@ -40,29 +40,45 @@ export default function ProductPicker({ storeId, onSelect }: ProductPickerProps)
   }, [query]);
 
   useEffect(() => {
+    let ignore = false;
+
     if (!debouncedQuery.trim()) {
       setResults([]);
-      return;
+      setStockMap({});
+      return () => {
+        ignore = true;
+      };
     }
+
     setLoading(true);
     searchProducts(debouncedQuery).then(async (products) => {
+      if (ignore) return;
       setResults(products);
+
       if (storeId && products.length > 0) {
         const map = await fetchProductStock(
           products.map((p) => p.id),
           storeId
         );
+        if (ignore) return;
         setStockMap(map);
+      } else if (!ignore) {
+        setStockMap({});
       }
-      setLoading(false);
+
+      if (!ignore) setLoading(false);
     });
+
+    return () => {
+      ignore = true;
+    };
   }, [debouncedQuery, storeId]);
 
   function selectProduct(product: Product) {
     const { onSale, unitPrice } = priceDisplay(product);
     setSelectedProduct(product);
     setCustom(false);
-    setQuery(product.item_name);
+    setQuery("");
     setResults([]);
     onSelect({
       productId: product.id,
@@ -160,7 +176,7 @@ export default function ProductPicker({ storeId, onSelect }: ProductPickerProps)
               </div>
               {storeId && (
                 <p className="mt-1 text-xs text-slate-500">
-                  Stock: {stockMap[product.id] ?? 0}
+                  Stock: {stockMap[product.id]?.ats ?? 0}
                 </p>
               )}
             </li>

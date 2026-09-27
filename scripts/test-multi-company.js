@@ -57,12 +57,12 @@ async function run() {
     // Two companies, one store each
     const { data: c1 } = await admin
       .from("companies")
-      .insert({ name: `Test Co A ${ts}` })
+      .insert({ name: `Test Co A ${ts}`, business_timezone: "America/Denver" })
       .select("id")
       .single();
     const { data: c2 } = await admin
       .from("companies")
-      .insert({ name: `Test Co B ${ts}` })
+      .insert({ name: `Test Co B ${ts}`, business_timezone: "America/Denver" })
       .select("id")
       .single();
 

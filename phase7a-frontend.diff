@@ -1,0 +1,2284 @@
+diff --git a/app/board/page.tsx b/app/board/page.tsx
+index 99bb3f8..87fe6b7 100644
+--- a/app/board/page.tsx
++++ b/app/board/page.tsx
+@@ -1,7 +1,7 @@
+ "use client";
+ 
+ import { useEffect, useMemo, useState } from "react";
+-import { useRouter } from "next/navigation";
++import { useRouter, useSearchParams } from "next/navigation";
+ import Link from "next/link";
+ import {
+   DndContext,
+@@ -37,6 +37,7 @@ import {
+   subscribeToJourneyChanges,
+   recordJourneyEvent,
+   recordPayment,
++  fetchTotalPaid,
+   reconcilePayment,
+   cancelJourney,
+   type PaymentOutcome,
+@@ -55,6 +56,7 @@ import {
+   type Store,
+   type JourneyLineItem,
+ } from "@/lib/journeys/queries";
++import { requestDepositException } from "@/lib/journeys/deposit";
+ import ProductPicker, { type ProductSelection } from "@/components/ProductPicker";
+ import {
+   getTransitionForTarget,
+@@ -66,6 +68,7 @@ import {
+ 
+ export default function BoardPage() {
+   const router = useRouter();
++  const searchParams = useSearchParams();
+   const [user, setUser] = useState<any>(null);
+   const [currentEmployee, setCurrentEmployee] = useState<Employee | null>(null);
+   const [activeStoreId, setActiveStoreId] = useState<string | null | undefined>();
+@@ -94,6 +97,21 @@ export default function BoardPage() {
+     paymentEventId: string;
+     outcome: PaymentOutcome;
+   } | null>(null);
++  const [pendingDepositException, setPendingDepositException] = useState<{
++    journey: JourneyWithDetails;
++    amount: number;
++    method: string;
++    requestId?: string;
++    reason?: string;
++    error?: string;
++  } | null>(null);
++  const [pendingOverpayment, setPendingOverpayment] = useState<{
++    journey: JourneyWithDetails;
++    amount: number;
++    method: string;
++    remaining: number;
++    credit: number;
++  } | null>(null);
+   const [cancelReason, setCancelReason] = useState("");
+   const [cancelJourneyState, setCancelJourneyState] = useState<JourneyWithDetails | null>(null);
+ 
+@@ -200,6 +218,13 @@ export default function BoardPage() {
+     }
+   }
+ 
++  useEffect(() => {
++    const journeyId = searchParams.get("journey");
++    if (journeyId) {
++      handleReassigned(journeyId);
++    }
++  }, [searchParams]);
++
+   const boardJourneys = useMemo(() => {
+     return journeys.filter((j) => !j.cancelled_at);
+   }, [journeys]);
+@@ -272,19 +297,35 @@ export default function BoardPage() {
+       if (transition.event === "payment_completed") {
+         const amount = parseFloat(fieldValues.amount ?? "0");
+         const method = fieldValues.payment_method ?? "";
+-        const { paymentEventId, outcome } = await recordPayment(journey.id, amount, method);
+-        if (outcome !== "SUCCEEDED") {
+-          setPendingReconcile({ journey, paymentEventId, outcome });
++
++        if (journey.price == null) {
++          window.alert("Journey has no price set");
++          return;
++        }
++
++        const totalPaid = await fetchTotalPaid(journey.id);
++        const remaining = journey.price - totalPaid;
++
++        if (amount > remaining) {
++          setPendingOverpayment({
++            journey,
++            amount,
++            method,
++            remaining,
++            credit: amount - remaining,
++          });
+           setPendingTransition(null);
+           setPendingFieldValues({});
+           return;
+         }
++
++        await submitBoardPayment(journey, amount, method);
+       } else {
+         await recordJourneyEvent(journey.id, transition.event, eventData);
++        setPendingTransition(null);
++        setPendingFieldValues({});
++        fetchJourneyEvents(journey.id).then(setEvents);
+       }
+-      setPendingTransition(null);
+-      setPendingFieldValues({});
+-      fetchJourneyEvents(journey.id).then(setEvents);
+     } catch (e: any) {
+       window.alert(e.message ?? "Failed to record event");
+     }
+@@ -306,6 +347,106 @@ export default function BoardPage() {
+     }
+   }
+ 
++  async function submitDepositException() {
++    if (!pendingDepositException || !pendingDepositException.reason?.trim()) return;
++    try {
++      const requestId = await requestDepositException(
++        pendingDepositException.journey.id,
++        pendingDepositException.amount,
++        pendingDepositException.reason.trim()
++      );
++      setPendingDepositException((prev) =>
++        prev ? { ...prev, requestId } : null
++      );
++    } catch (e: any) {
++      setPendingDepositException((prev) =>
++        prev ? { ...prev, error: e.message ?? "Request failed" } : null
++      );
++    }
++  }
++
++  async function recordPaymentWithException() {
++    if (!pendingDepositException?.requestId) return;
++    try {
++      const { paymentEventId, outcome } = await recordPayment(
++        pendingDepositException.journey.id,
++        pendingDepositException.amount,
++        pendingDepositException.method,
++        pendingDepositException.requestId
++      );
++      if (outcome !== "SUCCEEDED") {
++        setPendingReconcile({
++          journey: pendingDepositException.journey,
++          paymentEventId,
++          outcome,
++        });
++        setPendingDepositException(null);
++        return;
++      }
++      setPendingDepositException(null);
++      fetchJourneyEvents(pendingDepositException.journey.id).then(setEvents);
++    } catch (e: any) {
++      setPendingDepositException((prev) =>
++        prev ? { ...prev, error: e.message ?? "Payment failed" } : null
++      );
++    }
++  }
++
++  async function submitBoardPayment(
++    journey: JourneyWithDetails,
++    amount: number,
++    method: string,
++    depositApprovalId?: string
++  ) {
++    try {
++      const { paymentEventId, outcome } = await recordPayment(
++        journey.id,
++        amount,
++        method,
++        depositApprovalId
++      );
++      if (outcome !== "SUCCEEDED") {
++        setPendingReconcile({
++          journey,
++          paymentEventId,
++          outcome,
++        });
++        setPendingOverpayment(null);
++        return;
++      }
++      setPendingOverpayment(null);
++      setPendingTransition(null);
++      setPendingFieldValues({});
++      fetchJourneyEvents(journey.id).then(setEvents);
++    } catch (e: any) {
++      const msg = e.message ?? "";
++      if (
++        msg.includes("below the required deposit") ||
++        msg.includes("below the approved minimum")
++      ) {
++        setPendingDepositException({ journey, amount, method });
++        setPendingOverpayment(null);
++        setPendingTransition(null);
++        setPendingFieldValues({});
++        return;
++      }
++      window.alert(msg ?? "Failed to record payment");
++    }
++  }
++
++  async function confirmOverpayment() {
++    if (!pendingOverpayment) return;
++    await submitBoardPayment(
++      pendingOverpayment.journey,
++      pendingOverpayment.amount,
++      pendingOverpayment.method
++    );
++  }
++
++  function cancelOverpayment() {
++    setPendingOverpayment(null);
++  }
++
+   async function executeAction(journey: JourneyWithDetails, eventType: JourneyEventType) {
+     const transition = getTransitionForEvent(journey.current_state, eventType);
+     if (!transition) return;
+@@ -638,6 +779,114 @@ export default function BoardPage() {
+         </div>
+       )}
+ 
++      {pendingDepositException && (
++        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
++          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
++            <h2 className="mb-2 text-lg font-semibold text-slate-900">
++              Deposit exception
++            </h2>
++            <p className="mb-4 text-sm text-slate-600">
++              The proposed payment of{" "}
++              <strong>${pendingDepositException.amount.toFixed(2)}</strong> is below the
++              required deposit for this order.
++            </p>
++
++            {pendingDepositException.error && (
++              <p className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
++                {pendingDepositException.error}
++              </p>
++            )}
++
++            {!pendingDepositException.requestId ? (
++              <div className="space-y-3">
++                <div>
++                  <label className="mb-1 block text-sm font-medium text-slate-700">
++                    Reason for exception
++                  </label>
++                  <textarea
++                    value={pendingDepositException.reason ?? ""}
++                    onChange={(e) =>
++                      setPendingDepositException((prev) =>
++                        prev ? { ...prev, reason: e.target.value } : null
++                      )
++                    }
++                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
++                    rows={3}
++                    placeholder="Explain why this below-floor payment should be accepted"
++                  />
++                </div>
++                <div className="flex gap-2">
++                  <button
++                    onClick={submitDepositException}
++                    disabled={!pendingDepositException.reason?.trim()}
++                    className="flex-1 rounded-md bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
++                  >
++                    Request approval
++                  </button>
++                  <button
++                    onClick={() => setPendingDepositException(null)}
++                    className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
++                  >
++                    Cancel
++                  </button>
++                </div>
++              </div>
++            ) : (
++              <div className="space-y-3">
++                <p className="rounded-md bg-slate-50 p-3 text-sm text-slate-700">
++                  Exception request submitted. An owner, admin, or manager must approve it in
++                  Settings &gt; Deposit Approvals before the payment can be recorded.
++                </p>
++                <button
++                  onClick={recordPaymentWithException}
++                  className="w-full rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
++                >
++                  Try recording payment now
++                </button>
++                <button
++                  onClick={() => setPendingDepositException(null)}
++                  className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
++                >
++                  Close
++                </button>
++              </div>
++            )}
++          </div>
++        </div>
++      )}
++
++      {pendingOverpayment && (
++        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
++          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
++            <h2 className="mb-2 text-lg font-semibold text-slate-900">
++              Overpayment confirmation
++            </h2>
++            <p className="mb-4 text-sm text-slate-600">
++              This payment is <strong>${pendingOverpayment.credit.toFixed(2)}</strong> more
++              than the{" "}
++              <strong>${pendingOverpayment.remaining.toFixed(2)}</strong> owed. The customer
++              will have a{" "}
++              <strong>${pendingOverpayment.credit.toFixed(2)}</strong> credit on their
++              account. Continue?
++            </p>
++            <div className="flex gap-2">
++              <button
++                onClick={confirmOverpayment}
++                className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
++              >
++                Record payment
++              </button>
++              <button
++                onClick={cancelOverpayment}
++                className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
++              >
++                Cancel
++              </button>
++            </div>
++          </div>
++        </div>
++      )}
++
+       {cancelJourneyState && (
+         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+           <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+diff --git a/app/journeys/new/page.tsx b/app/journeys/new/page.tsx
+index 88852f8..479aac9 100644
+--- a/app/journeys/new/page.tsx
++++ b/app/journeys/new/page.tsx
+@@ -15,6 +15,7 @@ import {
+   type Store,
+   type PaymentOutcome,
+ } from "@/lib/journeys/queries";
++import { requestDepositException } from "@/lib/journeys/deposit";
+ import type { CreateJourneyInput } from "@/lib/journeys/queries";
+ import ProductPicker, { type ProductSelection } from "@/components/ProductPicker";
+ import { isStoreConfirmedToday, storeSelectUrl } from "@/lib/journeys/storeConfirm";
+@@ -57,6 +58,18 @@ export default function NewJourneyPage() {
+     paymentEventId: string;
+     outcome: PaymentOutcome;
+   } | null>(null);
++  const [pendingOverpayment, setPendingOverpayment] = useState<{
++    paid: number;
++    total: number;
++  } | null>(null);
++  const [pendingDepositException, setPendingDepositException] = useState<{
++    journeyId: string;
++    amount: number;
++    method: string;
++    requestId?: string;
++    reason?: string;
++    error?: string;
++  } | null>(null);
+   const [step, setStep] = useState<0 | 1 | 2 | 3>(0);
+ 
+   const [mode, setMode] = useState<"quote" | "purchase" | null>(null);
+@@ -148,8 +161,7 @@ export default function NewJourneyPage() {
+     setLineItems((prev) => prev.filter((item) => item.id !== id));
+   }
+ 
+-  async function handleSubmit() {
+-    if (!mode || saving) return;
++  async function performSubmit() {
+     setSaving(true);
+     setError(null);
+ 
+@@ -186,8 +198,10 @@ export default function NewJourneyPage() {
+       };
+     }
+ 
++    let journeyId: string | undefined;
++
+     try {
+-      const journeyId = await createJourney(input);
++      journeyId = await createJourney(input);
+ 
+       if (mode === "quote") {
+         router.push("/board");
+@@ -218,11 +232,104 @@ export default function NewJourneyPage() {
+         outcome,
+       });
+     } catch (e: any) {
++      const msg = e.message ?? "";
++      if (
++        journeyId &&
++        (msg.includes("below the required deposit") ||
++          msg.includes("below the approved minimum"))
++      ) {
++        setPendingDepositException({
++          journeyId,
++          amount: paid,
++          method: purchase.paymentMethod,
++        });
++        setSaving(false);
++        return;
++      }
+       setSaving(false);
+-      setError(e.message ?? "Failed to create journey");
++      setError(msg || "Failed to create journey");
+     }
+   }
+ 
++  async function handleSubmit() {
++    if (!mode || saving) return;
++
++    if (mode === "purchase") {
++      const paid = parseFloat(purchase.paymentAmount) || 0;
++      if (paid > total) {
++        setPendingOverpayment({ paid, total });
++        return;
++      }
++    }
++
++    await performSubmit();
++  }
++
++  function confirmOverpayment() {
++    setPendingOverpayment(null);
++    performSubmit();
++  }
++
++  function cancelOverpayment() {
++    setPendingOverpayment(null);
++  }
++
++  async function submitDepositException() {
++    if (!pendingDepositException || !pendingDepositException.reason?.trim()) return;
++    try {
++      const requestId = await requestDepositException(
++        pendingDepositException.journeyId,
++        pendingDepositException.amount,
++        pendingDepositException.reason.trim()
++      );
++      setPendingDepositException((prev) =>
++        prev ? { ...prev, requestId } : null
++      );
++    } catch (e: any) {
++      setPendingDepositException((prev) =>
++        prev ? { ...prev, error: e.message ?? "Request failed" } : null
++      );
++    }
++  }
++
++  async function recordPaymentWithException() {
++    if (!pendingDepositException?.requestId) return;
++    try {
++      const idempotencyKey = crypto.randomUUID();
++      const outcome = paymentOutcomeForMethod(pendingDepositException.method);
++      const paymentEventId = await recordPaymentEvent({
++        journeyId: pendingDepositException.journeyId,
++        amount: pendingDepositException.amount,
++        paymentMethod: pendingDepositException.method,
++        idempotencyKey,
++        outcome,
++        followUpDueAt: purchase.followUpDueAt,
++        depositApprovalId: pendingDepositException.requestId,
++      });
++
++      setPendingDepositException(null);
++
++      if (outcome === "SUCCEEDED") {
++        router.push("/board");
++        return;
++      }
++
++      setCreated({
++        journeyId: pendingDepositException.journeyId,
++        paymentEventId,
++        outcome,
++      });
++    } catch (e: any) {
++      setPendingDepositException((prev) =>
++        prev ? { ...prev, error: e.message ?? "Payment failed" } : null
++      );
++    }
++  }
++
++  function closeDepositException() {
++    setPendingDepositException(null);
++  }
++
+   async function handleReconcile(newOutcome: PaymentOutcome) {
+     if (!created) return;
+     setSaving(true);
+@@ -643,6 +750,115 @@ export default function NewJourneyPage() {
+           </div>
+         )}
+       </div>
++
++      {pendingOverpayment && (
++        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
++          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
++            <h2 className="mb-2 text-lg font-semibold text-slate-900">
++              Overpayment confirmation
++            </h2>
++            <p className="mb-4 text-sm text-slate-600">
++              This payment is{" "}
++              <strong>${(pendingOverpayment.paid - pendingOverpayment.total).toFixed(2)}</strong>{" "}
++              more than the{" "}
++              <strong>${pendingOverpayment.total.toFixed(2)}</strong> owed. The customer will
++              have a{" "}
++              <strong>${(pendingOverpayment.paid - pendingOverpayment.total).toFixed(2)}</strong>{" "}
++              credit on their account. Continue?
++            </p>
++            <div className="flex gap-2">
++              <button
++                onClick={confirmOverpayment}
++                className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
++              >
++                Record payment
++              </button>
++              <button
++                onClick={cancelOverpayment}
++                className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
++              >
++                Cancel
++              </button>
++            </div>
++          </div>
++        </div>
++      )}
++
++      {pendingDepositException && (
++        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
++          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
++            <h2 className="mb-2 text-lg font-semibold text-slate-900">
++              Deposit exception
++            </h2>
++            <p className="mb-4 text-sm text-slate-600">
++              The proposed payment of{" "}
++              <strong>${pendingDepositException.amount.toFixed(2)}</strong> is below the
++              required deposit for this order.
++            </p>
++
++            {pendingDepositException.error && (
++              <p className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
++                {pendingDepositException.error}
++              </p>
++            )}
++
++            {!pendingDepositException.requestId ? (
++              <div className="space-y-3">
++                <div>
++                  <label className="mb-1 block text-sm font-medium text-slate-700">
++                    Reason for exception
++                  </label>
++                  <textarea
++                    value={pendingDepositException.reason ?? ""}
++                    onChange={(e) =>
++                      setPendingDepositException((prev) =>
++                        prev ? { ...prev, reason: e.target.value } : null
++                      )
++                    }
++                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
++                    rows={3}
++                    placeholder="Explain why this below-floor payment should be accepted"
++                  />
++                </div>
++                <div className="flex gap-2">
++                  <button
++                    onClick={submitDepositException}
++                    disabled={!pendingDepositException.reason?.trim()}
++                    className="flex-1 rounded-md bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
++                  >
++                    Request approval
++                  </button>
++                  <button
++                    onClick={closeDepositException}
++                    className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
++                  >
++                    Cancel
++                  </button>
++                </div>
++              </div>
++            ) : (
++              <div className="space-y-3">
++                <p className="rounded-md bg-slate-50 p-3 text-sm text-slate-700">
++                  Exception request submitted. An owner, admin, or manager must approve it in
++                  Settings &gt; Deposit Approvals before the payment can be recorded.
++                </p>
++                <button
++                    onClick={recordPaymentWithException}
++                    className="w-full rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
++                  >
++                    Try recording payment now
++                  </button>
++                  <button
++                    onClick={closeDepositException}
++                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
++                  >
++                    Close
++                  </button>
++              </div>
++            )}
++          </div>
++        </div>
++      )}
+     </main>
+   );
+ }
+diff --git a/app/settings/deposit-approvals/page.tsx b/app/settings/deposit-approvals/page.tsx
+new file mode 100644
+index 0000000..4b8f847
+--- /dev/null
++++ b/app/settings/deposit-approvals/page.tsx
+@@ -0,0 +1,30 @@
++import { redirect } from "next/navigation";
++import { createClient } from "@/lib/supabase/server";
++import DepositApprovalsList from "@/components/DepositApprovalsList";
++
++export default async function DepositApprovalsPage() {
++  const supabase = createClient();
++
++  const {
++    data: { user },
++  } = await supabase.auth.getUser();
++  if (!user) {
++    redirect("/login");
++  }
++
++  const { data: employee } = await supabase
++    .from("employees")
++    .select("role")
++    .eq("auth_user_id", user.id)
++    .maybeSingle();
++
++  if (
++    employee?.role !== "owner" &&
++    employee?.role !== "admin" &&
++    employee?.role !== "manager"
++  ) {
++    redirect("/board");
++  }
++
++  return <DepositApprovalsList />;
++}
+diff --git a/app/settings/deposit-policy/page.tsx b/app/settings/deposit-policy/page.tsx
+new file mode 100644
+index 0000000..31b271f
+--- /dev/null
++++ b/app/settings/deposit-policy/page.tsx
+@@ -0,0 +1,26 @@
++import { redirect } from "next/navigation";
++import { createClient } from "@/lib/supabase/server";
++import DepositPolicyForm from "@/components/DepositPolicyForm";
++
++export default async function DepositPolicyPage() {
++  const supabase = createClient();
++
++  const {
++    data: { user },
++  } = await supabase.auth.getUser();
++  if (!user) {
++    redirect("/login");
++  }
++
++  const { data: employee } = await supabase
++    .from("employees")
++    .select("role")
++    .eq("auth_user_id", user.id)
++    .maybeSingle();
++
++  if (employee?.role !== "owner" && employee?.role !== "admin") {
++    redirect("/board");
++  }
++
++  return <DepositPolicyForm />;
++}
+diff --git a/app/settings/page.tsx b/app/settings/page.tsx
+index bdc281a..df3f457 100644
+--- a/app/settings/page.tsx
++++ b/app/settings/page.tsx
+@@ -47,6 +47,26 @@ export default async function SettingsPage() {
+               Manage employees, roles, and permissions.
+             </p>
+           </Link>
++
++          <Link
++            href="/settings/deposit-policy"
++            className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm transition hover:border-brand-500 hover:bg-brand-50"
++          >
++            <h2 className="text-lg font-semibold text-slate-900">Deposit Policy</h2>
++            <p className="mt-2 text-sm text-slate-500">
++              Configure required deposits by company.
++            </p>
++          </Link>
++
++          <Link
++            href="/settings/deposit-approvals"
++            className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm transition hover:border-brand-500 hover:bg-brand-50"
++          >
++            <h2 className="text-lg font-semibold text-slate-900">Deposit Approvals</h2>
++            <p className="mt-2 text-sm text-slate-500">
++              Review and approve below-floor payment requests.
++            </p>
++          </Link>
+         </div>
+       </div>
+     </main>
+diff --git a/components/DepositApprovalsList.tsx b/components/DepositApprovalsList.tsx
+new file mode 100644
+index 0000000..0f22cf5
+--- /dev/null
++++ b/components/DepositApprovalsList.tsx
+@@ -0,0 +1,142 @@
++"use client";
++
++import { useEffect, useState } from "react";
++import {
++  fetchDepositApprovals,
++  approveDepositException,
++  denyDepositException,
++  type DepositApprovalRequest,
++} from "@/lib/journeys/deposit";
++
++function formatCurrency(value: number) {
++  return new Intl.NumberFormat("en-US", {
++    style: "currency",
++    currency: "USD",
++  }).format(value);
++}
++
++function customerName(request: DepositApprovalRequest) {
++  const c = request.sleep_journeys?.customers;
++  if (!c) return "Unknown customer";
++  return `${c.first_name} ${c.last_name}`.trim();
++}
++
++export default function DepositApprovalsList() {
++  const [requests, setRequests] = useState<DepositApprovalRequest[]>([]);
++  const [loading, setLoading] = useState(true);
++  const [error, setError] = useState<string | null>(null);
++
++  useEffect(() => {
++    fetchDepositApprovals()
++      .then(setRequests)
++      .catch((err) => setError(err.message ?? "Failed to load approvals"))
++      .finally(() => setLoading(false));
++  }, []);
++
++  async function handleApprove(id: string) {
++    try {
++      await approveDepositException(id);
++      setRequests((prev) =>
++        prev.map((r) =>
++          r.id === id ? { ...r, status: "approved" } : r
++        )
++      );
++    } catch (err: any) {
++      setError(err.message ?? "Failed to approve");
++    }
++  }
++
++  async function handleDeny(id: string) {
++    try {
++      await denyDepositException(id);
++      setRequests((prev) =>
++        prev.map((r) =>
++          r.id === id ? { ...r, status: "denied" } : r
++        )
++      );
++    } catch (err: any) {
++      setError(err.message ?? "Failed to deny");
++    }
++  }
++
++  if (loading) {
++    return <p className="p-8 text-sm text-slate-500">Loading…</p>;
++  }
++
++  return (
++    <main className="min-h-screen bg-slate-50 p-8">
++      <div className="mx-auto max-w-4xl">
++        <h1 className="mb-6 text-2xl font-semibold text-slate-900">
++          Deposit Exception Approvals
++        </h1>
++
++        {error && (
++          <p className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
++            {error}
++          </p>
++        )}
++
++        <div className="space-y-3">
++          {requests.map((r) => (
++            <div
++              key={r.id}
++              className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
++            >
++              <div className="flex items-start justify-between">
++                <div>
++                  <div className="font-semibold text-slate-900">
++                    {customerName(r)}
++                  </div>
++                  <p className="text-sm text-slate-500">
++                    Requested {new Date(r.requested_at).toLocaleString()}
++                  </p>
++                  <p className="mt-1 text-sm text-slate-700">
++                    Proposed payment: {formatCurrency(r.proposed_payment_amount)} ·
++                    Required: {formatCurrency(r.required_deposit_amount)} ·
++                    Shortfall: {formatCurrency(r.shortfall_amount)}
++                  </p>
++                  <p className="mt-1 text-sm text-slate-600">
++                    Reason: {r.reason}
++                  </p>
++                </div>
++                <div className="flex flex-col items-end gap-2">
++                  <span
++                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${
++                      r.status === "pending"
++                        ? "bg-amber-100 text-amber-700"
++                        : r.status === "approved"
++                        ? "bg-green-100 text-green-700"
++                        : "bg-slate-100 text-slate-600"
++                    }`}
++                  >
++                    {r.status}
++                  </span>
++                  {r.status === "pending" && (
++                    <div className="flex gap-2">
++                      <button
++                        onClick={() => handleApprove(r.id)}
++                        className="rounded-md bg-green-600 px-3 py-1 text-sm font-medium text-white hover:bg-green-700"
++                      >
++                        Approve
++                      </button>
++                      <button
++                        onClick={() => handleDeny(r.id)}
++                        className="rounded-md bg-red-600 px-3 py-1 text-sm font-medium text-white hover:bg-red-700"
++                      >
++                        Deny
++                      </button>
++                    </div>
++                  )}
++                </div>
++              </div>
++            </div>
++          ))}
++
++          {requests.length === 0 && (
++            <p className="text-center text-slate-500">No deposit exception requests.</p>
++          )}
++        </div>
++      </div>
++    </main>
++  );
++}
+diff --git a/components/DepositPolicyForm.tsx b/components/DepositPolicyForm.tsx
+new file mode 100644
+index 0000000..007cde7
+--- /dev/null
++++ b/components/DepositPolicyForm.tsx
+@@ -0,0 +1,164 @@
++"use client";
++
++import { useEffect, useState } from "react";
++import {
++  fetchDepositPolicy,
++  upsertDepositPolicy,
++  type DepositPolicy,
++} from "@/lib/journeys/deposit";
++import { fetchCurrentEmployee } from "@/lib/journeys/queries";
++import { createClient } from "@/lib/supabase/client";
++
++const POLICY_OPTIONS: { value: DepositPolicy["policy_type"]; label: string }[] = [
++  { value: "none", label: "No required deposit" },
++  { value: "fixed_amount", label: "Fixed dollar amount" },
++  { value: "percentage", label: "Percentage of order total" },
++  { value: "greater_of_fixed_or_percentage", label: "Greater of fixed or percentage" },
++];
++
++export default function DepositPolicyForm() {
++  const [loading, setLoading] = useState(true);
++  const [saving, setSaving] = useState(false);
++  const [companyId, setCompanyId] = useState<string | null>(null);
++  const [policy, setPolicy] = useState<DepositPolicy["policy_type"]>("none");
++  const [fixed, setFixed] = useState<string>("");
++  const [percentage, setPercentage] = useState<string>("");
++  const [error, setError] = useState<string | null>(null);
++
++  useEffect(() => {
++    const supabase = createClient();
++    Promise.all([fetchCurrentEmployee(), fetchDepositPolicy()]).then(
++      ([employee, saved]) => {
++        if (!employee?.home_store_id) {
++          setError("Your employee record has no assigned store.");
++          setLoading(false);
++          return;
++        }
++
++        supabase
++          .from("stores")
++          .select("company_id")
++          .eq("id", employee.home_store_id)
++          .maybeSingle()
++          .then(({ data: store, error: storeError }) => {
++            if (storeError || !store?.company_id) {
++              setError("Could not determine your company.");
++            } else {
++              setCompanyId(store.company_id);
++            }
++            setLoading(false);
++          });
++
++        setPolicy(saved?.policy_type ?? "none");
++        setFixed(saved?.fixed_amount?.toString() ?? "");
++        setPercentage(saved?.percentage?.toString() ?? "");
++      }
++    );
++  }, []);
++
++  async function handleSave(e: React.FormEvent) {
++    e.preventDefault();
++    if (!companyId) {
++      setError("Could not determine your company. Please refresh or contact support.");
++      return;
++    }
++    setSaving(true);
++    setError(null);
++
++    try {
++      await upsertDepositPolicy({
++        company_id: companyId,
++        policy_type: policy,
++        fixed_amount: policy !== "percentage" ? parseFloat(fixed) || null : null,
++        percentage:
++          policy !== "fixed_amount" ? parseFloat(percentage) || null : null,
++      });
++    } catch (err: any) {
++      setError(err.message ?? "Failed to save deposit policy");
++    } finally {
++      setSaving(false);
++    }
++  }
++
++  if (loading) {
++    return <p className="p-8 text-sm text-slate-500">Loading…</p>;
++  }
++
++  return (
++    <main className="min-h-screen bg-slate-50 p-8">
++      <div className="mx-auto max-w-2xl">
++        <h1 className="mb-6 text-2xl font-semibold text-slate-900">
++          Deposit Policy
++        </h1>
++
++        {error && (
++          <p className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
++            {error}
++          </p>
++        )}
++
++        <form onSubmit={handleSave} className="space-y-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
++          <div>
++            <label className="mb-1 block text-sm font-medium text-slate-700">
++              Required deposit
++            </label>
++            <select
++              value={policy}
++              onChange={(e) => setPolicy(e.target.value as DepositPolicy["policy_type"])}
++              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
++            >
++              {POLICY_OPTIONS.map((o) => (
++                <option key={o.value} value={o.value}>
++                  {o.label}
++                </option>
++              ))}
++            </select>
++          </div>
++
++          {policy !== "none" && (
++            <div className="grid grid-cols-2 gap-4">
++              {policy !== "percentage" && (
++                <div>
++                  <label className="mb-1 block text-sm font-medium text-slate-700">
++                    Fixed amount ($)
++                  </label>
++                  <input
++                    type="number"
++                    step="0.01"
++                    value={fixed}
++                    onChange={(e) => setFixed(e.target.value)}
++                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
++                  />
++                </div>
++              )}
++              {policy !== "fixed_amount" && (
++                <div>
++                  <label className="mb-1 block text-sm font-medium text-slate-700">
++                    Percentage (%)
++                  </label>
++                  <input
++                    type="number"
++                    step="0.01"
++                    value={percentage}
++                    onChange={(e) => setPercentage(e.target.value)}
++                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
++                  />
++                </div>
++              )}
++            </div>
++          )}
++
++          <div className="flex justify-end">
++            <button
++              type="submit"
++              disabled={saving}
++              className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
++            >
++              {saving ? "Saving…" : "Save Policy"}
++            </button>
++          </div>
++        </form>
++      </div>
++    </main>
++  );
++}
+diff --git a/components/StoreManagement.tsx b/components/StoreManagement.tsx
+index 74e4957..c9f298c 100644
+--- a/components/StoreManagement.tsx
++++ b/components/StoreManagement.tsx
+@@ -26,8 +26,14 @@ const emptyStore: Partial<Store> = {
+   zip_code: "",
+   phone: "",
+   is_active: true,
++  location_type: "STORE",
+ };
+ 
++const LOCATION_OPTIONS: { value: Store["location_type"]; label: string }[] = [
++  { value: "STORE", label: "Store" },
++  { value: "WAREHOUSE", label: "Warehouse" },
++];
++
+ export default function StoreManagement() {
+   const [employee, setEmployee] = useState<Employee | null>(null);
+   const [stores, setStores] = useState<Store[]>([]);
+@@ -110,6 +116,7 @@ export default function StoreManagement() {
+           zip_code: form.zip_code,
+           phone: form.phone,
+           is_active: form.is_active,
++          location_type: form.location_type,
+         });
+         if (id) {
+           const fresh = await fetchStores();
+@@ -217,6 +224,9 @@ export default function StoreManagement() {
+                     <h2 className="text-lg font-semibold text-slate-900">
+                       {s.name}
+                     </h2>
++                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
++                      {s.location_type.replace("_", " ")}
++                    </span>
+                     {!s.is_active && (
+                       <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600">
+                         Inactive
+@@ -296,6 +306,34 @@ export default function StoreManagement() {
+                 />
+               </div>
+ 
++              <div>
++                <label className="mb-1 block text-sm font-medium text-slate-700">
++                  Location Type
++                </label>
++                {form.id ? (
++                  <p className="py-2 text-sm text-slate-700">
++                    {form.location_type?.replace("_", " ")}
++                  </p>
++                ) : (
++                  <select
++                    value={form.location_type ?? "STORE"}
++                    onChange={(e) =>
++                      setForm((f) => ({
++                        ...f,
++                        location_type: e.target.value as Store["location_type"],
++                      }))
++                    }
++                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
++                  >
++                    {LOCATION_OPTIONS.map((o) => (
++                      <option key={o.value} value={o.value}>
++                        {o.label}
++                      </option>
++                    ))}
++                  </select>
++                )}
++              </div>
++
+               <div>
+                 <label className="mb-1 block text-sm font-medium text-slate-700">
+                   Street Address
+diff --git a/lib/journeys/deposit.ts b/lib/journeys/deposit.ts
+new file mode 100644
+index 0000000..fc67931
+--- /dev/null
++++ b/lib/journeys/deposit.ts
+@@ -0,0 +1,119 @@
++import { createClient } from "@/lib/supabase/client";
++
++export type DepositPolicy = {
++  company_id: string;
++  policy_type:
++    | "none"
++    | "fixed_amount"
++    | "percentage"
++    | "greater_of_fixed_or_percentage";
++  fixed_amount: number | null;
++  percentage: number | null;
++  updated_at: string;
++  updated_by: string | null;
++};
++
++export type DepositApprovalRequest = {
++  id: string;
++  entity_id: string;
++  requester_employee_id: string;
++  approver_employee_id: string | null;
++  required_deposit_amount: number;
++  amount_already_paid: number;
++  proposed_payment_amount: number;
++  resulting_qualifying_deposit_amount: number;
++  shortfall_amount: number;
++  reason: string;
++  status: "pending" | "approved" | "denied" | "expired" | "cancelled";
++  requested_at: string;
++  decided_at: string | null;
++  sleep_journeys: {
++    customer_id: string;
++    customers: { first_name: string; last_name: string } | null;
++    store_id: string;
++  } | null;
++};
++
++export async function fetchDepositPolicy(): Promise<DepositPolicy | null> {
++  const supabase = createClient();
++
++  const { data, error } = await supabase
++    .from("deposit_policies")
++    .select("*")
++    .maybeSingle();
++
++  if (error) throw new Error(error.message);
++  return data as DepositPolicy | null;
++}
++
++export async function upsertDepositPolicy(policy: {
++  company_id: string;
++  policy_type: DepositPolicy["policy_type"];
++  fixed_amount?: number | null;
++  percentage?: number | null;
++}) {
++  const supabase = createClient();
++
++  const { error } = await supabase.from("deposit_policies").upsert({
++    company_id: policy.company_id,
++    policy_type: policy.policy_type,
++    fixed_amount: policy.fixed_amount ?? null,
++    percentage: policy.percentage ?? null,
++    updated_at: new Date().toISOString(),
++  });
++
++  if (error) throw new Error(error.message);
++}
++
++export async function requestDepositException(
++  journeyId: string,
++  proposedAmount: number,
++  reason: string
++): Promise<string> {
++  const supabase = createClient();
++
++  const { data, error } = await supabase.rpc("request_deposit_exception", {
++    p_journey_id: journeyId,
++    p_proposed_payment_amount: proposedAmount,
++    p_reason: reason,
++  });
++
++  if (error) throw new Error(error.message);
++  return data as string;
++}
++
++export async function approveDepositException(requestId: string): Promise<string> {
++  const supabase = createClient();
++
++  const { data, error } = await supabase.rpc("approve_deposit_exception", {
++    p_request_id: requestId,
++  });
++
++  if (error) throw new Error(error.message);
++  return data as string;
++}
++
++export async function denyDepositException(requestId: string): Promise<string> {
++  const supabase = createClient();
++
++  const { data, error } = await supabase.rpc("deny_deposit_exception", {
++    p_request_id: requestId,
++  });
++
++  if (error) throw new Error(error.message);
++  return data as string;
++}
++
++export async function fetchDepositApprovals(): Promise<DepositApprovalRequest[]> {
++  const supabase = createClient();
++
++  const { data, error } = await supabase
++    .from("deposit_approval_requests")
++    .select(
++      "*, sleep_journeys(customer_id, customers(first_name, last_name), store_id)"
++    )
++    .order("requested_at", { ascending: false });
++
++  if (error) throw new Error(error.message);
++  return (data as DepositApprovalRequest[]) ?? [];
++}
+diff --git a/lib/journeys/queries.ts b/lib/journeys/queries.ts
+index a6c1430..57d1733 100644
+--- a/lib/journeys/queries.ts
++++ b/lib/journeys/queries.ts
+@@ -103,6 +103,8 @@ export type Store = {
+   phone: string | null;
+   is_active: boolean;
+   trial_length_nights: number;
++  location_type: "STORE" | "WAREHOUSE" | "WAREHOUSE_QUARANTINE";
++  parent_location_id: string | null;
+ };
+ 
+ export type EmployeeRole =
+@@ -314,7 +316,7 @@ export async function fetchStores(activeOnly = false): Promise<Store[]> {
+   let query = supabase
+     .from("stores")
+     .select(
+-      "id, company_id, name, address, street_address, city, state, zip_code, phone, is_active, trial_length_nights"
++      "id, company_id, name, address, street_address, city, state, zip_code, phone, is_active, trial_length_nights, location_type, parent_location_id"
+     )
+     .order("name");
+   if (activeOnly) {
+@@ -342,6 +344,7 @@ export async function createStore(store: Partial<Store>) {
+       phone: store.phone,
+       is_active: store.is_active ?? true,
+       trial_length_nights: store.trial_length_nights ?? 120,
++      location_type: (store.location_type as any) ?? "STORE",
+     })
+     .select("id")
+     .single();
+@@ -827,10 +830,20 @@ export type PaymentOutcome =
+   | "VOIDED"
+   | "REFUNDED";
+ 
++export async function fetchTotalPaid(journeyId: string): Promise<number> {
++  const supabase = createClient();
++  const { data, error } = await (supabase.rpc as any)("total_paid", {
++    p_journey_id: journeyId,
++  });
++  if (error) throw new Error(error.message);
++  return (data as number) ?? 0;
++}
++
+ export async function recordPayment(
+   journeyId: string,
+   amount: number,
+-  paymentMethod: string
++  paymentMethod: string,
++  depositApprovalId?: string
+ ): Promise<{ paymentEventId: string; outcome: PaymentOutcome }> {
+   const supabase = createClient();
+ 
+@@ -855,6 +868,7 @@ export async function recordPayment(
+     p_idempotency_key: crypto.randomUUID(),
+     p_outcome: outcome,
+     p_actor_id: session.user.id,
++    p_deposit_approval_id: depositApprovalId ?? null,
+   });
+ 
+   if (error) {
+@@ -871,6 +885,7 @@ export async function recordPaymentEvent(options: {
+   idempotencyKey: string;
+   outcome: PaymentOutcome;
+   followUpDueAt?: string;
++  depositApprovalId?: string;
+ }) {
+   const supabase = createClient();
+ 
+@@ -898,6 +913,7 @@ export async function recordPaymentEvent(options: {
+     p_idempotency_key: options.idempotencyKey,
+     p_outcome: options.outcome,
+     p_actor_id: session.user.id,
++    p_deposit_approval_id: options.depositApprovalId ?? null,
+   });
+ 
+   if (error) {
+diff --git a/supabase/migrations/020_written_sales.sql b/supabase/migrations/020_written_sales.sql
+new file mode 100644
+index 0000000..1f80f64
+--- /dev/null
++++ b/supabase/migrations/020_written_sales.sql
+@@ -0,0 +1,317 @@
++-- PillowTop POS Phase 6b: Written Sales ledger and adjustments
++
++create table if not exists public.written_sales (
++  id uuid primary key default gen_random_uuid(),
++  tenant_id uuid not null references public.companies (id) on delete cascade,
++  order_id uuid not null unique references public.sleep_journeys (id) on delete cascade,
++  written_sale_at timestamptz not null default now(),
++  written_business_date date not null default current_date,
++  selling_store_id uuid not null references public.stores (id),
++  salesperson_attribution_reference text,
++  qualifying_order_amount numeric not null,
++  currency text not null default 'USD',
++  triggering_payment_id uuid not null references public.journey_events (id),
++  correlation_id uuid not null default gen_random_uuid(),
++  created_at timestamptz not null default now()
++);
++
++create table if not exists public.written_sale_adjustments (
++  id uuid primary key default gen_random_uuid(),
++  written_sale_id uuid not null references public.written_sales (id) on delete cascade,
++  tenant_id uuid not null references public.companies (id) on delete cascade,
++  order_id uuid not null references public.sleep_journeys (id) on delete cascade,
++  occurred_at timestamptz not null default now(),
++  adjustment_amount numeric not null,
++  previous_qualifying_committed_amount numeric not null,
++  new_qualifying_committed_amount numeric not null,
++  adjustment_type text not null,
++  adjustment_reason text,
++  actor_id text,
++  correlation_id uuid not null default gen_random_uuid()
++);
++
++create index if not exists idx_written_sales_order
++  on public.written_sales (order_id);
++create index if not exists idx_written_sales_tenant
++  on public.written_sales (tenant_id);
++create index if not exists idx_written_sale_adjustments_written_sale
++  on public.written_sale_adjustments (written_sale_id);
++create index if not exists idx_written_sale_adjustments_order
++  on public.written_sale_adjustments (order_id);
++
++alter table public.written_sales enable row level security;
++alter table public.written_sale_adjustments enable row level security;
++
++drop policy if exists "Written sales viewable by authenticated users"
++  on public.written_sales;
++create policy "Written sales viewable by authenticated users"
++  on public.written_sales for select
++  to authenticated
++  using (
++    public.is_store_visible(selling_store_id)
++  );
++
++drop policy if exists "Written sale adjustments viewable by authenticated users"
++  on public.written_sale_adjustments;
++create policy "Written sale adjustments viewable by authenticated users"
++  on public.written_sale_adjustments for select
++  to authenticated
++  using (
++    exists (
++      select 1
++      from public.written_sales ws
++      where ws.id = written_sale_adjustments.written_sale_id
++        and public.is_store_visible(ws.selling_store_id)
++    )
++  );
++
++create or replace function public.ensure_written_sale_established(
++  p_journey_id uuid,
++  p_payment_event_id uuid
++)
++returns uuid
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_exists uuid;
++  v_tenant_id uuid;
++  v_store_id uuid;
++  v_price numeric;
++  v_actor text;
++  v_created timestamptz;
++  v_sale_id uuid;
++begin
++  select id into v_exists
++  from public.written_sales
++  where order_id = p_journey_id;
++
++  if v_exists is not null then
++    return v_exists;
++  end if;
++
++  select
++    s.company_id,
++    sj.store_id,
++    sj.price,
++    je.triggered_by,
++    je.created_at
++  into v_tenant_id, v_store_id, v_price, v_actor, v_created
++  from public.sleep_journeys sj
++  join public.stores s on s.id = sj.store_id
++  join public.journey_events je on je.id = p_payment_event_id
++  where sj.id = p_journey_id;
++
++  if v_tenant_id is null then
++    raise exception 'Journey not found';
++  end if;
++
++  if v_price is null then
++    raise exception 'Journey has no price';
++  end if;
++
++  insert into public.written_sales (
++    tenant_id,
++    order_id,
++    written_sale_at,
++    written_business_date,
++    selling_store_id,
++    salesperson_attribution_reference,
++    qualifying_order_amount,
++    triggering_payment_id
++  ) values (
++    v_tenant_id,
++    p_journey_id,
++    v_created,
++    v_created::date,
++    v_store_id,
++    v_actor,
++    v_price,
++    p_payment_event_id
++  )
++  returning id into v_sale_id;
++
++  return v_sale_id;
++end;
++$$;
++
++create or replace function public.derive_journey_state()
++returns trigger
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  target public.journey_state;
++  journey_price numeric;
++  paid numeric;
++  new_price numeric;
++  store_rec public.stores%rowtype;
++  emp_id uuid;
++  follow_up_due timestamptz;
++  max_due timestamptz;
++  cadence int;
++  v_written_sale_id uuid;
++  v_previous_committed numeric;
++  v_new_committed numeric;
++  v_adjustment numeric;
++begin
++  select id into emp_id
++  from public.employees
++  where auth_user_id = auth.uid();
++
++  if new.event_type = 'journey_cancelled' then
++    update public.sleep_journeys
++    set cancelled_at = now(),
++        cancelled_reason = coalesce(new.event_data->>'reason', 'No reason provided'),
++        updated_at = now()
++    where id = new.journey_id;
++
++    update public.follow_ups
++    set completed_at = now()
++    where journey_id = new.journey_id
++      and completed_at is null;
++
++    select id into v_written_sale_id
++    from public.written_sales
++    where order_id = new.journey_id;
++
++    if v_written_sale_id is not null then
++      v_previous_committed := (
++        select ws.qualifying_order_amount + coalesce(sum(wsa.adjustment_amount), 0)
++        from public.written_sales ws
++        left join public.written_sale_adjustments wsa on wsa.written_sale_id = ws.id
++        where ws.id = v_written_sale_id
++        group by ws.qualifying_order_amount
++      );
++
++      v_new_committed := 0;
++      v_adjustment := v_new_committed - v_previous_committed;
++
++      insert into public.written_sale_adjustments (
++        written_sale_id,
++        tenant_id,
++        order_id,
++        adjustment_amount,
++        previous_qualifying_committed_amount,
++        new_qualifying_committed_amount,
++        adjustment_type,
++        adjustment_reason,
++        actor_id
++      )
++      select
++        v_written_sale_id,
++        ws.tenant_id,
++        new.journey_id,
++        v_adjustment,
++        v_previous_committed,
++        v_new_committed,
++        'cancellation',
++        coalesce(new.event_data->>'reason', 'No reason provided'),
++        new.triggered_by
++      from public.written_sales ws
++      where ws.id = v_written_sale_id;
++    end if;
++
++    return new;
++  end if;
++
++  target := public.event_to_state(new.event_type);
++
++  if target is null then
++    return new;
++  end if;
++
++  if new.event_type in ('deposit_received', 'payment_completed') then
++    if new.outcome = 'SUCCEEDED' then
++      select price into journey_price
++      from public.sleep_journeys
++      where id = new.journey_id;
++
++      paid := public.total_paid(new.journey_id);
++
++      if journey_price is not null and paid >= journey_price then
++        target := 'Sold'::public.journey_state;
++      else
++        target := 'Quoted'::public.journey_state;
++      end if;
++    else
++      target := 'Quoted'::public.journey_state;
++    end if;
++  end if;
++
++  if new.event_type in ('quote_created', 'quote_sent')
++    and new.event_data->>'amount' ~ '^[0-9]+(\.[0-9]+)?$'
++  then
++    new_price := (new.event_data->>'amount')::numeric;
++  end if;
++
++  update public.sleep_journeys
++  set current_state = target,
++      price = coalesce(price, new_price),
++      updated_at = now()
++  where id = new.journey_id;
++
++  if target = 'Sold'::public.journey_state then
++    update public.follow_ups
++    set completed_at = now()
++    where journey_id = new.journey_id
++      and completed_at is null;
++  end if;
++
++  if new.event_type = 'quote_sent' then
++    select * into store_rec
++    from public.stores
++    where id = (select store_id from public.sleep_journeys where id = new.journey_id);
++
++    for cadence in
++      select jsonb_array_elements_text(coalesce(store_rec.quote_follow_up_cadence, '[1]'::jsonb))::int
++    loop
++      insert into public.follow_ups (journey_id, employee_id, type, due_at, notes)
++      values (
++        new.journey_id,
++        emp_id,
++        'quote',
++        new.created_at + (cadence || ' days')::interval,
++        'Quote follow-up (day ' || cadence || ')'
++      );
++    end loop;
++  end if;
++
++  if new.event_type = 'deposit_received' and new.outcome = 'SUCCEEDED' then
++    select * into store_rec
++    from public.stores
++    where id = (select store_id from public.sleep_journeys where id = new.journey_id);
++
++    follow_up_due := new.created_at + (store_rec.deposit_follow_up_default_days || ' days')::interval;
++    max_due := new.created_at + (store_rec.deposit_follow_up_max_days || ' days')::interval;
++
++    if new.event_data->>'follow_up_due_at' is not null then
++      begin
++        follow_up_due := (new.event_data->>'follow_up_due_at')::timestamptz;
++      exception when others then
++        follow_up_due := new.created_at + (store_rec.deposit_follow_up_default_days || ' days')::interval;
++      end;
++
++      if follow_up_due > max_due then
++        follow_up_due := max_due;
++      end if;
++      if follow_up_due < new.created_at then
++        follow_up_due := new.created_at;
++      end if;
++    end if;
++
++    insert into public.follow_ups (journey_id, employee_id, type, due_at, notes)
++    values (
++      new.journey_id,
++      emp_id,
++      'deposit',
++      follow_up_due,
++      'Deposit follow-up: balance due'
++    );
++  end if;
++
++  return new;
++end;
++$$;
+diff --git a/supabase/migrations/021_deposit_policy.sql b/supabase/migrations/021_deposit_policy.sql
+new file mode 100644
+index 0000000..733f4cf
+--- /dev/null
++++ b/supabase/migrations/021_deposit_policy.sql
+@@ -0,0 +1,75 @@
++-- PillowTop POS Phase 6b: Company deposit policy
++
++create table if not exists public.deposit_policies (
++  company_id uuid primary key references public.companies (id) on delete cascade,
++  policy_type text not null check (policy_type in ('none','fixed_amount','percentage','greater_of_fixed_or_percentage')),
++  fixed_amount numeric,
++  percentage numeric,
++  updated_at timestamptz not null default now(),
++  updated_by uuid references auth.users (id)
++);
++
++alter table public.deposit_policies enable row level security;
++
++drop policy if exists "Deposit policies viewable by authenticated users"
++  on public.deposit_policies;
++create policy "Deposit policies viewable by authenticated users"
++  on public.deposit_policies for select
++  to authenticated
++  using (
++    exists (
++      select 1
++      from public.employees e
++      join public.stores es on es.id = e.home_store_id
++      where e.auth_user_id = auth.uid()
++        and es.company_id = deposit_policies.company_id
++    )
++  );
++
++drop policy if exists "Deposit policies manageable by owner or admin"
++  on public.deposit_policies;
++create policy "Deposit policies manageable by owner or admin"
++  on public.deposit_policies for all
++  to authenticated
++  using (
++    exists (
++      select 1
++      from public.employees e
++      join public.stores es on es.id = e.home_store_id
++      where e.auth_user_id = auth.uid()
++        and es.company_id = deposit_policies.company_id
++        and e.role::text in ('owner', 'admin')
++    )
++  )
++  with check (
++    exists (
++      select 1
++      from public.employees e
++      join public.stores es on es.id = e.home_store_id
++      where e.auth_user_id = auth.uid()
++        and es.company_id = deposit_policies.company_id
++        and e.role::text in ('owner', 'admin')
++    )
++  );
++
++create or replace function public.calculate_required_deposit(p_journey_id uuid)
++returns numeric
++language sql
++stable
++security invoker
++set search_path = public
++as $$
++  select coalesce(
++    case dp.policy_type
++      when 'none' then 0
++      when 'fixed_amount' then dp.fixed_amount
++      when 'percentage' then (sj.price * dp.percentage / 100)
++      when 'greater_of_fixed_or_percentage' then greatest(dp.fixed_amount, sj.price * dp.percentage / 100)
++    end,
++    0
++  )
++  from public.sleep_journeys sj
++  join public.stores s on s.id = sj.store_id
++  left join public.deposit_policies dp on dp.company_id = s.company_id
++  where sj.id = p_journey_id;
++$$;
+diff --git a/supabase/migrations/022_deposit_approvals.sql b/supabase/migrations/022_deposit_approvals.sql
+new file mode 100644
+index 0000000..d550c29
+--- /dev/null
++++ b/supabase/migrations/022_deposit_approvals.sql
+@@ -0,0 +1,572 @@
++-- PillowTop POS Phase 6b: Deposit approval requests and payment floor enforcement
++
++create table if not exists public.deposit_approval_requests (
++  id uuid primary key default gen_random_uuid(),
++  request_type text not null default 'deposit_exception',
++  entity_type text not null default 'journey',
++  entity_id uuid not null references public.sleep_journeys (id) on delete cascade,
++  requester_employee_id uuid not null references public.employees (id),
++  approver_employee_id uuid references public.employees (id),
++  required_deposit_amount numeric not null,
++  amount_already_paid numeric not null,
++  proposed_payment_amount numeric not null,
++  resulting_qualifying_deposit_amount numeric not null,
++  shortfall_amount numeric not null,
++  journey_financial_fingerprint text not null,
++  reason text not null,
++  status text not null check (status in ('pending','approved','denied','expired','cancelled','consumed')),
++  requested_at timestamptz not null default now(),
++  decided_at timestamptz,
++  expires_at timestamptz
++);
++
++create index if not exists idx_deposit_approval_requests_entity
++  on public.deposit_approval_requests (entity_id);
++
++alter table public.deposit_approval_requests enable row level security;
++
++drop policy if exists "Deposit approval requests viewable by company employees"
++  on public.deposit_approval_requests;
++create policy "Deposit approval requests viewable by company employees"
++  on public.deposit_approval_requests for select
++  to authenticated
++  using (
++    public.is_journey_visible(entity_id)
++  );
++
++drop policy if exists "Deposit approval requests manageable by owner or admin"
++  on public.deposit_approval_requests;
++create policy "Deposit approval requests manageable by owner or admin"
++  on public.deposit_approval_requests for all
++  to authenticated
++  using (
++    exists (
++      select 1
++      from public.employees e
++      join public.stores es on es.id = e.home_store_id
++      join public.sleep_journeys sj on sj.id = deposit_approval_requests.entity_id
++      join public.stores js on js.id = sj.store_id
++      where e.auth_user_id = auth.uid()
++        and es.company_id = js.company_id
++        and e.role::text in ('owner', 'admin', 'manager')
++    )
++  )
++  with check (
++    exists (
++      select 1
++      from public.employees e
++      join public.stores es on es.id = e.home_store_id
++      join public.sleep_journeys sj on sj.id = deposit_approval_requests.entity_id
++      join public.stores js on js.id = sj.store_id
++      where e.auth_user_id = auth.uid()
++        and es.company_id = js.company_id
++        and e.role::text in ('owner', 'admin', 'manager')
++    )
++  );
++
++create or replace function public.journey_financial_fingerprint(p_journey_id uuid)
++returns text
++language sql
++stable
++security invoker
++set search_path = public
++as $$
++  select md5(sj.price::text || ':' || public.total_paid(p_journey_id)::text)
++  from public.sleep_journeys sj
++  where sj.id = p_journey_id;
++$$;
++
++create or replace function public.request_deposit_exception(
++  p_journey_id uuid,
++  p_proposed_payment_amount numeric,
++  p_reason text
++)
++returns uuid
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_requester uuid;
++  v_company_id uuid;
++  v_price numeric;
++  v_required numeric;
++  v_paid numeric;
++  v_fingerprint text;
++  v_request_id uuid;
++begin
++  if not public.is_journey_visible(p_journey_id) then
++    raise exception 'Not authorized to request an exception for this journey';
++  end if;
++
++  if p_proposed_payment_amount <= 0 then
++    raise exception 'Proposed payment amount must be greater than zero';
++  end if;
++
++  select e.id, s.company_id, sj.price
++  into v_requester, v_company_id, v_price
++  from public.employees e
++  join public.stores s on s.id = e.home_store_id
++  join public.sleep_journeys sj on sj.id = p_journey_id
++  where e.auth_user_id = auth.uid();
++
++  if v_requester is null then
++    raise exception 'Employee record not found';
++  end if;
++
++  if v_price is null then
++    raise exception 'Journey has no price';
++  end if;
++
++  v_required := public.calculate_required_deposit(p_journey_id);
++  v_paid := public.total_paid(p_journey_id);
++
++  if (v_paid + p_proposed_payment_amount) >= v_required then
++    raise exception 'No exception needed — payment meets the required deposit';
++  end if;
++
++  v_fingerprint := public.journey_financial_fingerprint(p_journey_id);
++
++  insert into public.deposit_approval_requests (
++    entity_id,
++    requester_employee_id,
++    required_deposit_amount,
++    amount_already_paid,
++    proposed_payment_amount,
++    resulting_qualifying_deposit_amount,
++    shortfall_amount,
++    journey_financial_fingerprint,
++    reason,
++    status
++  ) values (
++    p_journey_id,
++    v_requester,
++    v_required,
++    v_paid,
++    p_proposed_payment_amount,
++    v_paid + p_proposed_payment_amount,
++    v_required - (v_paid + p_proposed_payment_amount),
++    v_fingerprint,
++    p_reason,
++    'pending'
++  )
++  returning id into v_request_id;
++
++  return v_request_id;
++end;
++$$;
++
++create or replace function public.approve_deposit_exception(p_request_id uuid)
++returns uuid
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_request public.deposit_approval_requests%rowtype;
++  v_approver uuid;
++  v_company_id uuid;
++begin
++  select *
++  into v_request
++  from public.deposit_approval_requests
++  where id = p_request_id;
++
++  if v_request.id is null then
++    raise exception 'Approval request not found';
++  end if;
++
++  if v_request.status <> 'pending' then
++    raise exception 'Only pending requests may be approved';
++  end if;
++
++  select e.id, s.company_id
++  into v_approver, v_company_id
++  from public.employees e
++  join public.stores s on s.id = e.home_store_id
++  where e.auth_user_id = auth.uid();
++
++  if v_approver is null or v_approver = v_request.requester_employee_id then
++    raise exception 'Requester cannot approve their own request';
++  end if;
++
++  if not exists (
++    select 1
++    from public.sleep_journeys sj
++    join public.stores js on js.id = sj.store_id
++    where sj.id = v_request.entity_id
++      and js.company_id = v_company_id
++  ) then
++    raise exception 'Not authorized to approve this request';
++  end if;
++
++  if not exists (
++    select 1
++    from public.employees
++    where id = v_approver
++      and role::text in ('owner', 'admin', 'manager')
++  ) then
++    raise exception 'Only owner, admin, or manager may approve';
++  end if;
++
++  update public.deposit_approval_requests
++  set status = 'approved',
++      approver_employee_id = v_approver,
++      decided_at = now()
++  where id = p_request_id;
++
++  return p_request_id;
++end;
++$$;
++
++create or replace function public.deny_deposit_exception(p_request_id uuid)
++returns uuid
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_request public.deposit_approval_requests%rowtype;
++  v_denier uuid;
++  v_company_id uuid;
++begin
++  select *
++  into v_request
++  from public.deposit_approval_requests
++  where id = p_request_id;
++
++  if v_request.id is null then
++    raise exception 'Approval request not found';
++  end if;
++
++  if v_request.status <> 'pending' then
++    raise exception 'Only pending requests may be denied';
++  end if;
++
++  select e.id, s.company_id
++  into v_denier, v_company_id
++  from public.employees e
++  join public.stores s on s.id = e.home_store_id
++  where e.auth_user_id = auth.uid();
++
++  if v_denier is null or v_denier = v_request.requester_employee_id then
++    raise exception 'Requester cannot deny their own request';
++  end if;
++
++  if not exists (
++    select 1
++    from public.sleep_journeys sj
++    join public.stores js on js.id = sj.store_id
++    where sj.id = v_request.entity_id
++      and js.company_id = v_company_id
++  ) then
++    raise exception 'Not authorized to deny this request';
++  end if;
++
++  if not exists (
++    select 1
++    from public.employees
++    where id = v_denier
++      and role::text in ('owner', 'admin', 'manager')
++  ) then
++    raise exception 'Only owner, admin, or manager may deny';
++  end if;
++
++  update public.deposit_approval_requests
++  set status = 'denied',
++      approver_employee_id = v_denier,
++      decided_at = now()
++  where id = p_request_id;
++
++  return p_request_id;
++end;
++$$;
++
++drop function if exists public.record_payment_event(uuid, jsonb, text, text, text);
++create or replace function public.record_payment_event(
++  p_journey_id uuid,
++  p_event_data jsonb,
++  p_idempotency_key text,
++  p_outcome text,
++  p_actor_id text default 'system',
++  p_deposit_approval_id uuid default null
++)
++returns uuid
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  existing_id uuid;
++  unresolved_unknown uuid;
++  new_id uuid;
++  v_outcome public.payment_outcome;
++  v_event_type public.journey_event_type;
++  v_amount numeric;
++  v_price numeric;
++  v_running numeric;
++  v_total numeric;
++  v_required numeric;
++  v_fingerprint text;
++  v_approval_status text;
++  v_approval_min numeric;
++  v_approval_fingerprint text;
++  v_approval_journey uuid;
++  v_consumed_exists boolean;
++begin
++  v_outcome := p_outcome::public.payment_outcome;
++  v_amount := coalesce((p_event_data->>'amount')::numeric, 0);
++
++  if v_amount <= 0 then
++    raise exception 'Payment amount must be greater than zero';
++  end if;
++
++  if not public.is_journey_visible(p_journey_id) then
++    raise exception 'Not authorized to record a payment for this journey';
++  end if;
++
++  select id into existing_id
++  from public.journey_events
++  where idempotency_key = p_idempotency_key;
++
++  if existing_id is not null then
++    return existing_id;
++  end if;
++
++  select id into unresolved_unknown
++  from public.journey_events
++  where journey_id = p_journey_id
++    and event_type in ('deposit_received', 'payment_completed')
++    and outcome = 'UNKNOWN'
++  limit 1;
++
++  if unresolved_unknown is not null then
++    raise exception 'This order has an unresolved payment. Reconcile it before recording a new payment.';
++  end if;
++
++  v_required := public.calculate_required_deposit(p_journey_id);
++  v_running := public.total_paid(p_journey_id);
++
++  if p_deposit_approval_id is not null then
++    v_fingerprint := public.journey_financial_fingerprint(p_journey_id);
++
++    with consumed as (
++      update public.deposit_approval_requests
++      set status = 'consumed'
++      where id = p_deposit_approval_id
++        and entity_id = p_journey_id
++        and status = 'approved'
++        and journey_financial_fingerprint = v_fingerprint
++      returning proposed_payment_amount, journey_financial_fingerprint, entity_id
++    )
++    select proposed_payment_amount, journey_financial_fingerprint, entity_id
++    into v_approval_min, v_approval_fingerprint, v_approval_journey
++    from consumed;
++
++    if v_approval_journey is null then
++      raise exception 'Deposit approval is not approved, was already consumed, the journey changed, or does not belong to this journey';
++    end if;
++
++    if v_amount < v_approval_min then
++      raise exception 'Payment is below the approved minimum exception amount';
++    end if;
++  else
++    select exists (
++      select 1
++      from public.deposit_approval_requests
++      where entity_id = p_journey_id
++        and status = 'consumed'
++    ) into v_consumed_exists;
++
++    if not v_consumed_exists and (v_running + v_amount) < v_required then
++      raise exception 'Payment is below the required deposit. Request an exception first.';
++    end if;
++  end if;
++
++  select price into v_price
++  from public.sleep_journeys
++  where id = p_journey_id;
++  v_total := v_running + v_amount;
++
++  if v_total >= v_price then
++    v_event_type := 'payment_completed';
++  else
++    v_event_type := 'deposit_received';
++  end if;
++
++  insert into public.journey_events (
++    journey_id,
++    event_type,
++    event_data,
++    triggered_by,
++    outcome,
++    idempotency_key
++  ) values (
++    p_journey_id,
++    v_event_type,
++    p_event_data,
++    p_actor_id,
++    v_outcome,
++    p_idempotency_key
++  )
++  returning id into new_id;
++
++  if v_outcome = 'SUCCEEDED' and v_amount > 0 then
++    perform public.ensure_written_sale_established(p_journey_id, new_id);
++  end if;
++
++  return new_id;
++end;
++$$;
++
++create or replace function public.reconcile_payment_event(
++  p_event_id uuid,
++  p_new_outcome text,
++  p_source text default 'manual',
++  p_actor_id text default 'system',
++  p_notes text default null
++)
++returns uuid
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_current public.payment_outcome;
++  v_current_event_type public.journey_event_type;
++  v_journey_id uuid;
++  v_event_data jsonb;
++  v_created_at timestamptz;
++  v_log_id uuid;
++  v_new public.payment_outcome;
++  v_new_event_type public.journey_event_type;
++  v_price numeric;
++  v_amount numeric;
++  v_running numeric;
++  v_total numeric;
++  v_emp_id uuid;
++  v_store_rec public.stores%rowtype;
++  v_follow_up_due timestamptz;
++  v_max_due timestamptz;
++begin
++  select je.outcome, je.event_type, je.journey_id, je.event_data, je.created_at
++  into v_current, v_current_event_type, v_journey_id, v_event_data, v_created_at
++  from public.journey_events je
++  where je.id = p_event_id;
++
++  if v_current is null then
++    raise exception 'Payment event not found';
++  end if;
++
++  if not exists (
++    select 1
++    from public.employees e
++    join public.stores es on es.id = e.home_store_id
++    join public.sleep_journeys sj on sj.id = v_journey_id
++    join public.stores js on js.id = sj.store_id
++    where e.auth_user_id = auth.uid()
++      and es.company_id = js.company_id
++      and e.role::text in ('owner', 'admin', 'manager')
++  ) then
++    raise exception 'Only owner, admin, or manager may reconcile this payment';
++  end if;
++
++  select id into v_emp_id
++  from public.employees
++  where auth_user_id = auth.uid();
++
++  v_new := p_new_outcome::public.payment_outcome;
++  v_new_event_type := v_current_event_type;
++
++  if v_current = v_new then
++    insert into public.payment_reconciliation_events (
++      payment_id, previous_outcome, new_outcome,
++      previous_event_type, new_event_type,
++      reconciliation_source, actor_id, notes
++    ) values (
++      p_event_id, v_current, v_new,
++      v_current_event_type, v_new_event_type,
++      p_source, p_actor_id, p_notes
++    )
++    returning id into v_log_id;
++    return p_event_id;
++  end if;
++
++  if v_new = 'SUCCEEDED' then
++    v_amount := coalesce((v_event_data->>'amount')::numeric, 0);
++    v_running := public.total_paid(v_journey_id);
++    select price into v_price
++    from public.sleep_journeys
++    where id = v_journey_id;
++    v_total := v_running + v_amount;
++
++    if v_total >= v_price then
++      v_new_event_type := 'payment_completed';
++    else
++      v_new_event_type := 'deposit_received';
++    end if;
++  end if;
++
++  update public.journey_events
++  set outcome = v_new,
++      event_type = v_new_event_type,
++      reconciled_at = now()
++  where id = p_event_id;
++
++  insert into public.payment_reconciliation_events (
++    payment_id, previous_outcome, new_outcome,
++    previous_event_type, new_event_type,
++    reconciliation_source, actor_id, notes
++  ) values (
++    p_event_id, v_current, v_new,
++    v_current_event_type, v_new_event_type,
++    p_source, p_actor_id, p_notes
++  )
++  returning id into v_log_id;
++
++  if v_new = 'SUCCEEDED' then
++    perform public.ensure_written_sale_established(v_journey_id, p_event_id);
++    perform public.reevaluate_journey_balance(v_journey_id);
++
++    if v_new_event_type = 'payment_completed' then
++      update public.follow_ups
++      set completed_at = now()
++      where journey_id = v_journey_id
++        and completed_at is null;
++    elsif v_new_event_type = 'deposit_received' then
++      select * into v_store_rec
++      from public.stores
++      where id = (select store_id from public.sleep_journeys where id = v_journey_id);
++
++      v_follow_up_due := v_created_at + (v_store_rec.deposit_follow_up_default_days || ' days')::interval;
++      v_max_due := v_created_at + (v_store_rec.deposit_follow_up_max_days || ' days')::interval;
++
++      if v_event_data->>'follow_up_due_at' is not null then
++        begin
++          v_follow_up_due := (v_event_data->>'follow_up_due_at')::timestamptz;
++        exception when others then
++          v_follow_up_due := v_created_at + (v_store_rec.deposit_follow_up_default_days || ' days')::interval;
++        end;
++
++        if v_follow_up_due > v_max_due then
++          v_follow_up_due := v_max_due;
++        end if;
++        if v_follow_up_due < v_created_at then
++          v_follow_up_due := v_created_at;
++        end if;
++      end if;
++
++      insert into public.follow_ups (journey_id, employee_id, type, due_at, notes)
++      values (
++        v_journey_id,
++        v_emp_id,
++        'deposit',
++        v_follow_up_due,
++        'Deposit follow-up: balance due'
++      );
++    end if;
++  end if;
++
++  return p_event_id;
++end;
++$$;

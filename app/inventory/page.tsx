@@ -4,16 +4,23 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import * as XLSX from "xlsx";
-import { Search, Package, Upload, Download, Plus, X } from "lucide-react";
+import { Search, Package, Upload, Download, Plus, X, Lock } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { fetchCurrentEmployee, fetchStores, type Employee, type Store } from "@/lib/journeys/queries";
 import {
   fetchProductsWithStock,
-  updateProductStock,
+  adjustInventoryPosition,
   upsertProduct,
   type Product,
   type ProductWithStock,
 } from "@/lib/inventory/queries";
+import { fetchProductCategories } from "@/lib/financing/queries";
+import Modal from "@/components/Modal";
+import type { ProductCategory } from "@/lib/financing/types";
+import {
+  fetchRestockCandidates,
+  fetchRestockGenerationMode,
+} from "@/lib/transfers/queries";
 
 type ImportMapping = {
   SKU: number | null;
@@ -51,9 +58,19 @@ export default function InventoryPage() {
   const [currentStoreId, setCurrentStoreId] = useState<string>("");
   const [products, setProducts] = useState<ProductWithStock[]>([]);
   const [loading, setLoading] = useState(true);
+  const [canAdjustInventory, setCanAdjustInventory] = useState(false);
+  const [canViewPhysical, setCanViewPhysical] = useState(false);
+  const [canEditProducts, setCanEditProducts] = useState(false);
+  const [canManageParLevels, setCanManageParLevels] = useState(false);
+  const [restockBadgeCount, setRestockBadgeCount] = useState(0);
   const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<"ats" | "physical">("ats");
 
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkCategories, setBulkCategories] = useState<ProductCategory[]>([]);
+  const [bulkCategoryId, setBulkCategoryId] = useState<string>("");
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const [uploadStep, setUploadStep] = useState<"idle" | "mapping" | "preview" | "summary">("idle");
   const [rawRows, setRawRows] = useState<unknown[][]>([]);
@@ -72,28 +89,68 @@ export default function InventoryPage() {
     skipped: { row: number; reason: string }[];
   } | null>(null);
 
-  const canViewAll = employee?.role === "owner" || employee?.role === "manager";
+  const canViewAll =
+    employee?.role === "owner" ||
+    employee?.role === "admin" ||
+    employee?.role === "manager";
 
   const companyId = useMemo(() => {
     if (!employee?.home_store_id) return null;
     return stores.find((s) => s.id === employee.home_store_id)?.company_id ?? null;
   }, [employee, stores]);
 
+  // Restock attention badge on the Transfers link — manual mode only, scoped
+  // the same way as the Restock tab (manager: home store; owner/admin: all).
+  useEffect(() => {
+    if (!canViewAll || !companyId || !employee) return;
+    fetchRestockGenerationMode(companyId).then(async (mode) => {
+      if (mode !== "manual") return;
+      setRestockBadgeCount(
+        (await fetchRestockCandidates(stores, employee)).length
+      );
+    });
+  }, [canViewAll, companyId, employee, stores]);
+
   useEffect(() => {
     const supabase = createClient();
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session?.user) {
         router.push("/login");
         return;
       }
-      Promise.all([fetchCurrentEmployee(), fetchStores()]).then(([e, s]) => {
-        setEmployee(e);
-        setStores(s);
-        const active =
-          session.user.user_metadata?.active_store_id ?? e?.home_store_id ?? s[0]?.id ?? "";
-        setCurrentStoreId(active);
-        loadProducts(active);
-      });
+      const [e, s] = await Promise.all([fetchCurrentEmployee(), fetchStores()]);
+      setEmployee(e);
+      setStores(s);
+      const homeStore = s.find((st) => st.id === e?.home_store_id);
+      const defaultLocation = homeStore?.assigned_warehouse_id ?? e?.home_store_id;
+      const active =
+        session.user.user_metadata?.active_store_id ?? defaultLocation ?? s[0]?.id ?? "";
+      setCurrentStoreId(active);
+
+      const company = s.find((st) => st.id === e?.home_store_id)?.company_id;
+      let canAdjust = e?.role === "owner" || e?.role === "admin";
+      let canViewPhysical = canAdjust;
+      let canEdit = canAdjust;
+      let canPar = canAdjust;
+      if (e?.role === "manager" && company) {
+        const { data } = await (supabase as any)
+          .from("companies")
+          .select(
+            "managers_can_adjust_inventory, managers_can_view_physical_inventory, managers_can_edit_products, managers_can_manage_par_levels"
+          )
+          .eq("id", company)
+          .single();
+        canAdjust = data?.managers_can_adjust_inventory === true;
+        canViewPhysical = data?.managers_can_view_physical_inventory === true;
+        canEdit = data?.managers_can_edit_products === true;
+        canPar = data?.managers_can_manage_par_levels === true;
+      }
+      setCanAdjustInventory(canAdjust);
+      setCanViewPhysical(canViewPhysical);
+      setCanEditProducts(canEdit);
+      setCanManageParLevels(canPar);
+
+      loadProducts(active);
     });
   }, [router]);
 
@@ -106,11 +163,70 @@ export default function InventoryPage() {
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
-    if (!term) return products;
-    return products.filter((p) =>
-      p.search_text?.toLowerCase().includes(term)
+    const list = term
+      ? products.filter((p) => p.search_text?.toLowerCase().includes(term))
+      : [...products];
+    // In-stock first (positive qty on the selected basis), alphabetical within
+    // each group; zero/null quantities sort after.
+    const qty = (p: ProductWithStock) =>
+      (sortBy === "physical" ? p.physical : p.ats) ?? 0;
+    return list.sort(
+      (a, b) =>
+        Number(qty(b) > 0) - Number(qty(a) > 0) ||
+        a.item_name.localeCompare(b.item_name)
     );
-  }, [products, search]);
+  }, [products, search, sortBy]);
+
+  useEffect(() => {
+    if (canEditProducts && companyId) {
+      fetchProductCategories(companyId).then(setBulkCategories);
+    }
+  }, [canEditProducts, companyId]);
+
+  const visibleIds = filtered.map((p) => p.id);
+  const allVisibleSelected =
+    visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) visibleIds.forEach((id) => next.delete(id));
+      else visibleIds.forEach((id) => next.add(id));
+      return next;
+    });
+  }
+
+  async function applyBulkCategory() {
+    if (selectedIds.size === 0) return;
+    setBulkBusy(true);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase
+        .from("products")
+        .update({ category_id: bulkCategoryId || null })
+        .in("id", Array.from(selectedIds));
+      if (error) throw new Error(error.message);
+      setProducts((prev) =>
+        prev.map((p) =>
+          selectedIds.has(p.id) ? { ...p, category_id: bulkCategoryId || null } : p
+        )
+      );
+      setSelectedIds(new Set());
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setBulkBusy(false);
+    }
+  }
 
   function onFileSelected(file: File) {
     const reader = new FileReader();
@@ -245,7 +361,7 @@ export default function InventoryPage() {
 
   async function saveStock(productId: string, value: string) {
     const qty = Math.max(0, Math.floor(Number(value) || 0));
-    await updateProductStock(productId, currentStoreId, qty);
+    await adjustInventoryPosition(productId, currentStoreId, qty);
     setProducts((prev) =>
       prev.map((p) => (p.id === productId ? { ...p, stock: qty } : p))
     );
@@ -263,6 +379,50 @@ export default function InventoryPage() {
       <header className="mb-4 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold text-slate-900">Inventory</h1>
         <div className="flex items-center gap-2">
+          {canViewAll &&
+            (canManageParLevels ? (
+              <Link
+                href="/inventory/par-levels"
+                className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Par Levels
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={() =>
+                  window.alert(
+                    "Par Levels is restricted. An owner or admin needs to enable manager access in Company Settings."
+                  )
+                }
+                className="inline-flex cursor-not-allowed items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 opacity-75"
+              >
+                <Lock className="h-4 w-4" /> Par Levels
+              </button>
+            ))}
+          <Link
+            href="/purchase-orders"
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Purchase Orders
+          </Link>
+          <Link
+            href="/transfers"
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Transfers
+            {restockBadgeCount > 0 && (
+              <span className="ml-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-xs font-semibold text-white">
+                {restockBadgeCount}
+              </span>
+            )}
+          </Link>
+          <Link
+            href="/counts"
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Counts
+          </Link>
           <Link
             href="/board"
             className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
@@ -284,6 +444,24 @@ export default function InventoryPage() {
           />
         </div>
 
+        <div className="flex items-center gap-1 text-sm text-slate-600">
+          <span className="mr-1">Sort by:</span>
+          {(["ats", "physical"] as const).map((opt) => (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => setSortBy(opt)}
+              className={`rounded-md px-2.5 py-1.5 text-sm font-medium ${
+                sortBy === opt
+                  ? "bg-brand-600 text-white"
+                  : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+              }`}
+            >
+              {opt === "ats" ? "ATS" : "Physical"}
+            </button>
+          ))}
+        </div>
+
         {canViewAll && (
           <select
             value={currentStoreId}
@@ -301,7 +479,7 @@ export default function InventoryPage() {
           </select>
         )}
 
-        {employee?.role === "owner" || employee?.role === "manager" ? (
+        {canEditProducts && (
           <>
             <label className="inline-flex cursor-pointer items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700">
               <Upload className="h-4 w-4" /> Upload file
@@ -329,6 +507,8 @@ export default function InventoryPage() {
                   company_id: companyId ?? "",
                   sku: "",
                   item_name: "",
+                  category_id: null,
+                  sleep_trial_eligible: null,
                   brand: null,
                   cost: null,
                   price: null,
@@ -343,8 +523,37 @@ export default function InventoryPage() {
               <Plus className="h-4 w-4" /> Add product
             </button>
           </>
-        ) : null}
+        )}
       </div>
+
+      {canEditProducts && selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm">
+          <span className="font-medium text-slate-700">{selectedIds.size} selected</span>
+          <select
+            value={bulkCategoryId}
+            onChange={(e) => setBulkCategoryId(e.target.value)}
+            className="rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          >
+            <option value="">Uncategorized</option>
+            {bulkCategories.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <button
+            onClick={applyBulkCategory}
+            disabled={bulkBusy}
+            className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+          >
+            {bulkBusy ? "Applying…" : "Set category"}
+          </button>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="text-sm text-slate-500 hover:text-slate-700"
+          >
+            Clear
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <p className="text-sm text-slate-500">Loading…</p>
@@ -353,41 +562,73 @@ export default function InventoryPage() {
           <table className="w-full text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-left">
               <tr>
+                {canEditProducts && (
+                  <th className="w-8 px-4 py-2">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      onChange={toggleSelectAll}
+                      className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                    />
+                  </th>
+                )}
                 <th className="px-4 py-2 font-medium text-slate-700">SKU</th>
                 <th className="px-4 py-2 font-medium text-slate-700">Item Name</th>
                 <th className="px-4 py-2 font-medium text-slate-700">Brand</th>
                 <th className="px-4 py-2 font-medium text-slate-700">Cost</th>
                 <th className="px-4 py-2 font-medium text-slate-700">Price</th>
                 <th className="px-4 py-2 font-medium text-slate-700">Sale Price</th>
-                <th className="px-4 py-2 font-medium text-slate-700">Stock</th>
+                {canViewPhysical && (
+                  <th className="px-4 py-2 font-medium text-slate-700">Physical</th>
+                )}
+                <th className="px-4 py-2 font-medium text-slate-700">ATS</th>
                 <th className="px-4 py-2 font-medium text-slate-700"></th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((p) => (
                 <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
+                  {canEditProducts && (
+                    <td className="px-4 py-2">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(p.id)}
+                        onChange={() => toggleSelect(p.id)}
+                        className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                      />
+                    </td>
+                  )}
                   <td className="px-4 py-2">{p.sku}</td>
                   <td className="px-4 py-2 font-medium text-slate-900">{p.item_name}</td>
                   <td className="px-4 py-2">{p.brand ?? "—"}</td>
                   <td className="px-4 py-2">{p.cost?.toFixed(2) ?? "—"}</td>
                   <td className="px-4 py-2">{p.price?.toFixed(2) ?? "—"}</td>
                   <td className="px-4 py-2">{p.sale_price?.toFixed(2) ?? "—"}</td>
+                  {canViewPhysical && (
+                    <td className="px-4 py-2">
+                      {canAdjustInventory ? (
+                        <input
+                          type="number"
+                          min={0}
+                          defaultValue={p.physical ?? 0}
+                          onBlur={(e) => saveStock(p.id, e.target.value)}
+                          className="w-20 rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        />
+                      ) : (
+                        <span className="text-slate-700">{p.physical ?? "—"}</span>
+                      )}
+                    </td>
+                  )}
+                  <td className="px-4 py-2 text-slate-700">{p.ats ?? 0}</td>
                   <td className="px-4 py-2">
-                    <input
-                      type="number"
-                      min={0}
-                      defaultValue={p.stock ?? 0}
-                      onBlur={(e) => saveStock(p.id, e.target.value)}
-                      className="w-20 rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                    />
-                  </td>
-                  <td className="px-4 py-2">
-                    <button
-                      onClick={() => setEditingProduct(p)}
-                      className="text-sm text-brand-600 hover:text-brand-700"
-                    >
-                      Edit
-                    </button>
+                    {canEditProducts && (
+                      <button
+                        onClick={() => setEditingProduct(p)}
+                        className="text-sm text-brand-600 hover:text-brand-700"
+                      >
+                        Edit
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -397,7 +638,10 @@ export default function InventoryPage() {
       )}
 
       {uploadStep !== "idle" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+        <Modal
+          onClose={() => setUploadStep("idle")}
+          dirty={uploadStep === "mapping" || uploadStep === "preview"}
+        >
           <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-semibold text-slate-900">
@@ -522,12 +766,13 @@ export default function InventoryPage() {
               </div>
             )}
           </div>
-        </div>
+        </Modal>
       )}
 
       {editingProduct && (
         <ProductModal
           product={editingProduct}
+          companyId={companyId}
           onClose={() => setEditingProduct(null)}
           onSave={(p) => {
             setEditingProduct(p);
@@ -541,18 +786,30 @@ export default function InventoryPage() {
 
 function ProductModal({
   product,
+  companyId,
   onClose,
   onSave,
 }: {
   product: Product;
+  companyId: string | null;
   onClose: () => void;
   onSave: (p: Product) => void;
 }) {
   const [p, setP] = useState<Product>(product);
+  const [categories, setCategories] = useState<ProductCategory[]>([]);
+
+  useEffect(() => {
+    if (companyId) {
+      fetchProductCategories(companyId).then(setCategories);
+    }
+  }, [companyId]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-      <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+    <Modal
+      onClose={onClose}
+      dirty={JSON.stringify(p) !== JSON.stringify(product)}
+    >
+      <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900">
             {product.id ? "Edit product" : "Add product"}
@@ -585,6 +842,45 @@ function ProductModal({
               onChange={(e) => setP((x) => ({ ...x, brand: e.target.value || null }))}
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700">Category</label>
+            <select
+              value={p.category_id ?? ""}
+              onChange={(e) =>
+                setP((x) => ({ ...x, category_id: e.target.value || null }))
+              }
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            >
+              <option value="">Uncategorized</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700">Sleep trial</label>
+            <select
+              value={
+                p.sleep_trial_eligible === null || p.sleep_trial_eligible === undefined
+                  ? "inherit"
+                  : p.sleep_trial_eligible
+                    ? "yes"
+                    : "no"
+              }
+              onChange={(e) =>
+                setP((x) => ({
+                  ...x,
+                  sleep_trial_eligible:
+                    e.target.value === "inherit" ? null : e.target.value === "yes",
+                }))
+              }
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            >
+              <option value="inherit">Inherit from category</option>
+              <option value="yes">Eligible</option>
+              <option value="no">Not eligible</option>
+            </select>
           </div>
           <div className="grid grid-cols-3 gap-2">
             <div>
@@ -638,6 +934,6 @@ function ProductModal({
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

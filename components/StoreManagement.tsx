@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Plus,
   Pencil,
@@ -8,6 +9,9 @@ import {
   RotateCcw,
   X,
 } from "lucide-react";
+import Modal from "@/components/Modal";
+import TimezonePicker from "@/components/TimezonePicker";
+import { createClient } from "@/lib/supabase/client";
 import {
   fetchCurrentEmployee,
   fetchStores,
@@ -20,13 +24,33 @@ import {
 
 const emptyStore: Partial<Store> = {
   name: "",
+  store_code: null,
   street_address: "",
   city: "",
   state: "",
   zip_code: "",
   phone: "",
   is_active: true,
+  location_type: "STORE",
+  transfer_schedule_day: null,
+  timezone: null,
 };
+
+const SCHEDULE_DAY_OPTIONS = [
+  { value: "", label: "No scheduled day" },
+  { value: "0", label: "Sunday" },
+  { value: "1", label: "Monday" },
+  { value: "2", label: "Tuesday" },
+  { value: "3", label: "Wednesday" },
+  { value: "4", label: "Thursday" },
+  { value: "5", label: "Friday" },
+  { value: "6", label: "Saturday" },
+];
+
+const LOCATION_OPTIONS: { value: Store["location_type"]; label: string }[] = [
+  { value: "STORE", label: "Store" },
+  { value: "WAREHOUSE", label: "Warehouse" },
+];
 
 export default function StoreManagement() {
   const [employee, setEmployee] = useState<Employee | null>(null);
@@ -35,11 +59,18 @@ export default function StoreManagement() {
   const [saving, setSaving] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [form, setForm] = useState<Partial<Store>>(emptyStore);
+  const initialForm = useRef<Partial<Store>>(emptyStore);
   const [confirm, setConfirm] = useState<{
     store: Store;
     activeJourneys: number;
     reactivate: boolean;
   } | null>(null);
+  // stores.timezone arrives with migration 066; until it exists the field
+  // stays hidden instead of breaking store saves.
+  const [timezoneSupported, setTimezoneSupported] = useState(false);
+  const [storeTimezones, setStoreTimezones] = useState<
+    Record<string, string | null>
+  >({});
 
   const isAdmin =
     employee?.role === "owner" || employee?.role === "admin";
@@ -59,15 +90,39 @@ export default function StoreManagement() {
       setStores(s);
       setLoading(false);
     });
+
+    fetchStoreTimezones();
   }, []);
 
+  async function fetchStoreTimezones() {
+    const supabase = createClient();
+    const { data, error } = await (supabase as any)
+      .from("stores")
+      .select("id, timezone");
+    if (error) return;
+    setTimezoneSupported(true);
+    setStoreTimezones(
+      Object.fromEntries(
+        ((data ?? []) as { id: string; timezone: string | null }[]).map(
+          (r) => [r.id, r.timezone]
+        )
+      )
+    );
+  }
+
   function openNew() {
+    initialForm.current = { ...emptyStore };
     setForm({ ...emptyStore });
     setIsOpen(true);
   }
 
   function openEdit(store: Store) {
-    setForm({ ...store });
+    const withTimezone = {
+      ...store,
+      timezone: storeTimezones[store.id] ?? null,
+    };
+    initialForm.current = withTimezone;
+    setForm(withTimezone);
     setIsOpen(true);
   }
 
@@ -84,13 +139,25 @@ export default function StoreManagement() {
       if (form.id) {
         await updateStore(form.id, {
           name: form.name,
+          store_code: form.store_code?.trim().toUpperCase() || null,
           street_address: form.street_address,
           city: form.city,
           state: form.state,
           zip_code: form.zip_code,
           phone: form.phone,
           is_active: form.is_active,
+          assigned_warehouse_id: form.assigned_warehouse_id ?? null,
+          transfer_schedule_day: form.transfer_schedule_day ?? null,
+          // undefined is dropped from the PATCH, so pre-migration saves
+          // don't send a column that doesn't exist yet.
+          timezone: timezoneSupported ? form.timezone ?? null : undefined,
         });
+        if (timezoneSupported) {
+          setStoreTimezones((prev) => ({
+            ...prev,
+            [form.id!]: form.timezone ?? null,
+          }));
+        }
         setStores((prev) =>
           prev.map((s) =>
             s.id === form.id
@@ -104,14 +171,24 @@ export default function StoreManagement() {
         const id = await createStore({
           company_id: companyId,
           name: form.name,
+          store_code: form.store_code?.trim().toUpperCase() || null,
           street_address: form.street_address,
           city: form.city,
           state: form.state,
           zip_code: form.zip_code,
           phone: form.phone,
           is_active: form.is_active,
+          location_type: form.location_type,
+          transfer_schedule_day: form.transfer_schedule_day ?? null,
+          timezone: timezoneSupported ? form.timezone ?? null : undefined,
         });
         if (id) {
+          if (timezoneSupported) {
+            setStoreTimezones((prev) => ({
+              ...prev,
+              [id]: form.timezone ?? null,
+            }));
+          }
           const fresh = await fetchStores();
           setStores(fresh);
         }
@@ -119,7 +196,12 @@ export default function StoreManagement() {
       closeModal();
     } catch (err) {
       console.error(err);
-      alert(err instanceof Error ? err.message : "Save failed");
+      const msg = err instanceof Error ? err.message : "Save failed";
+      alert(
+        msg.includes("idx_stores_company_store_code") || msg.includes("duplicate key")
+          ? "That store code is already used by another store in this company."
+          : msg
+      );
     } finally {
       setSaving(false);
     }
@@ -217,6 +299,14 @@ export default function StoreManagement() {
                     <h2 className="text-lg font-semibold text-slate-900">
                       {s.name}
                     </h2>
+                    {s.store_code && (
+                      <span className="rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700">
+                        {s.store_code}
+                      </span>
+                    )}
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                      {s.location_type.replace("_", " ")}
+                    </span>
                     {!s.is_active && (
                       <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600">
                         Inactive
@@ -267,9 +357,16 @@ export default function StoreManagement() {
       </div>
 
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-lg">
-            <div className="mb-4 flex items-center justify-between">
+        <Modal
+          onClose={closeModal}
+          overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          dirty={
+            JSON.stringify(form) !== JSON.stringify(initialForm.current)
+          }
+          saving={saving}
+        >
+          <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg bg-white shadow-lg">
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
               <h2 className="text-lg font-semibold text-slate-900">
                 {form.id ? "Edit Store" : "Add Store"}
               </h2>
@@ -281,7 +378,7 @@ export default function StoreManagement() {
               </button>
             </div>
 
-            <div className="space-y-3">
+            <div className="flex-1 space-y-3 overflow-y-auto px-6 py-4">
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700">
                   Store Name <span className="text-red-500">*</span>
@@ -295,6 +392,147 @@ export default function StoreManagement() {
                   className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                 />
               </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Store Code
+                  </label>
+                  <input
+                    type="text"
+                    value={form.store_code ?? ""}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        store_code: e.target.value.toUpperCase(),
+                      }))
+                    }
+                    placeholder="e.g. MS"
+                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm uppercase focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Optional. Used in inventory count reference numbers (e.g.
+                    MSINV-000001). Auto-derived from the store name if left blank.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Location Type
+                  </label>
+                  {form.id ? (
+                    <p className="py-2 text-sm text-slate-700">
+                      {form.location_type?.replace("_", " ")}
+                    </p>
+                  ) : (
+                    <select
+                      value={form.location_type ?? "STORE"}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          location_type: e.target.value as Store["location_type"],
+                        }))
+                      }
+                      className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    >
+                      {LOCATION_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                {form.location_type === "STORE" && (
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
+                      Assigned Warehouse
+                    </label>
+                    <select
+                      value={form.assigned_warehouse_id ?? ""}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          assigned_warehouse_id: e.target.value || null,
+                        }))
+                      }
+                      className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    >
+                      <option value="">None</option>
+                      {stores
+                        .filter((s) => s.location_type === "WAREHOUSE")
+                        .map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                )}
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Transfer Schedule Day
+                  </label>
+                  <select
+                    value={form.transfer_schedule_day ?? ""}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        transfer_schedule_day:
+                          e.target.value === "" ? null : Number(e.target.value),
+                      }))
+                    }
+                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  >
+                    {SCHEDULE_DAY_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Nightly consolidation will pick up this store the day before
+                    this scheduled day.
+                  </p>
+                </div>
+              </div>
+
+              {form.location_type === "STORE" && timezoneSupported && (
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Timezone
+                  </label>
+                  <TimezonePicker
+                    value={form.timezone ?? null}
+                    allowEmpty
+                    emptyLabel="Use company timezone"
+                    onChange={(tz) =>
+                      setForm((f) => ({ ...f, timezone: tz }))
+                    }
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Business dates for this store (for example sleep trial
+                    nights). Leave blank to use the company timezone.
+                  </p>
+                </div>
+              )}
+
+              {form.location_type === "STORE" && (
+                <p className="text-xs text-slate-500">
+                  Sleep trial policy is set company-wide in Settings →{" "}
+                  <Link
+                    href="/settings/sleep-trial"
+                    className="text-brand-600 hover:underline"
+                  >
+                    Sleep Trial
+                  </Link>
+                  .
+                </p>
+              )}
 
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700">
@@ -310,8 +548,8 @@ export default function StoreManagement() {
                 />
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
-                <div className="col-span-2">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">
                     City
                   </label>
@@ -337,9 +575,6 @@ export default function StoreManagement() {
                       className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                     />
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">
                     ZIP
@@ -353,23 +588,24 @@ export default function StoreManagement() {
                     className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                 </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">
-                    Phone
-                  </label>
-                  <input
-                    type="text"
-                    value={form.phone ?? ""}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, phone: e.target.value }))
-                    }
-                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  />
-                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">
+                  Phone
+                </label>
+                <input
+                  type="text"
+                  value={form.phone ?? ""}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, phone: e.target.value }))
+                  }
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                />
               </div>
             </div>
 
-            <div className="mt-6 flex justify-end gap-2">
+            <div className="flex justify-end gap-2 border-t border-slate-200 px-6 py-4">
               <button
                 onClick={closeModal}
                 className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
@@ -385,11 +621,15 @@ export default function StoreManagement() {
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {confirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <Modal
+          onClose={() => setConfirm(null)}
+          overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          saving={saving}
+        >
           <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-lg">
             <h2 className="mb-2 text-lg font-semibold text-slate-900">
               {confirm.reactivate ? "Reactivate Store" : "Deactivate Store"}
@@ -431,7 +671,7 @@ export default function StoreManagement() {
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </main>
   );

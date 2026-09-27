@@ -7,6 +7,7 @@
     "dev": "next dev",
     "prebuild": "rm -rf .next",
     "build": "next build",
+    "build:verify": "NEXT_DIST_DIR=.next-verify next build",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"

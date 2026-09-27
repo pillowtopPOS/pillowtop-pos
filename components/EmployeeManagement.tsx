@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Pencil, Power, RotateCcw, X } from "lucide-react";
+import Modal from "@/components/Modal";
 import {
   fetchCurrentEmployee,
   fetchEmployees,
@@ -81,6 +82,7 @@ export default function EmployeeManagement() {
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<EmployeeForm>(emptyForm);
+  const initialForm = useRef<EmployeeForm>(emptyForm);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<{
     employee: Employee;
@@ -123,16 +125,28 @@ export default function EmployeeManagement() {
   function openNew() {
     setEditingId(null);
     setError(null);
-    setForm({
+    initialForm.current = {
       ...emptyForm,
       home_store_id: currentEmployee?.home_store_id ?? stores[0]?.id ?? null,
-    });
+    };
+    setForm({ ...initialForm.current });
     setIsOpen(true);
   }
 
   function openEdit(employee: Employee) {
     setEditingId(employee.id);
     setError(null);
+    initialForm.current = {
+      first_name: employee.first_name,
+      last_name: employee.last_name,
+      email: "",
+      password: "",
+      role: employee.role as EmployeeRole,
+      home_store_id: employee.home_store_id,
+      birthday: employee.birthday,
+      hire_date: employee.hire_date,
+      is_active: employee.is_active,
+    };
     setForm({
       first_name: employee.first_name,
       last_name: employee.last_name,
@@ -350,8 +364,13 @@ export default function EmployeeManagement() {
       </div>
 
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-lg">
+        <Modal
+          onClose={closeModal}
+          overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          dirty={JSON.stringify(form) !== JSON.stringify(initialForm.current)}
+          saving={saving}
+        >
+          <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-lg bg-white p-6 shadow-lg">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-semibold text-slate-900">
                 {editingId ? "Edit Employee" : "Add Employee"}
@@ -534,11 +553,15 @@ export default function EmployeeManagement() {
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {confirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <Modal
+          onClose={() => setConfirm(null)}
+          overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          saving={saving}
+        >
           <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-lg">
             <h2 className="mb-2 text-lg font-semibold text-slate-900">
               {confirm.reactivate ? "Reactivate Employee" : "Deactivate Employee"}
@@ -581,7 +604,7 @@ export default function EmployeeManagement() {
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </main>
   );

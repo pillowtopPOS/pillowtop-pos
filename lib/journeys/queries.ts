@@ -8,6 +8,11 @@ export type JourneyWithDetails = {
   product_summary: string | null;
   price: number | null;
   cancelled_at: string | null;
+  fulfillment_type: "delivery" | "pickup";
+  delivered_at: string | null;
+  inventory_ready_notified_at: string | null;
+  trial_length_nights: number | null;
+  minimum_adjustment_nights: number | null;
   created_at: string;
   updated_at: string;
   store_id: string;
@@ -18,6 +23,11 @@ export type JourneyWithDetails = {
     last_name: string;
     phone: string;
     email: string;
+    street_address: string | null;
+    street_address_line_2: string | null;
+    city: string | null;
+    state: string | null;
+    zip_code: string | null;
   } | null;
   employee: {
     id: string;
@@ -26,8 +36,16 @@ export type JourneyWithDetails = {
   store: {
     id: string;
     name: string;
+    trial_length_nights: number;
+    minimum_adjustment_nights: number | null;
+    trial_ending_warning_days: number | null;
   } | null;
 };
+
+const JOURNEY_DETAIL_SELECT = `id, current_state, product_summary, price, cancelled_at, fulfillment_type, delivered_at, inventory_ready_notified_at, trial_length_nights, minimum_adjustment_nights, created_at, updated_at, store_id, assigned_employee_id,
+      customer:customers!customer_id ( id, first_name, last_name, phone, email, street_address, street_address_line_2, city, state, zip_code ),
+      employee:employees!assigned_employee_id ( id, name ),
+      store:stores!store_id ( id, name, trial_length_nights, minimum_adjustment_nights, trial_ending_warning_days )`;
 
 export type JourneyEvent = {
   id: string;
@@ -59,11 +77,23 @@ export type JourneyReassignmentEvent = {
 export type FollowUp = {
   id: string;
   journey_id: string;
-  type: "quote" | "deposit";
+  employee_id: string | null;
+  type: "quote" | "deposit" | "interaction" | "sleep_concern";
   due_at: string;
   completed_at: string | null;
   notes: string | null;
+  method: string | null;
+  journey_interaction_id: string | null;
+  sleep_concern_id: string | null;
   journey?: JourneyWithDetails;
+  sleep_concerns?: { status: string } | null;
+};
+
+export const FOLLOW_UP_METHOD_LABELS: Record<string, string> = {
+  call: "Call",
+  text: "Text",
+  email: "Email",
+  in_person: "In person",
 };
 
 export type JourneyLineItem = {
@@ -73,6 +103,11 @@ export type JourneyLineItem = {
   item_name: string;
   quantity: number;
   unit_price: number;
+  fulfillment_type_override?: "delivery" | "pickup" | null;
+  pickup_location_id?: string | null;
+  pair_group_id?: string | null;
+  sold_condition?: string | null;
+  trial_ineligible_reason?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -95,6 +130,7 @@ export type Store = {
   id: string;
   company_id: string;
   name: string;
+  store_code: string | null;
   address: string | null;
   street_address: string | null;
   city: string | null;
@@ -103,6 +139,15 @@ export type Store = {
   phone: string | null;
   is_active: boolean;
   trial_length_nights: number;
+  minimum_adjustment_nights: number | null;
+  trial_ending_warning_days: number | null;
+  location_type: "STORE" | "WAREHOUSE" | "WAREHOUSE_QUARANTINE";
+  parent_location_id: string | null;
+  assigned_warehouse_id: string | null;
+  transfer_schedule_day: number | null;
+  // Arrives with migration 066; absent from fetchStores until then so the app
+  // keeps working pre-migration. StoreManagement merges it in separately.
+  timezone?: string | null;
 };
 
 export type EmployeeRole =
@@ -137,12 +182,7 @@ export async function fetchJourneys(
 
   let query = supabase
     .from("sleep_journeys")
-    .select(
-      `id, current_state, product_summary, price, cancelled_at, created_at, updated_at, store_id, assigned_employee_id,
-      customer:customers!customer_id ( id, first_name, last_name, phone, email ),
-      employee:employees!assigned_employee_id ( id, name ),
-      store:stores!store_id ( id, name )`
-    )
+    .select(JOURNEY_DETAIL_SELECT)
     .order("updated_at", { ascending: false });
 
   if (storeId && storeId !== "all") {
@@ -206,12 +246,7 @@ export async function fetchJourneyById(
   const supabase = createClient();
   const { data, error } = await supabase
     .from("sleep_journeys")
-    .select(
-      `id, current_state, product_summary, price, cancelled_at, created_at, updated_at, store_id, assigned_employee_id,
-      customer:customers!customer_id ( id, first_name, last_name, phone, email ),
-      employee:employees!assigned_employee_id ( id, name ),
-      store:stores!store_id ( id, name )`
-    )
+    .select(JOURNEY_DETAIL_SELECT)
     .eq("id", journeyId)
     .maybeSingle();
 
@@ -269,6 +304,18 @@ async function insertReassignment(row: {
   if (error) throw new Error(error.message);
 }
 
+export async function updateJourneyFulfillment(
+  journeyId: string,
+  fulfillmentType: "delivery" | "pickup"
+) {
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("sleep_journeys")
+    .update({ fulfillment_type: fulfillmentType })
+    .eq("id", journeyId);
+  if (error) throw new Error(error.message);
+}
+
 export async function reassignJourneyStore(
   journeyId: string,
   toStoreId: string,
@@ -314,7 +361,7 @@ export async function fetchStores(activeOnly = false): Promise<Store[]> {
   let query = supabase
     .from("stores")
     .select(
-      "id, company_id, name, address, street_address, city, state, zip_code, phone, is_active, trial_length_nights"
+      "id, company_id, name, store_code, address, street_address, city, state, zip_code, phone, is_active, trial_length_nights, minimum_adjustment_nights, trial_ending_warning_days, location_type, parent_location_id, assigned_warehouse_id, transfer_schedule_day"
     )
     .order("name");
   if (activeOnly) {
@@ -335,13 +382,22 @@ export async function createStore(store: Partial<Store>) {
     .insert({
       company_id: store.company_id,
       name: store.name,
+      store_code: store.store_code?.trim() || null,
       street_address: store.street_address,
       city: store.city,
       state: store.state,
       zip_code: store.zip_code,
       phone: store.phone,
       is_active: store.is_active ?? true,
-      trial_length_nights: store.trial_length_nights ?? 120,
+      // Store-level trial fields are retired (L5): trial terms come from the
+      // company Sleep Trial policy. The columns still exist until Phase 4 and
+      // take their DB defaults (120/60/14).
+      location_type: (store.location_type as any) ?? "STORE",
+      assigned_warehouse_id: store.assigned_warehouse_id ?? null,
+      transfer_schedule_day: store.transfer_schedule_day ?? null,
+      // undefined is dropped by JSON serialization, so pre-migration callers
+      // that don't pass a timezone don't break on the missing column.
+      timezone: store.timezone,
     })
     .select("id")
     .single();
@@ -356,13 +412,20 @@ export async function updateStore(id: string, updates: Partial<Store>) {
     .from("stores")
     .update({
       name: updates.name,
+      // undefined → field omitted from the PATCH, so partial updates
+      // (e.g. toggling is_active) don't wipe an existing store code.
+      store_code: updates.store_code === undefined ? undefined : updates.store_code?.trim() || null,
       street_address: updates.street_address,
       city: updates.city,
       state: updates.state,
       zip_code: updates.zip_code,
       phone: updates.phone,
       is_active: updates.is_active,
-      trial_length_nights: updates.trial_length_nights,
+      // Store-level trial fields are retired (L5) — no longer written here.
+      assigned_warehouse_id: updates.assigned_warehouse_id,
+      transfer_schedule_day: updates.transfer_schedule_day ?? null,
+      // undefined → field omitted from the PATCH; null clears the override.
+      timezone: updates.timezone,
     })
     .eq("id", id)
     .select("id")
@@ -680,13 +743,20 @@ export async function createJourneyLineItem(
     item_name: item.item_name,
     quantity: item.quantity,
     unit_price: item.unit_price,
+    fulfillment_type_override: item.fulfillment_type_override ?? null,
+    pickup_location_id: item.pickup_location_id ?? null,
   });
   if (error) throw new Error(error.message);
 }
 
 export async function updateJourneyLineItem(
   id: string,
-  updates: { quantity?: number; unit_price?: number }
+  updates: {
+    quantity?: number;
+    unit_price?: number;
+    fulfillment_type_override?: "delivery" | "pickup" | null;
+    pickup_location_id?: string | null;
+  }
 ) {
   const supabase = createClient();
   const { error } = await supabase
@@ -702,11 +772,44 @@ export async function deleteJourneyLineItem(id: string) {
   if (error) throw new Error(error.message);
 }
 
+export async function updateCustomerAddress(
+  customerId: string,
+  address: {
+    street_address: string | null;
+    street_address_line_2: string | null;
+    city: string | null;
+    state: string | null;
+    zip_code: string | null;
+  }
+) {
+  const supabase = createClient();
+  const { data, error, status, statusText } = await supabase
+    .from("customers")
+    .update(address)
+    .eq("id", customerId)
+    .select("id")
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) {
+    throw new Error(
+      status === 204
+        ? "Customer address was not updated. You may not have permission to edit this customer."
+        : `Customer address update returned no row (${status} ${statusText}).`
+    );
+  }
+}
+
 export type CustomerInput = {
   firstName: string;
   lastName: string;
   phone: string;
   email: string;
+  streetAddress?: string;
+  streetAddressLine2?: string;
+  city?: string;
+  state?: string;
+  zipCode?: string;
 };
 
 export type LineItemInput = {
@@ -714,6 +817,8 @@ export type LineItemInput = {
   itemName: string;
   quantity: number;
   unitPrice: number;
+  fulfillmentTypeOverride?: "delivery" | "pickup" | null;
+  pickupLocationId?: string | null;
 };
 
 type BaseCreateInput = {
@@ -721,6 +826,7 @@ type BaseCreateInput = {
   lineItems: LineItemInput[];
   storeId: string;
   assignedEmployeeId: string | null;
+  fulfillmentType?: "delivery" | "pickup";
 };
 
 export type QuoteCreateInput = BaseCreateInput & {
@@ -757,6 +863,11 @@ export async function createJourney(input: CreateJourneyInput): Promise<string> 
     last_name: input.customer.lastName,
     phone: input.customer.phone,
     email: input.customer.email,
+    street_address: input.customer.streetAddress ?? null,
+    street_address_line_2: input.customer.streetAddressLine2 ?? null,
+    city: input.customer.city ?? null,
+    state: input.customer.state ?? null,
+    zip_code: input.customer.zipCode ?? null,
   });
 
   if (customerError) {
@@ -774,6 +885,7 @@ export async function createJourney(input: CreateJourneyInput): Promise<string> 
       assigned_employee_id: input.assignedEmployeeId,
       product_id: firstProductId,
       product_summary: firstItem?.itemName ?? null,
+      fulfillment_type: input.fulfillmentType ?? "delivery",
     })
     .select("id")
     .single();
@@ -792,6 +904,8 @@ export async function createJourney(input: CreateJourneyInput): Promise<string> 
           item_name: item.itemName,
           quantity: item.quantity,
           unit_price: item.unitPrice,
+          fulfillment_type_override: item.fulfillmentTypeOverride ?? null,
+          pickup_location_id: item.pickupLocationId ?? null,
         }))
       );
 
@@ -827,10 +941,20 @@ export type PaymentOutcome =
   | "VOIDED"
   | "REFUNDED";
 
+export async function fetchTotalPaid(journeyId: string): Promise<number> {
+  const supabase = createClient();
+  const { data, error } = await (supabase.rpc as any)("total_paid", {
+    p_journey_id: journeyId,
+  });
+  if (error) throw new Error(error.message);
+  return (data as number) ?? 0;
+}
+
 export async function recordPayment(
   journeyId: string,
   amount: number,
-  paymentMethod: string
+  paymentMethod: string,
+  depositApprovalId?: string
 ): Promise<{ paymentEventId: string; outcome: PaymentOutcome }> {
   const supabase = createClient();
 
@@ -855,6 +979,7 @@ export async function recordPayment(
     p_idempotency_key: crypto.randomUUID(),
     p_outcome: outcome,
     p_actor_id: session.user.id,
+    p_deposit_approval_id: depositApprovalId ?? null,
   });
 
   if (error) {
@@ -871,6 +996,7 @@ export async function recordPaymentEvent(options: {
   idempotencyKey: string;
   outcome: PaymentOutcome;
   followUpDueAt?: string;
+  depositApprovalId?: string;
 }) {
   const supabase = createClient();
 
@@ -898,6 +1024,7 @@ export async function recordPaymentEvent(options: {
     p_idempotency_key: options.idempotencyKey,
     p_outcome: options.outcome,
     p_actor_id: session.user.id,
+    p_deposit_approval_id: options.depositApprovalId ?? null,
   });
 
   if (error) {
@@ -957,18 +1084,39 @@ export async function fetchOpportunities(storeId?: string): Promise<Opportunity[
   return (data as unknown as Opportunity[]) ?? [];
 }
 
+export type PendingApproval = {
+  id: string;
+  journey_id: string;
+  trial_item_id: string | null;
+  exception_type: string;
+  action: string;
+  rule_reference: string | null;
+  requested_terms: Record<string, unknown> | null;
+  requested_at: string;
+  requester_employee_id: string | null;
+  requester_name: string | null;
+  reason_label: string | null;
+  reason_note: string | null;
+  customer_name: string | null;
+};
+
 export type MyWorkItem =
   | { kind: "follow_up"; data: FollowUp & { journey: JourneyWithDetails | null } }
-  | { kind: "opportunity"; data: Opportunity };
+  | { kind: "opportunity"; data: Opportunity }
+  | { kind: "approval"; data: PendingApproval };
 
 export async function fetchMyWork(): Promise<MyWorkItem[]> {
   const supabase = createClient();
 
-  const [{ data: followUps, error: followError }, { data: opportunities, error: oppError }] =
+  const [
+    { data: followUps, error: followError },
+    { data: opportunities, error: oppError },
+    { data: approvals, error: apprError },
+  ] =
     await Promise.all([
       supabase
         .from("follow_ups")
-        .select("*")
+        .select("*, sleep_concerns(status)")
         .is("completed_at", null)
         .order("due_at", { ascending: true }),
       supabase
@@ -976,10 +1124,15 @@ export async function fetchMyWork(): Promise<MyWorkItem[]> {
         .select("*")
         .eq("status", "new")
         .order("created_at", { ascending: false }),
+      // Sleep-trial exceptions pending the caller's decision (075 — the
+      // My Work APPROVAL kind). Derived at query time server-side so the
+      // approver set is never a stale copy.
+      supabase.rpc("list_pending_exception_approvals"),
     ]);
 
   if (followError) console.error("fetchMyWork follow_ups error", followError);
   if (oppError) console.error("fetchMyWork opportunities error", oppError);
+  if (apprError) console.error("fetchMyWork approvals error", apprError);
 
   const journeyIds = ((followUps as unknown as FollowUp[]) ?? [])
     .map((f) => f.journey_id)
@@ -987,12 +1140,7 @@ export async function fetchMyWork(): Promise<MyWorkItem[]> {
 
   const { data: journeys, error: journeyError } = await supabase
     .from("sleep_journeys")
-    .select(
-      `id, current_state, product_summary, price, cancelled_at, created_at, updated_at, store_id, assigned_employee_id,
-      customer:customers!customer_id ( id, first_name, last_name, phone, email ),
-      employee:employees!assigned_employee_id ( id, name ),
-      store:stores!store_id ( id, name )`
-    )
+    .select(JOURNEY_DETAIL_SELECT)
     .in("id", journeyIds);
 
   if (journeyError) console.error("fetchMyWork sleep_journeys error", journeyError);
@@ -1017,15 +1165,18 @@ export async function fetchMyWork(): Promise<MyWorkItem[]> {
     items.push({ kind: "opportunity", data: o });
   }
 
+  for (const a of (approvals as unknown as PendingApproval[]) ?? []) {
+    items.push({ kind: "approval", data: a });
+  }
+
   return items;
 }
 
 export async function completeFollowUp(followUpId: string) {
   const supabase = createClient();
-  const { error } = await supabase
-    .from("follow_ups")
-    .update({ completed_at: new Date().toISOString() })
-    .eq("id", followUpId);
+  const { error } = await supabase.rpc("complete_follow_up", {
+    p_follow_up_id: followUpId,
+  });
 
   if (error) throw new Error(error.message);
 }

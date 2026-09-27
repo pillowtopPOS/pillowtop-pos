@@ -9,20 +9,29 @@ export type Product = {
   cost: number | null;
   price: number | null;
   sale_price: number | null;
+  category_id: string | null;
+  sleep_trial_eligible: boolean | null;
   search_text: string;
   created_at: string;
   updated_at: string;
 };
 
-export type ProductStock = {
+export type InventoryPosition = {
   id: string;
-  product_id: string;
-  store_id: string;
-  quantity: number;
+  variant_id: string;
+  location_id: string;
+  sublocation_id: string | null;
+  disposition: string;
+  on_hand_quantity: number | null;
+  ats: number;
   updated_at: string;
 };
 
-export type ProductWithStock = Product & { stock: number | null };
+export type ProductWithStock = Product & {
+  stock: number | null;
+  physical: number | null;
+  ats: number | null;
+};
 
 export async function searchProducts(query: string): Promise<Product[]> {
   if (!query.trim()) return [];
@@ -40,27 +49,34 @@ export async function searchProducts(query: string): Promise<Product[]> {
   return (data as unknown as Product[]) ?? [];
 }
 
+type InventoryVisibility = {
+  physical: number | null;
+  ats: number;
+};
+
 export async function fetchProductStock(
   productIds: string[],
   storeId: string
-): Promise<Record<string, number>> {
+): Promise<Record<string, InventoryVisibility>> {
   if (productIds.length === 0) return {};
 
   const supabase = createClient();
   const { data, error } = await supabase
-    .from("product_stock")
-    .select("product_id, quantity")
-    .in("product_id", productIds)
-    .eq("store_id", storeId);
+    .from("inventory_positions_public")
+    .select("variant_id, on_hand_quantity, ats")
+    .in("variant_id", productIds)
+    .eq("location_id", storeId)
+    .eq("disposition", "Prime")
+    .is("sublocation_id", null);
 
   if (error) {
     console.error("fetchProductStock error", error);
     return {};
   }
 
-  const map: Record<string, number> = {};
-  for (const row of (data as unknown as ProductStock[]) ?? []) {
-    map[row.product_id] = row.quantity;
+  const map: Record<string, InventoryVisibility> = {};
+  for (const row of (data as unknown as InventoryPosition[]) ?? []) {
+    map[row.variant_id] = { physical: row.on_hand_quantity, ats: row.ats };
   }
   return map;
 }
@@ -70,7 +86,7 @@ export async function fetchProductsWithStock(
 ): Promise<ProductWithStock[]> {
   const supabase = createClient();
   const { data: products, error } = await supabase
-    .from("products")
+    .from("products_public")
     .select("*")
     .order("item_name");
 
@@ -82,14 +98,16 @@ export async function fetchProductsWithStock(
   const list = (products as unknown as Product[]) ?? [];
   if (list.length === 0) return [];
 
-  let stockMap: Record<string, number> = {};
+  let stockMap: Record<string, InventoryVisibility> = {};
   if (storeId) {
     stockMap = await fetchProductStock(list.map((p) => p.id), storeId);
   }
 
   return list.map((p) => ({
     ...p,
-    stock: stockMap[p.id] ?? null,
+    stock: stockMap[p.id]?.ats ?? null,
+    physical: stockMap[p.id]?.physical ?? null,
+    ats: stockMap[p.id]?.ats ?? null,
   }));
 }
 
@@ -104,6 +122,8 @@ export async function upsertProduct(product: Partial<Product> & { company_id: st
     cost: product.cost,
     price: product.price,
     sale_price: product.sale_price,
+    category_id: product.category_id ?? null,
+    sleep_trial_eligible: product.sleep_trial_eligible ?? null,
   };
 
   const { data, error } = await supabase
@@ -116,12 +136,34 @@ export async function upsertProduct(product: Partial<Product> & { company_id: st
   return (data as { id: string })?.id;
 }
 
-export async function updateProductStock(productId: string, storeId: string, quantity: number) {
+export async function adjustInventoryPosition(
+  productId: string,
+  storeId: string,
+  quantity: number
+) {
   const supabase = createClient();
-  const { error } = await supabase.from("product_stock").upsert(
-    { product_id: productId, store_id: storeId, quantity: Math.max(0, Math.floor(quantity)) },
-    { onConflict: "product_id,store_id", ignoreDuplicates: false }
-  );
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
 
-  if (error) throw new Error(error.message);
+  if (!session?.user) {
+    throw new Error("Not authenticated");
+  }
+
+  const { data, error } = await supabase.rpc("adjust_inventory_position", {
+    p_variant_id: productId,
+    p_location_id: storeId,
+    p_sublocation_id: null,
+    p_disposition: "Prime",
+    p_new_quantity: Math.max(0, Math.floor(quantity)),
+    p_reason: "manual_adjustment",
+    p_reference_type: "manual",
+    p_actor_id: session.user.id,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data as string) ?? "";
 }

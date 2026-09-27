@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { fetchMyWork, completeFollowUp, type MyWorkItem } from "@/lib/journeys/queries";
+import { fetchMyWork, completeFollowUp, FOLLOW_UP_METHOD_LABELS, type MyWorkItem } from "@/lib/journeys/queries";
+import { exceptionTypeLabel } from "@/lib/journeys/sleepTrial";
 
 export default function MyWorkPage() {
   const router = useRouter();
@@ -41,6 +42,13 @@ export default function MyWorkPage() {
   function isOverdue(dueAt: string) {
     return new Date(dueAt) < new Date();
   }
+
+  const FOLLOW_UP_LABELS: Record<string, string> = {
+    quote: "Quote",
+    deposit: "Deposit",
+    interaction: "Follow-up",
+    sleep_concern: "Sleep Concern",
+  };
 
   return (
     <main className="min-h-screen bg-slate-50 p-6">
@@ -82,12 +90,18 @@ export default function MyWorkPage() {
                         ? `${customer.first_name} ${customer.last_name}`
                         : "Unknown"}
                       <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-normal text-slate-600">
-                        {f.type}
+                        {FOLLOW_UP_LABELS[f.type] ?? f.type}
                       </span>
+                      {f.type === "sleep_concern" && f.sleep_concerns?.status && (
+                        <span className="ml-2 rounded-full bg-teal-100 px-2 py-0.5 text-xs font-normal text-teal-700">
+                          concern: {f.sleep_concerns.status.replace(/_/g, " ")}
+                        </span>
+                      )}
                     </p>
                     <p className="text-xs text-slate-600">{f.notes}</p>
                     <p className={`text-xs ${overdue ? "text-red-600" : "text-slate-500"}`}>
                       {overdue ? "Overdue" : "Due"} {new Date(f.due_at).toLocaleString()}
+                      {f.method ? ` · via ${FOLLOW_UP_METHOD_LABELS[f.method] ?? f.method}` : ""}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -104,6 +118,41 @@ export default function MyWorkPage() {
                       Mark Done
                     </button>
                   </div>
+                </div>
+              );
+            }
+
+            if (item.kind === "approval") {
+              const a = item.data;
+              return (
+                <div
+                  key={a.id}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-indigo-200 bg-indigo-50 p-4"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-slate-900">
+                      {a.customer_name ?? "Unknown customer"}
+                      <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-normal text-indigo-700">
+                        Approval needed
+                      </span>
+                    </p>
+                    <p className="text-xs text-slate-600">
+                      {exceptionTypeLabel(a.exception_type)} exception
+                      {a.requester_name
+                        ? ` · requested by ${a.requester_name}`
+                        : ""}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {a.reason_label ?? "No reason"}
+                      {a.reason_note ? ` — ${a.reason_note}` : ""}
+                    </p>
+                  </div>
+                  <Link
+                    href={`/board?journey=${a.journey_id}`}
+                    className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    View Journey
+                  </Link>
                 </div>
               );
             }

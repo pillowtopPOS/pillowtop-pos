@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   DndContext,
@@ -20,6 +20,7 @@ import {
   X,
   Check,
   Trash2,
+  Calculator,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { isStoreConfirmedToday, storeSelectUrl } from "@/lib/journeys/storeConfirm";
@@ -37,13 +38,17 @@ import {
   subscribeToJourneyChanges,
   recordJourneyEvent,
   recordPayment,
+  fetchTotalPaid,
   reconcilePayment,
   cancelJourney,
   type PaymentOutcome,
   canReassignJourneys,
   reassignJourneyStore,
   reassignJourneyEmployee,
+  updateJourneyFulfillment,
+  updateCustomerAddress,
   completeFollowUp,
+  FOLLOW_UP_METHOD_LABELS,
   createJourneyLineItem,
   updateJourneyLineItem,
   deleteJourneyLineItem,
@@ -55,7 +60,28 @@ import {
   type Store,
   type JourneyLineItem,
 } from "@/lib/journeys/queries";
+import { fetchProductStock } from "@/lib/inventory/queries";
+import { resolveLineItemLocation } from "@/lib/journeys/fulfillment";
+import { requestDepositException } from "@/lib/journeys/deposit";
+import {
+  evaluateSleepTrialItems,
+  mostUrgentEvaluation,
+  trialStatusLabel,
+  trialStatusTone,
+  TRIAL_STATUS_CHIP,
+  TRIAL_STATUS_DOT,
+  type SleepTrialEvaluation,
+} from "@/lib/journeys/sleepTrial";
+import { localDateISO, localTodayISO } from "@/lib/dates";
+import {
+  fetchCustomerContacts,
+  type CustomerContact,
+} from "@/lib/journeys/interactions";
+import Modal from "@/components/Modal";
 import ProductPicker, { type ProductSelection } from "@/components/ProductPicker";
+import FinancingCalculator from "@/components/FinancingCalculator";
+import JourneyActivity from "@/components/JourneyActivity";
+import SleepTrialSection from "@/components/SleepTrialSection";
 import {
   getTransitionForTarget,
   getTransitionForEvent,
@@ -66,12 +92,16 @@ import {
 
 export default function BoardPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [user, setUser] = useState<any>(null);
   const [currentEmployee, setCurrentEmployee] = useState<Employee | null>(null);
   const [activeStoreId, setActiveStoreId] = useState<string | null | undefined>();
   const [stores, setStores] = useState<Store[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [journeys, setJourneys] = useState<JourneyWithDetails[]>([]);
+  const [trialEvals, setTrialEvals] = useState<
+    Map<string, SleepTrialEvaluation[]>
+  >(new Map());
   const [unresolvedJourneyIds, setUnresolvedJourneyIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
 
@@ -94,8 +124,30 @@ export default function BoardPage() {
     paymentEventId: string;
     outcome: PaymentOutcome;
   } | null>(null);
+  const [pendingDepositException, setPendingDepositException] = useState<{
+    journey: JourneyWithDetails;
+    amount: number;
+    method: string;
+    requestId?: string;
+    reason?: string;
+    error?: string;
+  } | null>(null);
+  const [pendingOverpayment, setPendingOverpayment] = useState<{
+    journey: JourneyWithDetails;
+    amount: number;
+    method: string;
+    remaining: number;
+    credit: number;
+  } | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [cancelJourneyState, setCancelJourneyState] = useState<JourneyWithDetails | null>(null);
+  const [boardBusy, setBoardBusy] = useState(false);
+  const [showCalculator, setShowCalculator] = useState(false);
+
+  const calculatorCompanyId = useMemo(() => {
+    if (!currentEmployee?.home_store_id) return null;
+    return stores.find((s) => s.id === currentEmployee.home_store_id)?.company_id ?? null;
+  }, [currentEmployee, stores]);
 
   const fetchStoreValue = async (u: any) => {
     const active = u.user_metadata?.active_store_id;
@@ -128,6 +180,14 @@ export default function BoardPage() {
       employeeFilter !== "all" ? employeeFilter : undefined
     );
     setJourneys(data);
+
+    // Trial status comes from the evaluator (ST-4) — one batch call for
+    // every journey sitting in the Sleep Trial column.
+    evaluateSleepTrialItems(
+      data
+        .filter((j) => j.current_state === "Sleep Trial")
+        .map((j) => j.id)
+    ).then(setTrialEvals);
 
     const supabase = createClient();
     const { data: unresolved } = await supabase
@@ -165,14 +225,8 @@ export default function BoardPage() {
       });
     });
 
-    fetch("/api/cron").catch(console.error);
-    const interval = setInterval(() => {
-      fetch("/api/cron").catch(console.error);
-    }, 60000);
-
     return () => {
       unsubscribe();
-      clearInterval(interval);
     };
   }, [router, search, employeeFilter, storeFilter]);
 
@@ -187,11 +241,22 @@ export default function BoardPage() {
   }, [selectedJourney]);
 
   async function handleReassigned(journeyId: string) {
-    const [fresh, history] = await Promise.all([
+    const [fresh, history, evalMap] = await Promise.all([
       fetchJourneyById(journeyId),
       fetchJourneyReassignments(journeyId),
+      // Panel actions (protector override, trial-start correction, ...) can
+      // change the item's evaluation — refresh just this journey's evals so
+      // the board card behind the panel isn't stale until the next loadData.
+      evaluateSleepTrialItems([journeyId]),
     ]);
     setReassignments(history);
+    setTrialEvals((prev) => {
+      const next = new Map(prev);
+      const evals = evalMap.get(journeyId) ?? [];
+      if (evals.length > 0) next.set(journeyId, evals);
+      else next.delete(journeyId);
+      return next;
+    });
     if (fresh) {
       setSelectedJourney(fresh);
       setJourneys((prev) => prev.map((j) => (j.id === fresh.id ? fresh : j)));
@@ -199,6 +264,13 @@ export default function BoardPage() {
       setSelectedJourney(null);
     }
   }
+
+  useEffect(() => {
+    const journeyId = searchParams.get("journey");
+    if (journeyId) {
+      handleReassigned(journeyId);
+    }
+  }, [searchParams]);
 
   const boardJourneys = useMemo(() => {
     return journeys.filter((j) => !j.cancelled_at);
@@ -235,7 +307,12 @@ export default function BoardPage() {
     if (transition.requiredFields && transition.requiredFields.length > 0) {
       setPendingTransition({ journey, transition });
       setPendingFieldValues(
-        Object.fromEntries(transition.requiredFields.map((f) => [f.name, ""]))
+        Object.fromEntries(
+          transition.requiredFields.map((f) => [
+            f.name,
+            f.defaultToday ? localTodayISO() : "",
+          ])
+        )
       );
       return;
     }
@@ -268,30 +345,64 @@ export default function BoardPage() {
       }
     }
 
+    if (transition.event === "delivery_completed") {
+      const d = String(eventData.delivered_at ?? "");
+      if (d > localTodayISO()) {
+        window.alert("Delivery date can't be in the future.");
+        return;
+      }
+      if (d < localDateISO(journey.created_at)) {
+        window.alert(
+          "Delivery date can't be before this journey was created."
+        );
+        return;
+      }
+    }
+
+    setBoardBusy(true);
     try {
       if (transition.event === "payment_completed") {
         const amount = parseFloat(fieldValues.amount ?? "0");
         const method = fieldValues.payment_method ?? "";
-        const { paymentEventId, outcome } = await recordPayment(journey.id, amount, method);
-        if (outcome !== "SUCCEEDED") {
-          setPendingReconcile({ journey, paymentEventId, outcome });
+
+        if (journey.price == null) {
+          window.alert("Journey has no price set");
+          return;
+        }
+
+        const totalPaid = await fetchTotalPaid(journey.id);
+        const remaining = journey.price - totalPaid;
+
+        if (amount > remaining) {
+          setPendingOverpayment({
+            journey,
+            amount,
+            method,
+            remaining,
+            credit: amount - remaining,
+          });
           setPendingTransition(null);
           setPendingFieldValues({});
           return;
         }
+
+        await submitBoardPayment(journey, amount, method);
       } else {
         await recordJourneyEvent(journey.id, transition.event, eventData);
+        setPendingTransition(null);
+        setPendingFieldValues({});
+        fetchJourneyEvents(journey.id).then(setEvents);
       }
-      setPendingTransition(null);
-      setPendingFieldValues({});
-      fetchJourneyEvents(journey.id).then(setEvents);
     } catch (e: any) {
       window.alert(e.message ?? "Failed to record event");
+    } finally {
+      setBoardBusy(false);
     }
   }
 
   async function handleReconcile(newOutcome: PaymentOutcome) {
     if (!pendingReconcile) return;
+    setBoardBusy(true);
     try {
       await reconcilePayment(pendingReconcile.paymentEventId, newOutcome);
       const [freshEvents, freshFollowUps] = await Promise.all([
@@ -303,7 +414,120 @@ export default function BoardPage() {
       setPendingReconcile(null);
     } catch (e: any) {
       window.alert(e.message ?? "Reconciliation failed");
+    } finally {
+      setBoardBusy(false);
     }
+  }
+
+  async function submitDepositException() {
+    if (!pendingDepositException || !pendingDepositException.reason?.trim()) return;
+    setBoardBusy(true);
+    try {
+      const requestId = await requestDepositException(
+        pendingDepositException.journey.id,
+        pendingDepositException.amount,
+        pendingDepositException.reason.trim()
+      );
+      setPendingDepositException((prev) =>
+        prev ? { ...prev, requestId } : null
+      );
+    } catch (e: any) {
+      setPendingDepositException((prev) =>
+        prev ? { ...prev, error: e.message ?? "Request failed" } : null
+      );
+    } finally {
+      setBoardBusy(false);
+    }
+  }
+
+  async function recordPaymentWithException() {
+    if (!pendingDepositException?.requestId) return;
+    setBoardBusy(true);
+    try {
+      const { paymentEventId, outcome } = await recordPayment(
+        pendingDepositException.journey.id,
+        pendingDepositException.amount,
+        pendingDepositException.method,
+        pendingDepositException.requestId
+      );
+      if (outcome !== "SUCCEEDED") {
+        setPendingReconcile({
+          journey: pendingDepositException.journey,
+          paymentEventId,
+          outcome,
+        });
+        setPendingDepositException(null);
+        return;
+      }
+      setPendingDepositException(null);
+      fetchJourneyEvents(pendingDepositException.journey.id).then(setEvents);
+    } catch (e: any) {
+      setPendingDepositException((prev) =>
+        prev ? { ...prev, error: e.message ?? "Payment failed" } : null
+      );
+    } finally {
+      setBoardBusy(false);
+    }
+  }
+
+  async function submitBoardPayment(
+    journey: JourneyWithDetails,
+    amount: number,
+    method: string,
+    depositApprovalId?: string
+  ) {
+    try {
+      const { paymentEventId, outcome } = await recordPayment(
+        journey.id,
+        amount,
+        method,
+        depositApprovalId
+      );
+      if (outcome !== "SUCCEEDED") {
+        setPendingReconcile({
+          journey,
+          paymentEventId,
+          outcome,
+        });
+        setPendingOverpayment(null);
+        return;
+      }
+      setPendingOverpayment(null);
+      setPendingTransition(null);
+      setPendingFieldValues({});
+      fetchJourneyEvents(journey.id).then(setEvents);
+    } catch (e: any) {
+      const msg = e.message ?? "";
+      if (
+        msg.includes("below the required deposit") ||
+        msg.includes("below the approved minimum")
+      ) {
+        setPendingDepositException({ journey, amount, method });
+        setPendingOverpayment(null);
+        setPendingTransition(null);
+        setPendingFieldValues({});
+        return;
+      }
+      window.alert(msg ?? "Failed to record payment");
+    }
+  }
+
+  async function confirmOverpayment() {
+    if (!pendingOverpayment) return;
+    setBoardBusy(true);
+    try {
+      await submitBoardPayment(
+        pendingOverpayment.journey,
+        pendingOverpayment.amount,
+        pendingOverpayment.method
+      );
+    } finally {
+      setBoardBusy(false);
+    }
+  }
+
+  function cancelOverpayment() {
+    setPendingOverpayment(null);
   }
 
   async function executeAction(journey: JourneyWithDetails, eventType: JourneyEventType) {
@@ -313,7 +537,12 @@ export default function BoardPage() {
     if (transition.requiredFields && transition.requiredFields.length > 0) {
       setPendingTransition({ journey, transition });
       setPendingFieldValues(
-        Object.fromEntries(transition.requiredFields.map((f) => [f.name, ""]))
+        Object.fromEntries(
+          transition.requiredFields.map((f) => [
+            f.name,
+            f.defaultToday ? localTodayISO() : "",
+          ])
+        )
       );
       return;
     }
@@ -323,12 +552,15 @@ export default function BoardPage() {
 
   async function submitCancel() {
     if (!cancelJourneyState || !cancelReason.trim()) return;
+    setBoardBusy(true);
     try {
       await cancelJourney(cancelJourneyState.id, cancelReason);
       setCancelJourneyState(null);
       setCancelReason("");
     } catch (e: any) {
       window.alert(e.message ?? "Failed to cancel journey");
+    } finally {
+      setBoardBusy(false);
     }
   }
 
@@ -343,6 +575,12 @@ export default function BoardPage() {
           >
             <Plus className="h-4 w-4" /> New Journey
           </Link>
+          <button
+            onClick={() => setShowCalculator(true)}
+            className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <Calculator className="h-4 w-4" /> Financing
+          </button>
           <button
             onClick={() => setView(view === "board" ? "table" : "board")}
             className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
@@ -404,6 +642,7 @@ export default function BoardPage() {
                 state={column.state}
                 journeys={column.journeys}
                 unresolvedJourneyIds={unresolvedJourneyIds}
+                trialEvals={trialEvals}
                 onSelect={setSelectedJourney}
               />
             ))}
@@ -464,19 +703,28 @@ export default function BoardPage() {
             currentEmployee?.role === "admin" ||
             currentEmployee?.role === "manager"
           }
+          currentEmployee={currentEmployee}
           onReassigned={handleReassigned}
           onClose={() => setSelectedJourney(null)}
           onAction={executeAction}
           onCancel={setCancelJourneyState}
-          onRefresh={() => {
-            fetchJourneyEvents(selectedJourney.id).then(setEvents);
-            fetchJourneyFollowUps(selectedJourney.id).then(setFollowUps);
+          onRefresh={async () => {
+            await handleReassigned(selectedJourney.id);
           }}
         />
       )}
 
       {pendingTransition && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+        <Modal
+          onClose={() => {
+            setPendingTransition(null);
+            setPendingFieldValues({});
+          }}
+          dirty={Object.values(pendingFieldValues).some(
+            (v) => String(v ?? "").trim() !== ""
+          )}
+          saving={boardBusy}
+        >
           <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
             <h2 className="mb-2 text-lg font-semibold text-slate-900">
               {pendingTransition.transition.label}
@@ -600,11 +848,11 @@ export default function BoardPage() {
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {pendingReconcile && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+        <Modal onClose={() => setPendingReconcile(null)} saving={boardBusy}>
           <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
             <h2 className="mb-2 text-lg font-semibold text-slate-900">
               Payment outcome
@@ -635,11 +883,134 @@ export default function BoardPage() {
               Close
             </button>
           </div>
-        </div>
+        </Modal>
+      )}
+
+      {pendingDepositException && (
+        <Modal
+          onClose={() => setPendingDepositException(null)}
+          dirty={!!pendingDepositException.reason?.trim()}
+          saving={boardBusy}
+        >
+          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+            <h2 className="mb-2 text-lg font-semibold text-slate-900">
+              Deposit exception
+            </h2>
+            <p className="mb-4 text-sm text-slate-600">
+              The proposed payment of{" "}
+              <strong>${pendingDepositException.amount.toFixed(2)}</strong> is below the
+              required deposit for this order.
+            </p>
+
+            {pendingDepositException.error && (
+              <p className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                {pendingDepositException.error}
+              </p>
+            )}
+
+            {!pendingDepositException.requestId ? (
+              <div className="space-y-3">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Reason for exception
+                  </label>
+                  <textarea
+                    value={pendingDepositException.reason ?? ""}
+                    onChange={(e) =>
+                      setPendingDepositException((prev) =>
+                        prev ? { ...prev, reason: e.target.value } : null
+                      )
+                    }
+                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    rows={3}
+                    placeholder="Explain why this below-floor payment should be accepted"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={submitDepositException}
+                    disabled={!pendingDepositException.reason?.trim()}
+                    className="flex-1 rounded-md bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                  >
+                    Request approval
+                  </button>
+                  <button
+                    onClick={() => setPendingDepositException(null)}
+                    className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="rounded-md bg-slate-50 p-3 text-sm text-slate-700">
+                  Exception request submitted. An owner, admin, or manager must approve it in
+                  Settings &gt; Deposit Approvals before the payment can be recorded.
+                </p>
+                <button
+                  onClick={recordPaymentWithException}
+                  className="w-full rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
+                >
+                  Try recording payment now
+                </button>
+                <button
+                  onClick={() => setPendingDepositException(null)}
+                  className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Close
+                </button>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {pendingOverpayment && (
+        <Modal onClose={cancelOverpayment} saving={boardBusy}>
+          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+            <h2 className="mb-2 text-lg font-semibold text-slate-900">
+              Overpayment confirmation
+            </h2>
+            <p className="mb-4 text-sm text-slate-600">
+              This payment is <strong>${pendingOverpayment.credit.toFixed(2)}</strong> more
+              than the{" "}
+              <strong>${pendingOverpayment.remaining.toFixed(2)}</strong> owed. The customer
+              will have a{" "}
+              <strong>${pendingOverpayment.credit.toFixed(2)}</strong> credit on their
+              account. Continue?
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={confirmOverpayment}
+                className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
+              >
+                Record payment
+              </button>
+              <button
+                onClick={cancelOverpayment}
+                className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {showCalculator && calculatorCompanyId && (
+        <FinancingCalculator
+          companyId={calculatorCompanyId}
+          onClose={() => setShowCalculator(false)}
+        />
       )}
 
       {cancelJourneyState && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+        <Modal
+          onClose={() => setCancelJourneyState(null)}
+          dirty={!!cancelReason.trim()}
+          saving={boardBusy}
+        >
           <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
             <h2 className="mb-2 text-lg font-semibold text-slate-900">Cancel Journey</h2>
             <textarea
@@ -664,7 +1035,7 @@ export default function BoardPage() {
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </main>
   );
@@ -681,6 +1052,8 @@ const STATE_ACCENT: Record<SleepJourneyState, string> = {
   "Sleep Trial": "border-l-teal-300",
   Completed: "border-l-slate-300",
 };
+
+
 
 function formatHistoryEntry(e: JourneyEvent) {
   const data = e.event_data ?? {};
@@ -706,11 +1079,13 @@ function Column({
   state,
   journeys,
   unresolvedJourneyIds,
+  trialEvals,
   onSelect,
 }: {
   state: SleepJourneyState;
   journeys: JourneyWithDetails[];
   unresolvedJourneyIds: Set<string>;
+  trialEvals: Map<string, SleepTrialEvaluation[]>;
   onSelect: (j: JourneyWithDetails) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: state });
@@ -736,6 +1111,7 @@ function Column({
             key={j.id}
             journey={j}
             hasUnresolvedPayment={unresolvedJourneyIds.has(j.id)}
+            trialEvals={trialEvals.get(j.id) ?? []}
             onSelect={onSelect}
           />
         ))}
@@ -744,18 +1120,57 @@ function Column({
   );
 }
 
+// One status chip for the board card (spec 19.5) — same color rule as the
+// hero's status dot: gray pending, green eligible, amber approval/ending
+// soon, red blocked/expired.
+function TrialStatusChip({ trial }: { trial: SleepTrialEvaluation }) {
+  const status = trial.headline?.status ?? "UNKNOWN";
+  const tone = trialStatusTone(status, trial.display?.ending_soon);
+  const label =
+    status === "ELIGIBLE" && trial.display?.ending_soon
+      ? `Ends in ${trial.display.nights_remaining} day${
+          trial.display.nights_remaining === 1 ? "" : "s"
+        }`
+      : status === "ELIGIBLE"
+      ? "Eligible"
+      : status === "APPROVAL_REQUIRED"
+      ? "Needs approval"
+      : status === "BLOCKED"
+      ? "Blocked"
+      : status === "EXPIRED"
+      ? "Ended"
+      : status === "PENDING"
+      ? "Pending"
+      : status === "NOT_YET_ELIGIBLE"
+      ? "Not yet eligible"
+      : trialStatusLabel(trial);
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-px ${TRIAL_STATUS_CHIP[tone]}`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${TRIAL_STATUS_DOT[tone]}`} />
+      {label}
+    </span>
+  );
+}
+
 function JourneyCard({
   journey,
   hasUnresolvedPayment,
+  trialEvals,
   onSelect,
 }: {
   journey: JourneyWithDetails;
   hasUnresolvedPayment: boolean;
+  trialEvals: SleepTrialEvaluation[];
   onSelect: (j: JourneyWithDetails) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: journey.id,
   });
+  // Most urgent item + "+N more" for multi-mattress orders (spec 19.5).
+  const trial = useMemo(() => mostUrgentEvaluation(trialEvals), [trialEvals]);
+  const extraTrials = trialEvals.length - 1;
 
   const style = {
     transform: transform
@@ -791,6 +1206,17 @@ function JourneyCard({
           {journey.employee.name}
         </p>
       )}
+      {trial && (
+        <p className="flex items-center gap-1 text-[10px] font-medium text-teal-700">
+          {trial.display?.night != null
+            ? `Night ${trial.display.night} of ${trial.display.length_nights}`
+            : "Sleep trial"}
+          <TrialStatusChip trial={trial} />
+          {extraTrials > 0 && (
+            <span className="text-slate-500">+{extraTrials}</span>
+          )}
+        </p>
+      )}
       {hasUnresolvedPayment && (
         <p className="text-[10px] font-medium text-amber-600">Unresolved payment</p>
       )}
@@ -807,6 +1233,7 @@ function JourneyDetailPanel({
   reassignments,
   canReassign,
   canReconcile,
+  currentEmployee,
   onReassigned,
   onClose,
   onAction,
@@ -821,6 +1248,7 @@ function JourneyDetailPanel({
   reassignments: JourneyReassignmentEvent[];
   canReassign: boolean;
   canReconcile: boolean;
+  currentEmployee: Employee | null;
   onReassigned: (journeyId: string) => void | Promise<void>;
   onClose: () => void;
   onAction: (j: JourneyWithDetails, e: JourneyEventType) => void;
@@ -850,6 +1278,34 @@ function JourneyDetailPanel({
   const [reassignTarget, setReassignTarget] = useState("");
   const [reassignReason, setReassignReason] = useState("");
   const [reassignSaving, setReassignSaving] = useState(false);
+  const [fulfillmentSaving, setFulfillmentSaving] = useState(false);
+  const [editingAddress, setEditingAddress] = useState(false);
+  const [addressSaving, setAddressSaving] = useState(false);
+  const [address, setAddress] = useState({ street: "", line2: "", city: "", state: "", zip: "" });
+  const [lineAvailability, setLineAvailability] = useState<Record<string, number>>({});
+  const [customerContacts, setCustomerContacts] = useState<CustomerContact[]>([]);
+  const mismatchedRequested = useRef<Set<string>>(new Set());
+  // Bumped on every panel refresh so JourneyActivity refetches its
+  // interactions — journey.id alone doesn't change on refresh.
+  const [activityRefreshKey, setActivityRefreshKey] = useState(0);
+  // JourneyActivity reports whether an inline form (pin panel,
+  // schedule follow-up) has unsaved input or a save in flight.
+  const [activityState, setActivityState] = useState({
+    dirty: false,
+    saving: false,
+  });
+
+  async function handlePanelRefresh() {
+    await onRefresh();
+    setActivityRefreshKey((k) => k + 1);
+  }
+
+  const inventoryStoreId = useMemo(
+    () => resolveLineItemLocation({}, journey, stores),
+    [stores, journey.store_id, journey.fulfillment_type]
+  );
+  const hasDeliveryAddress =
+    (journey.customer?.street_address ?? "").trim() !== "";
 
   const storeOptions = stores.filter((s) => s.is_active && s.id !== journey.store_id);
   const employeeOptions = employees.filter(
@@ -866,6 +1322,62 @@ function JourneyDetailPanel({
     setReassignMode(null);
     setReassignTarget("");
     setReassignReason("");
+  }
+
+  async function submitFulfillmentChange(value: "delivery" | "pickup") {
+    if (value === "delivery" && !hasDeliveryAddress) {
+      window.alert("Add a customer street address before selecting Delivery.");
+      return;
+    }
+    if (value === journey.fulfillment_type) return;
+    const hasReservation = [
+      "Sold",
+      "Waiting for Inventory",
+      "Ready to Schedule",
+    ].includes(journey.current_state);
+    if (hasReservation && !window.confirm("Changing fulfillment will release and re-source inventory. Continue?")) {
+      return;
+    }
+    setFulfillmentSaving(true);
+    try {
+      await updateJourneyFulfillment(journey.id, value);
+      await handlePanelRefresh();
+    } catch (e: any) {
+      window.alert(e.message ?? "Failed to update fulfillment type");
+    } finally {
+      setFulfillmentSaving(false);
+    }
+  }
+
+  function openAddressEditor() {
+    setAddress({
+      street: journey.customer?.street_address ?? "",
+      line2: journey.customer?.street_address_line_2 ?? "",
+      city: journey.customer?.city ?? "",
+      state: journey.customer?.state ?? "",
+      zip: journey.customer?.zip_code ?? "",
+    });
+    setEditingAddress(true);
+  }
+
+  async function saveAddress() {
+    if (!journey.customer) return;
+    setAddressSaving(true);
+    try {
+      await updateCustomerAddress(journey.customer.id, {
+        street_address: address.street.trim() || null,
+        street_address_line_2: address.line2.trim() || null,
+        city: address.city.trim() || null,
+        state: address.state.trim() || null,
+        zip_code: address.zip.trim() || null,
+      });
+      setEditingAddress(false);
+      await handlePanelRefresh();
+    } catch (e: any) {
+      window.alert(e.message ?? "Failed to update customer address");
+    } finally {
+      setAddressSaving(false);
+    }
   }
 
   async function submitReassign() {
@@ -892,7 +1404,70 @@ function JourneyDetailPanel({
       setLineItems(items);
       setLineItemsLoading(false);
     });
+    if (journey.customer) {
+      fetchCustomerContacts(journey.customer.id).then(setCustomerContacts);
+    } else {
+      setCustomerContacts([]);
+    }
   }, [journey.id, events]);
+
+  useEffect(() => {
+    let ignore = false;
+
+    // Clear all current availability values synchronously so a location change
+    // never leaves the previous location's number visible during the fetch.
+    setLineAvailability((previous) => {
+      const next = { ...previous };
+      for (const item of lineItems) delete next[item.id];
+      return next;
+    });
+
+    Promise.all(
+      lineItems.map(async (item) => {
+        if (!item.product_id) return null;
+        const locationId = resolveLineItemLocation(item, journey, stores);
+        const map = await fetchProductStock([item.product_id], locationId);
+        return [item.id, map[item.product_id]?.ats ?? 0] as const;
+      })
+    ).then((values) => {
+      if (!ignore) setLineAvailability(Object.fromEntries(values.filter(Boolean) as [string, number][]));
+    });
+    return () => { ignore = true; };
+  }, [lineItems, journey.store_id, journey.fulfillment_type, inventoryStoreId]);
+
+  // Phase 7d-ii: auto-create transfer requests when a journey line item's
+  // fulfillment location doesn't have enough stock to satisfy the quantity.
+  useEffect(() => {
+    const supabase = createClient();
+    (async () => {
+      for (const item of lineItems) {
+        if (!item.product_id || !journey.id) continue;
+        const ats = lineAvailability[item.id] ?? 0;
+        const shortfall = item.quantity - ats;
+        if (shortfall <= 0) continue;
+        if (mismatchedRequested.current.has(item.id)) continue;
+
+        const locationId = resolveLineItemLocation(item, journey, stores);
+        mismatchedRequested.current.add(item.id);
+
+        try {
+          const { error } = await (supabase as any).rpc(
+            "create_journey_mismatch_transfer",
+            {
+              p_journey_id: journey.id,
+              p_variant_id: item.product_id,
+              p_quantity: shortfall,
+              p_fulfillment_location_id: locationId,
+            }
+          );
+          if (error) throw new Error(error.message);
+        } catch (err: any) {
+          console.error("create_journey_mismatch_transfer", err);
+          mismatchedRequested.current.delete(item.id);
+        }
+      }
+    })();
+  }, [lineAvailability, lineItems, journey.id, journey.store_id, journey.fulfillment_type, inventoryStoreId, stores]);
 
   async function addLineItem(selection: ProductSelection) {
     try {
@@ -904,16 +1479,24 @@ function JourneyDetailPanel({
         quantity: 1,
         unit_price: unitPrice,
       });
-      onRefresh();
+      handlePanelRefresh();
     } catch (e: any) {
       window.alert(e.message ?? "Failed to add item");
     }
   }
 
-  async function updateLineItem(id: string, updates: { quantity?: number; unit_price?: number }) {
+  async function updateLineItem(
+    id: string,
+    updates: {
+      quantity?: number;
+      unit_price?: number;
+      fulfillment_type_override?: "delivery" | "pickup" | null;
+      pickup_location_id?: string | null;
+    }
+  ) {
     try {
       await updateJourneyLineItem(id, updates);
-      onRefresh();
+      handlePanelRefresh();
     } catch (e: any) {
       window.alert(e.message ?? "Failed to update item");
     }
@@ -922,7 +1505,7 @@ function JourneyDetailPanel({
   async function removeLineItem(id: string) {
     try {
       await deleteJourneyLineItem(id);
-      onRefresh();
+      handlePanelRefresh();
     } catch (e: any) {
       window.alert(e.message ?? "Failed to remove item");
     }
@@ -933,7 +1516,7 @@ function JourneyDetailPanel({
   async function markFollowUpComplete(id: string) {
     try {
       await completeFollowUp(id);
-      onRefresh();
+      handlePanelRefresh();
     } catch (e: any) {
       window.alert(e.message ?? "Failed to complete follow-up");
     }
@@ -942,14 +1525,37 @@ function JourneyDetailPanel({
   async function handleReconcileEvent(paymentEventId: string, newOutcome: PaymentOutcome) {
     try {
       await reconcilePayment(paymentEventId, newOutcome);
-      onRefresh();
+      handlePanelRefresh();
     } catch (e: any) {
       window.alert(e.message ?? "Reconciliation failed");
     }
   }
 
+  const addressDirty =
+    address.street !== (journey.customer?.street_address ?? "") ||
+    address.line2 !== (journey.customer?.street_address_line_2 ?? "") ||
+    address.city !== (journey.customer?.city ?? "") ||
+    address.state !== (journey.customer?.state ?? "") ||
+    address.zip !== (journey.customer?.zip_code ?? "");
+
+  const panelDirty =
+    (reassignMode !== null &&
+      (reassignTarget !== "" || reassignReason.trim() !== "")) ||
+    (editingAddress && addressDirty) ||
+    activityState.dirty;
+  const panelSaving =
+    reassignSaving ||
+    fulfillmentSaving ||
+    addressSaving ||
+    activityState.saving;
+
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-slate-900/50 p-0">
+    <Modal
+      onClose={onClose}
+      overlayClassName="fixed inset-0 z-40 flex justify-end bg-slate-900/50 p-0"
+      dirty={panelDirty}
+      saving={panelSaving}
+    >
       <div className="w-full max-w-md overflow-y-auto border-l border-slate-200 bg-white p-6 shadow-lg">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900">Journey Details</h2>
@@ -968,6 +1574,47 @@ function JourneyDetailPanel({
               {journey.current_state}
             </span>
           </div>
+
+          {(journey.delivered_at || journey.current_state === "Sleep Trial") && (
+            <SleepTrialSection
+              journey={journey}
+              currentEmployee={currentEmployee}
+              canModerate={canReconcile}
+              onChanged={handlePanelRefresh}
+            />
+          )}
+
+          {journey.inventory_ready_notified_at && (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">
+              Inventory ready
+            </div>
+          )}
+
+          {canReassign && (
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500">Fulfillment</span>
+              <select
+                value={journey.fulfillment_type}
+                disabled={fulfillmentSaving}
+                onChange={(e) =>
+                  submitFulfillmentChange(e.target.value as "delivery" | "pickup")
+                }
+                className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700"
+              >
+                <option value="delivery" disabled={!hasDeliveryAddress}>Delivery</option>
+                <option value="pickup">Pickup</option>
+              </select>
+            </div>
+          )}
+
+          {!canReassign && (
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500">Fulfillment</span>
+              <span className="text-slate-700">
+                {journey.fulfillment_type === "pickup" ? "Pickup" : "Delivery"}
+              </span>
+            </div>
+          )}
 
           {journey.price !== null && (
             <div className="flex items-center justify-between">
@@ -1013,6 +1660,37 @@ function JourneyDetailPanel({
             <span className="text-slate-700">{journey.customer?.email ?? "—"}</span>
           </div>
 
+          {customerContacts.length > 0 && (
+            <div className="flex items-start justify-between gap-3">
+              <span className="text-slate-500">Contacts</span>
+              <div className="text-right text-slate-700">
+                {customerContacts.map((c) => (
+                  <div key={c.id} className="text-sm">
+                    {c.name}
+                    {c.role_label ? ` — ${c.role_label}` : ""}
+                    {c.phone ? ` · ${c.phone}` : ""}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+            <div className="flex items-start justify-between gap-3">
+            <span className="text-slate-500">Delivery address</span>
+            <div className="text-right text-slate-700">
+              <div>
+                {[journey.customer?.street_address, journey.customer?.street_address_line_2, journey.customer?.city, journey.customer?.state, journey.customer?.zip_code]
+                  .filter(Boolean)
+                  .join(", ") || "No address on file"}
+              </div>
+              {journey.customer && (
+                <button onClick={openAddressEditor} className="mt-1 text-xs text-brand-600 hover:text-brand-700">
+                  Edit address
+                </button>
+              )}
+            </div>
+          </div>
+
           <div className="border-t border-slate-200 pt-3">
             <div className="mb-2 flex items-center justify-between">
               <span className="text-slate-500">Line Items</span>
@@ -1036,7 +1714,37 @@ function JourneyDetailPanel({
                     key={item.id}
                     className="grid grid-cols-12 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-2 text-xs"
                   >
-                    <div className="col-span-5 truncate text-slate-900">{item.item_name}</div>
+                    <div className="col-span-5 min-w-0 text-slate-900">
+                      <div className="truncate">{item.item_name}</div>
+                      {canReassign && (
+                        <>
+                          <select
+                            value={item.fulfillment_type_override ?? "inherit"}
+                            onChange={(e) => updateLineItem(item.id, {
+                              fulfillment_type_override: e.target.value === "inherit" ? null : e.target.value as "delivery" | "pickup",
+                              pickup_location_id: e.target.value === "pickup" ? item.pickup_location_id ?? journey.store_id : null,
+                            })}
+                            className="mt-1 w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs"
+                          >
+                            <option value="inherit">Inherit Journey ({journey.fulfillment_type})</option>
+                            <option value="delivery" disabled={!hasDeliveryAddress}>Delivery</option>
+                            <option value="pickup">Pickup</option>
+                          </select>
+                          {(item.fulfillment_type_override ?? journey.fulfillment_type) === "pickup" && (
+                            <select
+                              value={item.pickup_location_id ?? journey.store_id}
+                              onChange={(e) => updateLineItem(item.id, { pickup_location_id: e.target.value })}
+                              className="mt-1 w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs"
+                            >
+                              {stores.filter((s) => s.location_type !== "WAREHOUSE_QUARANTINE").map((s) => (
+                                <option key={s.id} value={s.id}>{s.name}</option>
+                              ))}
+                            </select>
+                          )}
+                        </>
+                      )}
+                      {item.product_id && <div className="mt-1 text-xs text-slate-500">Availability: {lineAvailability[item.id] ?? "Loading…"}</div>}
+                    </div>
                     <div className="col-span-2">
                       <input
                         type="number"
@@ -1078,7 +1786,7 @@ function JourneyDetailPanel({
             )}
 
             <div className="mt-3">
-              <ProductPicker storeId={journey.store_id} onSelect={addLineItem} />
+              <ProductPicker storeId={inventoryStoreId} onSelect={addLineItem} />
             </div>
           </div>
 
@@ -1171,6 +1879,9 @@ function JourneyDetailPanel({
             <p className="mt-1 text-sm text-slate-800">{nextFollowUp.notes}</p>
             <p className="text-xs text-slate-500">
               Due {new Date(nextFollowUp.due_at).toLocaleString()}
+              {nextFollowUp.method
+                ? ` · ${FOLLOW_UP_METHOD_LABELS[nextFollowUp.method] ?? nextFollowUp.method}`
+                : ""}
             </p>
             <button
               onClick={() => markFollowUpComplete(nextFollowUp.id)}
@@ -1205,32 +1916,6 @@ function JourneyDetailPanel({
         </div>
 
         <div className="mt-6">
-          <h3 className="mb-2 text-sm font-semibold text-slate-900">Follow-up history</h3>
-          <div className="space-y-2">
-            {followUps.length === 0 && (
-              <p className="text-sm text-slate-500">No follow-ups.</p>
-            )}
-            {followUps.map((f) => (
-              <div
-                key={f.id}
-                className={`rounded-md border p-2 text-sm ${
-                  f.completed_at
-                    ? "border-slate-200 bg-slate-50 text-slate-500"
-                    : "border-amber-200 bg-amber-50 text-slate-800"
-                }`}
-              >
-                <p className="font-medium capitalize">{f.type}</p>
-                <p className="text-xs">{f.notes}</p>
-                <p className="text-xs">Due {new Date(f.due_at).toLocaleString()}</p>
-                {f.completed_at && (
-                  <p className="text-xs">Completed {new Date(f.completed_at).toLocaleString()}</p>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="mt-6">
           <h3 className="mb-2 text-sm font-semibold text-slate-900">Reassignment history</h3>
           <div className="space-y-2">
             {reassignments.length === 0 && (
@@ -1256,45 +1941,71 @@ function JourneyDetailPanel({
           </div>
         </div>
 
-        <div className="mt-6">
-          <h3 className="mb-2 text-sm font-semibold text-slate-900">History</h3>
-          <div className="space-y-2">
-            {events.map((e) => {
-              const entry = formatHistoryEntry(e);
-              return (
-                <div
-                  key={e.id}
-                  className="rounded-md border border-slate-200 bg-slate-50 p-2 text-sm"
-                >
-                  <p className="font-medium text-slate-700">{entry.title}</p>
-                  {entry.detail && (
-                    <p className="text-xs text-slate-500">{entry.detail}</p>
-                  )}
-                  <p className="text-xs text-slate-400">
-                    {new Date(e.created_at).toLocaleString()} by {e.triggered_by === "system" ? "System" : "User"}
-                  </p>
-                  {e.outcome === "UNKNOWN" && canReconcile && (
-                    <div className="mt-2 flex gap-2">
-                      <button
-                        onClick={() => handleReconcileEvent(e.id, "SUCCEEDED")}
-                        className="rounded bg-green-600 px-2 py-1 text-xs font-medium text-white hover:bg-green-700"
-                      >
-                        Mark succeeded
-                      </button>
-                      <button
-                        onClick={() => handleReconcileEvent(e.id, "FAILED")}
-                        className="rounded bg-red-600 px-2 py-1 text-xs font-medium text-white hover:bg-red-700"
-                      >
-                        Mark failed
-                      </button>
-                    </div>
-                  )}
-              </div>
-            );
-            })}
+        <JourneyActivity
+          journey={journey}
+          events={events}
+          followUps={followUps}
+          currentEmployee={currentEmployee}
+          canModerate={canReconcile}
+          onChanged={handlePanelRefresh}
+          refreshKey={activityRefreshKey}
+          onDirtyChange={setActivityState}
+        />
+
+        {events.some((e) => e.outcome === "UNKNOWN") && canReconcile && (
+          <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3">
+            <h3 className="text-xs font-semibold uppercase text-amber-700">
+              Unresolved payments
+            </h3>
+            {events
+              .filter((e) => e.outcome === "UNKNOWN")
+              .map((e) => (
+                <div key={e.id} className="mt-2 flex items-center justify-between gap-2 text-sm">
+                  <span className="text-slate-700">{formatHistoryEntry(e).title}</span>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleReconcileEvent(e.id, "SUCCEEDED")}
+                      className="rounded bg-green-600 px-2 py-1 text-xs font-medium text-white hover:bg-green-700"
+                    >
+                      Mark succeeded
+                    </button>
+                    <button
+                      onClick={() => handleReconcileEvent(e.id, "FAILED")}
+                      className="rounded bg-red-600 px-2 py-1 text-xs font-medium text-white hover:bg-red-700"
+                    >
+                      Mark failed
+                    </button>
+                  </div>
+                </div>
+              ))}
           </div>
-        </div>
+        )}
+
+        {editingAddress && journey.customer && (
+          <Modal
+            onClose={() => setEditingAddress(false)}
+            dirty={addressDirty}
+            saving={addressSaving}
+          >
+            <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+              <h2 className="mb-4 text-lg font-semibold text-slate-900">Edit customer address</h2>
+              <div className="space-y-3">
+                <input value={address.street} onChange={(e) => setAddress((a) => ({ ...a, street: e.target.value }))} placeholder="Street address" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
+                <input value={address.line2} onChange={(e) => setAddress((a) => ({ ...a, line2: e.target.value }))} placeholder="Address Line 2 (optional)" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
+                <div className="grid grid-cols-3 gap-2">
+                  <input value={address.city} onChange={(e) => setAddress((a) => ({ ...a, city: e.target.value }))} placeholder="City" className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
+                  <input value={address.state} onChange={(e) => setAddress((a) => ({ ...a, state: e.target.value }))} placeholder="State" className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
+                  <input value={address.zip} onChange={(e) => setAddress((a) => ({ ...a, zip: e.target.value }))} placeholder="ZIP" className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
+                </div>
+                <div className="flex gap-2 pt-2">
+                  <button onClick={saveAddress} disabled={addressSaving} className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50">{addressSaving ? "Saving…" : "Save"}</button>
+                  <button onClick={() => setEditingAddress(false)} className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700">Cancel</button>
+                </div>
+              </div>
+            </div>
+          </Modal>
+        )}
       </div>
-    </div>
+    </Modal>
   );
 }

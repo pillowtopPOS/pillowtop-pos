@@ -5,8 +5,6 @@ export type JourneyEventType =
   | "quote_sent"
   | "deposit_received"
   | "payment_completed"
-  | "inventory_required"
-  | "inventory_received"
   | "delivery_scheduled"
   | "delivery_completed"
   | "trial_completed"
@@ -18,6 +16,7 @@ export type RequiredField = {
   type: "text" | "number" | "date" | "datetime-local" | "select";
   options?: string[];
   optional?: boolean;
+  defaultToday?: boolean;
 };
 
 export type StateTransition = {
@@ -54,37 +53,10 @@ export const STATE_TRANSITIONS: Record<SleepJourneyState, StateTransition[]> = {
         },
       ],
     },
-    {
-      to: "Waiting for Inventory",
-      event: "inventory_required",
-      label: "Need Inventory",
-    },
-    {
-      to: "Ready to Schedule",
-      event: "inventory_received",
-      label: "Mark Inventory Received",
-    },
   ],
   "Deposit Made": [],
-  Sold: [
-    {
-      to: "Waiting for Inventory",
-      event: "inventory_required",
-      label: "Need Inventory",
-    },
-    {
-      to: "Ready to Schedule",
-      event: "inventory_received",
-      label: "Mark Inventory Received",
-    },
-  ],
-  "Waiting for Inventory": [
-    {
-      to: "Ready to Schedule",
-      event: "inventory_received",
-      label: "Mark Inventory Received",
-    },
-  ],
+  Sold: [],
+  "Waiting for Inventory": [],
   "Ready to Schedule": [
     {
       to: "Scheduled",
@@ -100,6 +72,14 @@ export const STATE_TRANSITIONS: Record<SleepJourneyState, StateTransition[]> = {
       to: "Sleep Trial",
       event: "delivery_completed",
       label: "Mark Delivered",
+      requiredFields: [
+        {
+          name: "delivered_at",
+          label: "Delivery date",
+          type: "date",
+          defaultToday: true,
+        },
+      ],
     },
   ],
   "Sleep Trial": [

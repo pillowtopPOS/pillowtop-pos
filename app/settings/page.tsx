@@ -47,6 +47,56 @@ export default async function SettingsPage() {
               Manage employees, roles, and permissions.
             </p>
           </Link>
+
+          <Link
+            href="/settings/deposit-policy"
+            className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm transition hover:border-brand-500 hover:bg-brand-50"
+          >
+            <h2 className="text-lg font-semibold text-slate-900">Deposit Policy</h2>
+            <p className="mt-2 text-sm text-slate-500">
+              Configure required deposits by company.
+            </p>
+          </Link>
+
+          <Link
+            href="/settings/deposit-approvals"
+            className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm transition hover:border-brand-500 hover:bg-brand-50"
+          >
+            <h2 className="text-lg font-semibold text-slate-900">Deposit Approvals</h2>
+            <p className="mt-2 text-sm text-slate-500">
+              Review and approve below-floor payment requests.
+            </p>
+          </Link>
+
+          <Link
+            href="/settings/company"
+            className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm transition hover:border-brand-500 hover:bg-brand-50"
+          >
+            <h2 className="text-lg font-semibold text-slate-900">Company Settings</h2>
+            <p className="mt-2 text-sm text-slate-500">
+              Configure company-wide inventory and manager permissions.
+            </p>
+          </Link>
+
+          <Link
+            href="/settings/sleep-trial"
+            className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm transition hover:border-brand-500 hover:bg-brand-50"
+          >
+            <h2 className="text-lg font-semibold text-slate-900">Sleep Trial</h2>
+            <p className="mt-2 text-sm text-slate-500">
+              Sleep trial policy, approvals, and exceptions.
+            </p>
+          </Link>
+
+          <Link
+            href="/settings/financing"
+            className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm transition hover:border-brand-500 hover:bg-brand-50"
+          >
+            <h2 className="text-lg font-semibold text-slate-900">Financing &amp; Accessories</h2>
+            <p className="mt-2 text-sm text-slate-500">
+              Configure financing tiers, accessory suggestions, and bundles.
+            </p>
+          </Link>
         </div>
       </div>
     </main>

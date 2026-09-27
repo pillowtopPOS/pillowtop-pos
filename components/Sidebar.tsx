@@ -53,7 +53,9 @@ export default function Sidebar({
     );
   }
 
-  const hide = HIDDEN_PATHS.includes(pathname);
+  // Print routes render bare — no sidebar/chrome in the print output.
+  const hide =
+    HIDDEN_PATHS.includes(pathname) || pathname.endsWith("/print");
 
   useEffect(() => {
     if (hide) {
@@ -64,11 +66,19 @@ export default function Sidebar({
     setLoading(true);
 
     const supabase = createClient();
+    let cronInterval: ReturnType<typeof setInterval> | null = null;
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session?.user || !isStoreConfirmedToday(session.user)) {
         router.push(storeSelectUrl(pathname ?? "/board"));
         return;
       }
+
+      // Poll the shared cron endpoint from any logged-in page, not just the
+      // Board — the daily jobs stay alive as long as anyone is signed in.
+      fetch("/api/cron").catch(console.error);
+      cronInterval = setInterval(() => {
+        fetch("/api/cron").catch(console.error);
+      }, 60000);
 
       setActiveStoreId(session.user.user_metadata?.active_store_id ?? null);
       Promise.all([fetchCurrentEmployee(), fetchStores()]).then(([e, s]) => {
@@ -77,6 +87,10 @@ export default function Sidebar({
         setLoading(false);
       });
     });
+
+    return () => {
+      if (cronInterval) clearInterval(cronInterval);
+    };
   }, [hide, router]);
 
   if (hide) {
@@ -95,9 +109,9 @@ export default function Sidebar({
   const isAdmin = employee?.role === "owner" || employee?.role === "admin";
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex h-screen overflow-hidden">
       <aside
-        className={`flex flex-col border-r border-slate-200 bg-white transition-all duration-200 ${
+        className={`flex h-full shrink-0 flex-col border-r border-slate-200 bg-white transition-all duration-200 ${
           collapsed ? "w-16" : "w-56"
         }`}
       >
@@ -120,7 +134,7 @@ export default function Sidebar({
           </button>
         </div>
 
-        <nav className="flex-1 space-y-1 p-2">
+        <nav className="flex-1 space-y-1 overflow-y-auto p-2">
           {[...NAV, ...(isAdmin ? [{ href: "/settings", label: "Settings", icon: SettingsIcon }] : [])].map((item) => {
             const Icon = item.icon;
             const isActive =
@@ -159,6 +173,11 @@ export default function Sidebar({
               <p className="text-sm font-medium text-slate-800">
                 {activeStore?.name ?? (loading ? "Loading…" : "—")}
               </p>
+              {employee && (
+                <p className="text-xs text-slate-500">
+                  Logged in as: {employee.name}
+                </p>
+              )}
               <Link
                 href="/store-select"
                 className="text-xs text-brand-600 hover:text-brand-700"
@@ -170,7 +189,7 @@ export default function Sidebar({
         </div>
       </aside>
 
-      <div className="flex-1 overflow-auto bg-slate-50">
+      <div className="min-w-0 flex-1 overflow-y-auto bg-slate-50">
         <CelebrationBanner />
         {children}
       </div>
