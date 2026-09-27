@@ -17,6 +17,16 @@
   line: "Dev server restarted and verified" or "Dev server hot-reloaded,
   verified."
 
+## Git
+
+- Commit and push to GitHub as part of finishing any migration or frontend
+  change — not just at the end of a phase. "Done" means committed and
+  pushed, same as it means typecheck clean and dev server verified.
+- If a push ever fails (auth, network, rejected remote), flag it to Zach
+  immediately instead of continuing to work locally. Two months of work
+  was once stranded locally because an expired token made pushes fail
+  silently — visibility into failures is the point.
+
 ## Database
 
 - Never run database migrations. Zach runs them in the Supabase SQL editor
