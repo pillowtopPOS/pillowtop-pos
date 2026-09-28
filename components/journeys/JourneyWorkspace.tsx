@@ -52,13 +52,20 @@ import SleepTrialSection from "@/components/SleepTrialSection";
 const INVENTORY_READY_STATES = new Set(["Ready to Schedule"]);
 
 // A scheduled follow-up is a real next step even when it has no notes —
-// fall back to its type ("Quote follow-up", "Follow-up", …) rather than
-// rendering nothing.
+// the detail card shows notes when present and falls back to the type
+// label ("Quote follow-up", "Follow-up", …).
 function followUpLabel(f: FollowUp): string {
   const notes = f.notes?.trim();
   if (notes) return notes;
   const type = FOLLOW_UP_TYPE_LABELS[f.type] ?? "Follow-up";
   return f.type === "interaction" ? type : `${type} follow-up`;
+}
+
+// The summary bar is a glance, not a transcript — never raw notes.
+// "Follow-up: Call" (method only); "Follow-up" when no method is set.
+function followUpCompactLabel(f: FollowUp): string {
+  const method = f.method ? FOLLOW_UP_METHOD_LABELS[f.method] ?? f.method : null;
+  return method ? `Follow-up: ${method}` : "Follow-up";
 }
 
 function formatHistoryEntry(e: JourneyEvent) {
@@ -153,7 +160,7 @@ function JourneyStateSummaryBar({
   // surfacing "Complete Trial" here would recommend ending a trial early
   // as the default next step on any night with no follow-up scheduled.
   const nextAction = nextFollowUp
-    ? followUpLabel(nextFollowUp)
+    ? followUpCompactLabel(nextFollowUp)
     : transitions.find((t) => t.event !== "trial_completed")?.label || null;
   return (
     <div className="mt-3 grid grid-cols-3 divide-x divide-slate-200 rounded-md border border-slate-200 bg-slate-50">
