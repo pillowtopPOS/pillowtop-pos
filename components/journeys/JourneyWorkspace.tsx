@@ -768,7 +768,7 @@ export default function JourneyWorkspace({
 
             <RailCard title="Fulfillment">
               <RailRow label="Type">
-                {canReassign ? (
+                {canReassign && !orderLocked ? (
                   <select
                     value={journey.fulfillment_type}
                     disabled={fulfillmentSaving}
