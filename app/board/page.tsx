@@ -1209,7 +1209,11 @@ function JourneyCard({
       {trial && (
         <p className="flex items-center gap-1 text-[10px] font-medium text-teal-700">
           {trial.display?.night != null
-            ? `Night ${trial.display.night} of ${trial.display.length_nights}`
+            ? `Night ${trial.display.night} of ${trial.display.length_nights}${
+                (trial.display.extension_nights ?? 0) > 0
+                  ? ` +${trial.display.extension_nights} ext`
+                  : ""
+              }`
             : "Sleep trial"}
           <TrialStatusChip trial={trial} />
           {extraTrials > 0 && (
