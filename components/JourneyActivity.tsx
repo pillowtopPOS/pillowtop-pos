@@ -111,6 +111,7 @@ function formatEventTitle(e: JourneyEvent): string {
   }
   switch (e.event_type) {
     case "quote_created":
+      return "Quote created";
     case "quote_sent":
       return "Quote sent";
     case "delivery_scheduled":
@@ -130,16 +131,19 @@ function formatEventTitle(e: JourneyEvent): string {
   }
 }
 
+// Detail lines are whitelisted per event type — a type without an explicit
+// formatter renders no detail at all. Raw event_data JSON must never be
+// visible to an employee.
 function eventDetail(e: JourneyEvent): string | undefined {
   const data = e.event_data ?? {};
-  if (
-    e.event_type === "deposit_received" ||
-    e.event_type === "payment_completed" ||
-    Object.keys(data).length === 0
-  ) {
-    return undefined;
+  switch (e.event_type) {
+    case "delivery_completed":
+      return data.delivered_at
+        ? `Delivered ${new Date(`${String(data.delivered_at)}T00:00:00`).toLocaleDateString()}`
+        : undefined;
+    default:
+      return undefined;
   }
-  return JSON.stringify(data);
 }
 
 // A pin is live only while important, not entered in error, and either
