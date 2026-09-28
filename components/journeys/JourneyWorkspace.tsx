@@ -134,9 +134,16 @@ function JourneyStateSummaryBar({
   journey: JourneyWithDetails;
   nextFollowUp: FollowUp | undefined;
   attention: string | null;
-  transitions: { label: string }[];
+  transitions: { label: string; event: JourneyEventType }[];
 }) {
-  const nextAction = nextFollowUp?.notes?.trim() || transitions[0]?.label || null;
+  // trial_completed is excluded from the transition-label fallback on
+  // purpose: the Sleep Trial → Completed transition is ungated, so
+  // surfacing "Complete Trial" here would recommend ending a trial early
+  // as the default next step on any night with no follow-up scheduled.
+  const nextAction =
+    nextFollowUp?.notes?.trim() ||
+    transitions.find((t) => t.event !== "trial_completed")?.label ||
+    null;
   return (
     <div className="mt-3 grid grid-cols-3 divide-x divide-slate-200 rounded-md border border-slate-200 bg-slate-50">
       <SummaryCell label="Current State">
