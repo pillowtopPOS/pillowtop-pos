@@ -17,6 +17,7 @@ import {
   updateJourneyFulfillment,
   updateJourneyLineItem,
   FOLLOW_UP_METHOD_LABELS,
+  FOLLOW_UP_TYPE_LABELS,
   type Employee,
   type FollowUp,
   type JourneyEvent,
@@ -44,10 +45,21 @@ import JourneyActivity from "@/components/JourneyActivity";
 import SleepTrialSection from "@/components/SleepTrialSection";
 
 // The inventory-ready flag is a one-time notification marker, not a live
-// status — it only surfaces as a banner while the journey is actually
-// waiting on inventory or ready to schedule. In any later state it's
-// history, not a status.
-const INVENTORY_READY_STATES = new Set(["Waiting for Inventory", "Ready to Schedule"]);
+// status. It only surfaces while the journey is Ready to Schedule — a
+// journey that dropped back to Waiting for Inventory has items that
+// aren't ready, so the banner would be a false positive there, and in
+// any later state the flag is history, not status.
+const INVENTORY_READY_STATES = new Set(["Ready to Schedule"]);
+
+// A scheduled follow-up is a real next step even when it has no notes —
+// fall back to its type ("Quote follow-up", "Follow-up", …) rather than
+// rendering nothing.
+function followUpLabel(f: FollowUp): string {
+  const notes = f.notes?.trim();
+  if (notes) return notes;
+  const type = FOLLOW_UP_TYPE_LABELS[f.type] ?? "Follow-up";
+  return f.type === "interaction" ? type : `${type} follow-up`;
+}
 
 function formatHistoryEntry(e: JourneyEvent) {
   const data = e.event_data ?? {};
@@ -140,10 +152,9 @@ function JourneyStateSummaryBar({
   // purpose: the Sleep Trial → Completed transition is ungated, so
   // surfacing "Complete Trial" here would recommend ending a trial early
   // as the default next step on any night with no follow-up scheduled.
-  const nextAction =
-    nextFollowUp?.notes?.trim() ||
-    transitions.find((t) => t.event !== "trial_completed")?.label ||
-    null;
+  const nextAction = nextFollowUp
+    ? followUpLabel(nextFollowUp)
+    : transitions.find((t) => t.event !== "trial_completed")?.label || null;
   return (
     <div className="mt-3 grid grid-cols-3 divide-x divide-slate-200 rounded-md border border-slate-200 bg-slate-50">
       <SummaryCell label="Current State">
@@ -596,7 +607,7 @@ export default function JourneyWorkspace({
             {nextFollowUp && (
               <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3">
                 <h3 className="text-xs font-semibold uppercase text-amber-700">Next recommended action</h3>
-                <p className="mt-1 text-sm text-slate-800">{nextFollowUp.notes}</p>
+                <p className="mt-1 text-sm text-slate-800">{followUpLabel(nextFollowUp)}</p>
                 <p className="text-xs text-slate-500">
                   Due {new Date(nextFollowUp.due_at).toLocaleString()}
                   {nextFollowUp.method

@@ -29,7 +29,10 @@ import {
   type WaitingOn,
 } from "@/lib/journeys/interactions";
 import { localTodayISO } from "@/lib/dates";
-import { FOLLOW_UP_METHOD_LABELS } from "@/lib/journeys/queries";
+import {
+  FOLLOW_UP_METHOD_LABELS,
+  FOLLOW_UP_TYPE_LABELS,
+} from "@/lib/journeys/queries";
 import Modal from "@/components/Modal";
 import type {
   Employee,
@@ -94,13 +97,6 @@ function interactionCategory(i: JourneyInteraction): FeedFilter {
   return i.is_internal ? "notes" : "interactions";
 }
 
-const FOLLOW_UP_TYPE_LABELS: Record<string, string> = {
-  quote: "Quote",
-  deposit: "Deposit",
-  interaction: "Follow-up",
-  sleep_concern: "Sleep Concern",
-};
-
 function formatEventTitle(e: JourneyEvent): string {
   const data = e.event_data ?? {};
   if (e.event_type === "deposit_received" || e.event_type === "payment_completed") {
@@ -126,6 +122,12 @@ function formatEventTitle(e: JourneyEvent): string {
       return "Sleep trial completed";
     case "journey_cancelled":
       return `Journey cancelled${data.reason ? ` — ${data.reason}` : ""}`;
+    case "line_item_added":
+      return `Item added to order${data.item_name ? `: ${data.item_name}` : ""}`;
+    case "line_item_updated":
+      return `Item updated${data.item_name ? `: ${data.item_name}` : ""}`;
+    case "line_item_removed":
+      return `Item removed from order${data.item_name ? `: ${data.item_name}` : ""}`;
     default:
       return e.event_type;
   }
@@ -141,6 +143,18 @@ function eventDetail(e: JourneyEvent): string | undefined {
       return data.delivered_at
         ? `Delivered ${new Date(`${String(data.delivered_at)}T00:00:00`).toLocaleDateString()}`
         : undefined;
+    case "line_item_added":
+    case "line_item_updated":
+    case "line_item_removed": {
+      const qty = typeof data.quantity === "number" ? data.quantity : null;
+      const price =
+        typeof data.unit_price === "number" ? `$${data.unit_price.toFixed(2)}` : null;
+      const parts = [
+        qty !== null ? `Qty ${qty}` : null,
+        price !== null ? `${price} each` : null,
+      ].filter(Boolean);
+      return parts.length > 0 ? parts.join(" · ") : undefined;
+    }
     default:
       return undefined;
   }

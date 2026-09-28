@@ -96,6 +96,13 @@ export const FOLLOW_UP_METHOD_LABELS: Record<string, string> = {
   in_person: "In person",
 };
 
+export const FOLLOW_UP_TYPE_LABELS: Record<string, string> = {
+  quote: "Quote",
+  deposit: "Deposit",
+  interaction: "Follow-up",
+  sleep_concern: "Sleep Concern",
+};
+
 export type JourneyLineItem = {
   id: string;
   journey_id: string;
