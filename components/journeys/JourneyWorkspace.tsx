@@ -520,6 +520,12 @@ export default function JourneyWorkspace({
 
   const lineTotal = lineItems.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
 
+  // Once delivered, the order is historical fact — line items can't be
+  // edited in place; the correct path is the Start Exchange flow.
+  const orderLocked =
+    Boolean(journey.delivered_at) ||
+    ["Sleep Trial", "Completed"].includes(journey.current_state);
+
   async function markFollowUpComplete(id: string) {
     try {
       await completeFollowUp(id);
@@ -810,7 +816,7 @@ export default function JourneyWorkspace({
                     >
                       <div className="col-span-5 min-w-0 text-slate-900">
                         <div className="truncate">{item.item_name}</div>
-                        {canReassign && (
+                        {canReassign && !orderLocked && (
                           <>
                             <select
                               value={item.fulfillment_type_override ?? "inherit"}
@@ -839,49 +845,67 @@ export default function JourneyWorkspace({
                         )}
                         {item.product_id && <div className="mt-1 text-xs text-slate-500">Availability: {lineAvailability[item.id] ?? "Loading…"}</div>}
                       </div>
-                      <div className="col-span-2">
-                        <input
-                          type="number"
-                          min={1}
-                          defaultValue={item.quantity}
-                          onBlur={(e) =>
-                            updateLineItem(item.id, { quantity: Math.max(1, parseInt(e.target.value) || 1) })
-                          }
-                          className="w-full rounded-md border border-slate-300 px-1 py-1 text-center text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                        />
-                      </div>
-                      <div className="col-span-3">
-                        <input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          defaultValue={item.unit_price.toFixed(2)}
-                          onBlur={(e) =>
-                            updateLineItem(item.id, { unit_price: parseFloat(e.target.value) || 0 })
-                          }
-                          className="w-full rounded-md border border-slate-300 px-1 py-1 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                        />
-                      </div>
+                      {orderLocked ? (
+                        <div className="col-span-5 text-slate-600">
+                          {item.quantity} × ${item.unit_price.toFixed(2)}
+                        </div>
+                      ) : (
+                        <>
+                          <div className="col-span-2">
+                            <input
+                              type="number"
+                              min={1}
+                              defaultValue={item.quantity}
+                              onBlur={(e) =>
+                                updateLineItem(item.id, { quantity: Math.max(1, parseInt(e.target.value) || 1) })
+                              }
+                              className="w-full rounded-md border border-slate-300 px-1 py-1 text-center text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                            />
+                          </div>
+                          <div className="col-span-3">
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              defaultValue={item.unit_price.toFixed(2)}
+                              onBlur={(e) =>
+                                updateLineItem(item.id, { unit_price: parseFloat(e.target.value) || 0 })
+                              }
+                              className="w-full rounded-md border border-slate-300 px-1 py-1 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                            />
+                          </div>
+                        </>
+                      )}
                       <div className="col-span-1 text-right text-slate-600">
                         ${(item.quantity * item.unit_price).toFixed(2)}
                       </div>
                       <div className="col-span-1 flex justify-end">
-                        <button
-                          onClick={() => removeLineItem(item.id)}
-                          className="rounded p-1 text-slate-400 hover:bg-red-100 hover:text-red-600"
-                          aria-label="Remove"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
+                        {!orderLocked && (
+                          <button
+                            onClick={() => removeLineItem(item.id)}
+                            className="rounded p-1 text-slate-400 hover:bg-red-100 hover:text-red-600"
+                            aria-label="Remove"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
                 </div>
               )}
 
-              <div className="mt-3">
-                <ProductPicker storeId={inventoryStoreId} onSelect={addLineItem} />
-              </div>
+              {orderLocked && lineItems.length > 0 && (
+                <p className="mt-2 text-xs text-slate-500">
+                  Delivered — use Start Exchange to change items.
+                </p>
+              )}
+
+              {!orderLocked && (
+                <div className="mt-3">
+                  <ProductPicker storeId={inventoryStoreId} onSelect={addLineItem} />
+                </div>
+              )}
             </RailCard>
 
             <RailCard title="Ownership">
