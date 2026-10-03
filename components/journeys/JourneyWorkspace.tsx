@@ -812,10 +812,10 @@ export default function JourneyWorkspace({
                   {lineItems.map((item) => (
                     <div
                       key={item.id}
-                      className="grid grid-cols-12 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-2 text-xs"
+                      className="grid grid-cols-[minmax(0,1fr)_2.75rem_4.5rem_4rem_1.5rem] items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-2 text-xs"
                     >
-                      <div className="col-span-5 min-w-0 text-slate-900">
-                        <div className="truncate">{item.item_name}</div>
+                      <div className="min-w-0 text-slate-900">
+                        <div className="break-words leading-snug">{item.item_name}</div>
                         {canReassign && !orderLocked && (
                           <>
                             <select
@@ -846,12 +846,12 @@ export default function JourneyWorkspace({
                         {item.product_id && <div className="mt-1 text-xs text-slate-500">Availability: {lineAvailability[item.id] ?? "Loading…"}</div>}
                       </div>
                       {orderLocked ? (
-                        <div className="col-span-5 text-slate-600">
+                        <div className="col-span-2 whitespace-nowrap text-slate-600">
                           {item.quantity} × ${item.unit_price.toFixed(2)}
                         </div>
                       ) : (
                         <>
-                          <div className="col-span-2">
+                          <div className="min-w-0">
                             <input
                               type="number"
                               min={1}
@@ -862,7 +862,7 @@ export default function JourneyWorkspace({
                               className="w-full rounded-md border border-slate-300 px-1 py-1 text-center text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                             />
                           </div>
-                          <div className="col-span-3">
+                          <div className="min-w-0">
                             <input
                               type="number"
                               min={0}
@@ -876,10 +876,10 @@ export default function JourneyWorkspace({
                           </div>
                         </>
                       )}
-                      <div className="col-span-1 text-right text-slate-600">
+                      <div className="text-right whitespace-nowrap text-slate-600">
                         ${(item.quantity * item.unit_price).toFixed(2)}
                       </div>
-                      <div className="col-span-1 flex justify-end">
+                      <div className="flex justify-end">
                         {!orderLocked && (
                           <button
                             onClick={() => removeLineItem(item.id)}
