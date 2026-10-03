@@ -597,7 +597,7 @@ export default function JourneyWorkspace({
           />
         </div>
 
-        <div className="grid grid-cols-1 gap-6 p-6 min-[900px]:grid-cols-[2fr_1fr]">
+        <div className="grid grid-cols-1 gap-6 p-6 min-[900px]:grid-cols-[3fr_2fr]">
           <div className="min-w-0">
             <div className="space-y-3 text-sm">
               {journey.inventory_ready_notified_at &&
@@ -812,46 +812,17 @@ export default function JourneyWorkspace({
                   {lineItems.map((item) => (
                     <div
                       key={item.id}
-                      className="grid grid-cols-[minmax(0,1fr)_2.75rem_4.5rem_4rem_1.5rem] items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-2 text-xs"
+                      className="rounded-md border border-slate-200 bg-slate-50 p-2 text-xs"
                     >
-                      <div className="min-w-0 text-slate-900">
-                        <div className="break-words leading-snug">{item.item_name}</div>
-                        {canReassign && !orderLocked && (
+                      <div className="leading-snug text-slate-900">{item.item_name}</div>
+                      {item.product_id && <div className="mt-0.5 text-slate-500">Availability: {lineAvailability[item.id] ?? "Loading…"}</div>}
+                      <div className="mt-1.5 flex items-center gap-2">
+                        {orderLocked ? (
+                          <span className="whitespace-nowrap text-slate-600">
+                            {item.quantity} × ${item.unit_price.toFixed(2)}
+                          </span>
+                        ) : (
                           <>
-                            <select
-                              value={item.fulfillment_type_override ?? "inherit"}
-                              onChange={(e) => updateLineItem(item.id, {
-                                fulfillment_type_override: e.target.value === "inherit" ? null : e.target.value as "delivery" | "pickup",
-                                pickup_location_id: e.target.value === "pickup" ? item.pickup_location_id ?? journey.store_id : null,
-                              })}
-                              className="mt-1 w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs"
-                            >
-                              <option value="inherit">Inherit Journey ({journey.fulfillment_type})</option>
-                              <option value="delivery" disabled={!hasDeliveryAddress}>Delivery</option>
-                              <option value="pickup">Pickup</option>
-                            </select>
-                            {(item.fulfillment_type_override ?? journey.fulfillment_type) === "pickup" && (
-                              <select
-                                value={item.pickup_location_id ?? journey.store_id}
-                                onChange={(e) => updateLineItem(item.id, { pickup_location_id: e.target.value })}
-                                className="mt-1 w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs"
-                              >
-                                {stores.filter((s) => s.location_type !== "WAREHOUSE_QUARANTINE").map((s) => (
-                                  <option key={s.id} value={s.id}>{s.name}</option>
-                                ))}
-                              </select>
-                            )}
-                          </>
-                        )}
-                        {item.product_id && <div className="mt-1 text-xs text-slate-500">Availability: {lineAvailability[item.id] ?? "Loading…"}</div>}
-                      </div>
-                      {orderLocked ? (
-                        <div className="col-span-2 whitespace-nowrap text-slate-600">
-                          {item.quantity} × ${item.unit_price.toFixed(2)}
-                        </div>
-                      ) : (
-                        <>
-                          <div className="min-w-0">
                             <input
                               type="number"
                               min={1}
@@ -859,10 +830,10 @@ export default function JourneyWorkspace({
                               onBlur={(e) =>
                                 updateLineItem(item.id, { quantity: Math.max(1, parseInt(e.target.value) || 1) })
                               }
-                              className="w-full rounded-md border border-slate-300 px-1 py-1 text-center text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                              className="w-12 rounded-md border border-slate-300 px-1 py-1 text-center text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                             />
-                          </div>
-                          <div className="min-w-0">
+                            <span className="text-slate-400">×</span>
+                            <span className="text-slate-400">$</span>
                             <input
                               type="number"
                               min={0}
@@ -871,15 +842,13 @@ export default function JourneyWorkspace({
                               onBlur={(e) =>
                                 updateLineItem(item.id, { unit_price: parseFloat(e.target.value) || 0 })
                               }
-                              className="w-full rounded-md border border-slate-300 px-1 py-1 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                              className="w-20 rounded-md border border-slate-300 px-1 py-1 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                             />
-                          </div>
-                        </>
-                      )}
-                      <div className="text-right whitespace-nowrap text-slate-600">
-                        ${(item.quantity * item.unit_price).toFixed(2)}
-                      </div>
-                      <div className="flex justify-end">
+                          </>
+                        )}
+                        <div className="ml-auto whitespace-nowrap text-slate-600">
+                          ${(item.quantity * item.unit_price).toFixed(2)}
+                        </div>
                         {!orderLocked && (
                           <button
                             onClick={() => removeLineItem(item.id)}
@@ -890,6 +859,33 @@ export default function JourneyWorkspace({
                           </button>
                         )}
                       </div>
+                      {canReassign && !orderLocked && (
+                        <div className="mt-1.5 space-y-1">
+                          <select
+                            value={item.fulfillment_type_override ?? "inherit"}
+                            onChange={(e) => updateLineItem(item.id, {
+                              fulfillment_type_override: e.target.value === "inherit" ? null : e.target.value as "delivery" | "pickup",
+                              pickup_location_id: e.target.value === "pickup" ? item.pickup_location_id ?? journey.store_id : null,
+                            })}
+                            className="w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs"
+                          >
+                            <option value="inherit">Inherit Journey ({journey.fulfillment_type})</option>
+                            <option value="delivery" disabled={!hasDeliveryAddress}>Delivery</option>
+                            <option value="pickup">Pickup</option>
+                          </select>
+                          {(item.fulfillment_type_override ?? journey.fulfillment_type) === "pickup" && (
+                            <select
+                              value={item.pickup_location_id ?? journey.store_id}
+                              onChange={(e) => updateLineItem(item.id, { pickup_location_id: e.target.value })}
+                              className="w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs"
+                            >
+                              {stores.filter((s) => s.location_type !== "WAREHOUSE_QUARANTINE").map((s) => (
+                                <option key={s.id} value={s.id}>{s.name}</option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
