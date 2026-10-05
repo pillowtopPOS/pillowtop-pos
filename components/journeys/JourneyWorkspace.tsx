@@ -62,9 +62,11 @@ function followUpLabel(f: FollowUp): string {
 }
 
 // Short date used across the workspace: "Nov 30", with the year only
-// when it isn't the current one.
+// when it isn't the current one. Accepts date-only strings AND full
+// timestamps — date-only values parse as local midnight so the day
+// can't slip back a timezone, timestamps parse with their own offset.
 function shortDate(iso: string): string {
-  const d = new Date(`${iso}T00:00:00`);
+  const d = iso.includes("T") ? new Date(iso) : new Date(`${iso}T00:00:00`);
   return d.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
@@ -99,30 +101,52 @@ type MenuItem = { label: string; danger?: boolean; onSelect: () => void };
 function HeaderMenu({ items }: { items: MenuItem[] }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  function close(returnFocus = true) {
+    setOpen(false);
+    if (returnFocus) buttonRef.current?.focus();
+  }
+
+  // On open, move focus into the menu so Esc/arrow keys land here and
+  // not on the workspace behind it.
+  useEffect(() => {
+    if (!open) return;
+    menuRef.current
+      ?.querySelector<HTMLButtonElement>('[role="menuitem"]')
+      ?.focus();
+  }, [open]);
 
   function onMenuKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Escape") {
+      // Closes only the menu — stopping here keeps Esc from also
+      // closing the whole workspace.
+      e.stopPropagation();
+      e.preventDefault();
+      close();
+      return;
+    }
+    if (!open) return;
     const buttons = menuRef.current?.querySelectorAll<HTMLButtonElement>(
       '[role="menuitem"]'
     );
     if (!buttons || buttons.length === 0) return;
-    const items = Array.from(buttons);
-    const idx = items.indexOf(document.activeElement as HTMLButtonElement);
-    if (e.key === "Escape") {
-      e.stopPropagation();
-      setOpen(false);
-    } else if (e.key === "ArrowDown") {
+    const menuItems = Array.from(buttons);
+    const idx = menuItems.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === "ArrowDown") {
       e.preventDefault();
-      items[(idx + 1) % items.length].focus();
+      menuItems[(idx + 1) % menuItems.length].focus();
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      items[(idx - 1 + items.length) % items.length].focus();
+      menuItems[(idx - 1 + menuItems.length) % menuItems.length].focus();
     }
   }
 
   if (items.length === 0) return null;
   return (
-    <div className="relative">
+    <div className="relative" onKeyDown={onMenuKeyDown}>
       <button
+        ref={buttonRef}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="More actions"
@@ -133,11 +157,10 @@ function HeaderMenu({ items }: { items: MenuItem[] }) {
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="fixed inset-0 z-10" onClick={() => close(false)} />
           <div
             ref={menuRef}
             role="menu"
-            onKeyDown={onMenuKeyDown}
             className="absolute right-0 z-20 mt-1 w-52 rounded-md border border-slate-200 bg-white py-1 shadow-lg"
           >
             {items.map((item) => (
@@ -145,7 +168,7 @@ function HeaderMenu({ items }: { items: MenuItem[] }) {
                 key={item.label}
                 role="menuitem"
                 onClick={() => {
-                  setOpen(false);
+                  close();
                   item.onSelect();
                 }}
                 className={`block w-full px-3 py-2.5 text-left text-sm hover:bg-slate-50 focus-visible:outline-none focus-visible:bg-slate-100 ${
@@ -230,11 +253,13 @@ function JourneyStateSummaryBar({
   nextFollowUp,
   stateDetail,
   attentionItems,
+  transitions,
 }: {
   journey: JourneyWithDetails;
   nextFollowUp: FollowUp | undefined;
   stateDetail: string | null;
   attentionItems: AttentionItem[];
+  transitions: { label: string; event: JourneyEventType }[];
 }) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -271,6 +296,13 @@ function JourneyStateSummaryBar({
           )
         ) : journey.current_state === "Waiting for Inventory" ? (
           <span>Call customer when inventory arrives</span>
+        ) : transitions.find((t) => t.event !== "trial_completed") ? (
+          // trial_completed stays excluded: Sleep Trial → Completed is
+          // ungated, so "Complete Trial" must never read as the default
+          // next step just because no follow-up is scheduled.
+          <span>
+            {transitions.find((t) => t.event !== "trial_completed")!.label}
+          </span>
         ) : (
           <span className="font-normal text-slate-400">No action needed</span>
         )}
@@ -402,6 +434,17 @@ export default function JourneyWorkspace({
   const [orderEditing, setOrderEditing] = useState(false);
   const [customerContacts, setCustomerContacts] = useState<CustomerContact[]>([]);
   const mismatchedRequested = useRef<Set<string>>(new Set());
+  // Reassign can be started from the header "..." menu — scroll the
+  // Ownership card's chooser into view when it appears.
+  const reassignRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (reassignMode === "choose") {
+      reassignRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    }
+  }, [reassignMode]);
   // Bumped on every panel refresh so JourneyActivity refetches its
   // interactions — journey.id alone doesn't change on refresh.
   const [activityRefreshKey, setActivityRefreshKey] = useState(0);
@@ -771,6 +814,7 @@ export default function JourneyWorkspace({
             nextFollowUp={nextFollowUp}
             stateDetail={stateDetail}
             attentionItems={attentionItems}
+            transitions={transitions}
           />
         </div>
 
@@ -1056,7 +1100,10 @@ export default function JourneyWorkspace({
               {(() => {
                 const paymentUnknown = events.some((e) => e.outcome === "UNKNOWN");
                 const paidInFull =
-                  journey.price !== null && journey.price !== undefined && paid >= journey.price;
+                  journey.price !== null &&
+                  journey.price !== undefined &&
+                  journey.price > 0 &&
+                  paid >= journey.price;
                 return (
                   <>
                     <p
@@ -1155,6 +1202,10 @@ export default function JourneyWorkspace({
                 >
                   Reassign
                 </button>
+              )}
+
+              {canReassign && reassignMode !== null && (
+                <div ref={reassignRef} className="scroll-mt-20" />
               )}
 
               {canReassign && reassignMode === "choose" && (
