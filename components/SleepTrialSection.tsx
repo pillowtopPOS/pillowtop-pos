@@ -10,7 +10,6 @@ import {
   trialStatusLabel,
   trialStatusTone,
   TRIAL_STATUS_DOT,
-  formatTrialDate,
   formatMoney,
   trialDate,
   overrideSleepTrialProtector,
@@ -61,6 +60,7 @@ import {
   type CustomerContact,
 } from "@/lib/journeys/interactions";
 import type { Employee, JourneyWithDetails } from "@/lib/journeys/queries";
+import { activityShortDate } from "@/lib/journeys/activityLabels";
 import Modal from "@/components/Modal";
 
 // Some EXCEPTION_TYPE_LABELS already end in "exception" (e.g. "Return
@@ -209,7 +209,6 @@ export default function SleepTrialSection({
   const [decideException, setDecideException] =
     useState<TrialItemException | null>(null);
   const [showNote, setShowNote] = useState(false);
-  const [showCorrectionsLog, setShowCorrectionsLog] = useState(false);
   const [showAllTrials, setShowAllTrials] = useState(false);
   const exceptionRef = useRef<HTMLDivElement>(null);
 
@@ -385,6 +384,9 @@ export default function SleepTrialSection({
             evaluation={orderedEvals[0]}
             onAction={(a) => handleAction(orderedEvals[0], a)}
             noApproverRequests={noApproverForRequest}
+            corrections={corrections}
+            canCorrectStart={isManager}
+            onCorrectStart={() => setShowCorrection(true)}
           />
           {orderedEvals.length > 1 &&
             (showAllTrials ? (
@@ -394,6 +396,9 @@ export default function SleepTrialSection({
                     evaluation={e}
                     onAction={(a) => handleAction(e, a)}
                     noApproverRequests={noApproverForRequest}
+                    corrections={corrections}
+                    canCorrectStart={isManager}
+                    onCorrectStart={() => setShowCorrection(true)}
                   />
                 </div>
               ))
@@ -411,33 +416,6 @@ export default function SleepTrialSection({
         <p className="text-sm font-medium text-teal-800">
           Can&apos;t determine eligibility — no trial items on this order
         </p>
-      )}
-
-      {/* Trial-start correction */}
-      {corrections.length > 0 && (
-        <button
-          onClick={() => setShowCorrectionsLog((v) => !v)}
-          className="mt-1 text-xs text-teal-700 underline"
-        >
-          Trial start corrected {corrections.length} time
-          {corrections.length === 1 ? "" : "s"}
-        </button>
-      )}
-      {showCorrectionsLog &&
-        corrections.map((c) => (
-          <p key={c.id} className="mt-1 text-xs text-teal-700">
-            {c.previous_started_at ?? "unset"} → {c.new_started_at} by{" "}
-            {c.corrected_by?.name ?? "Unknown"} on{" "}
-            {new Date(c.created_at).toLocaleDateString()} — {c.reason}
-          </p>
-        ))}
-      {isManager && (
-        <button
-          onClick={() => setShowCorrection(true)}
-          className="mt-1 block text-xs text-brand-700 underline"
-        >
-          Correct trial start date
-        </button>
       )}
 
       {/* Sleep concerns */}
@@ -737,10 +715,16 @@ function TrialHeroCard({
   evaluation: e,
   onAction,
   noApproverRequests = false,
+  corrections,
+  canCorrectStart,
+  onCorrectStart,
 }: {
   evaluation: SleepTrialEvaluation;
   onAction: (action: string) => void;
   noApproverRequests?: boolean;
+  corrections: TrialStartCorrection[];
+  canCorrectStart: boolean;
+  onCorrectStart: () => void;
 }) {
   const status = e.headline?.status ?? "UNKNOWN";
   const actionKey = headlineAction(e);
@@ -748,64 +732,86 @@ function TrialHeroCard({
   const fee = res?.fee ?? null;
   const endingSoon = e.display?.ending_soon ?? false;
   const tone = trialStatusTone(status, endingSoon);
-  // Checklist open by default when not eligible (spec 19.2).
-  const [checklistOpen, setChecklistOpen] = useState(status !== "ELIGIBLE");
+  const d = e.display;
+  const actionNoun = actionKey === "RETURN" ? "return" : "exchange";
+  // Details fold-out is always collapsed on mount.
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [corrHistoryOpen, setCorrHistoryOpen] = useState(false);
 
-  const statusLabel =
-    status === "ELIGIBLE"
-      ? `Eligible for ${actionKey === "RETURN" ? "return" : "exchange"}`
-      : trialStatusLabel(e);
+  const isMinNightWait = status === "NOT_YET_ELIGIBLE";
+  const isEligible = status === "ELIGIBLE";
+  // Headline label for every status other than the minimum-night wait
+  // and eligible — never hides a blocker explanation.
+  const statusLabel = trialStatusLabel(e);
 
   const title =
     [e.item?.size, e.item?.product_name].filter(Boolean).join(" · ") ||
     "Mattress";
 
+  const nightPct =
+    d?.night != null && d.length_nights != null && d.length_nights > 0
+      ? Math.min(100, (d.night / d.length_nights) * 100)
+      : null;
+  // Tick at the minimum-night threshold — a marker, not math.
+  const minNightPct =
+    nightPct != null &&
+    d?.minimum_nights != null &&
+    d.minimum_nights > 0 &&
+    d.length_nights != null &&
+    d.minimum_nights <= d.length_nights
+      ? Math.min(100, (d.minimum_nights / d.length_nights) * 100)
+      : null;
+
+  // Same blocker set the checklist matches on: the headline action's
+  // reason_code plus additional_blockers and warnings.
+  const blockerCodes = [
+    ...(res && res.status !== "ELIGIBLE" && res.reason_code
+      ? [res.reason_code]
+      : []),
+    ...(res?.additional_blockers ?? []).map((b) => b.reason_code),
+    ...(res?.warnings ?? []),
+  ];
+  const protectorMissing =
+    blockerCodes.includes("PROTECTOR_MISSING") ||
+    blockerCodes.includes("PROTECTOR_RETURNED");
+  const summaryParts: string[] = [];
+  if (res) {
+    summaryParts.push(protectorMissing ? "Protector missing" : "Protector met");
+  }
+  if (d?.exchanges_used != null && d?.exchanges_allowed != null) {
+    summaryParts.push(
+      `${d.exchanges_used} of ${d.exchanges_allowed} exchanges used`
+    );
+  }
+
+  const hasPolicy =
+    Object.keys(e.policy?.term_sources ?? {}).length > 0 ||
+    !!e.policy?.version_label;
+  const hasDetails =
+    d?.night != null || corrections.length > 0 || hasPolicy;
+
   return (
     <div className="rounded-md border border-teal-200 bg-white p-2.5">
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-slate-900">
-            {title}
-            {e.item?.unit_index != null && e.item.unit_index > 1 && (
-              <span className="font-normal text-slate-500">
-                {" "}
-                · unit {e.item.unit_index}
-              </span>
-            )}
-          </p>
-          {e.display?.night != null && (
-            <p className="text-xs text-slate-600">
-              Night {e.display.night} of {e.display.length_nights}
-              {(e.display.extension_nights ?? 0) > 0 &&
-                ` +${e.display.extension_nights} ext`}
-            </p>
+        <p className="min-w-0 truncate text-sm font-semibold text-slate-900">
+          {title}
+          {e.item?.unit_index != null && e.item.unit_index > 1 && (
+            <span className="font-normal text-slate-500">
+              {" "}
+              · unit {e.item.unit_index}
+            </span>
           )}
-          <p
-            className={`mt-1 flex items-center gap-1.5 text-xs font-medium ${
-              tone === "red"
-                ? "text-red-700"
-                : tone === "amber"
-                ? "text-amber-700"
-                : tone === "green"
-                ? "text-green-700"
-                : "text-slate-600"
-            }`}
-          >
-            <span
-              className={`inline-block h-2 w-2 rounded-full ${TRIAL_STATUS_DOT[tone]}`}
-            />
-            {statusLabel}
-          </p>
-          {e.headline?.explanation && status !== "ELIGIBLE" && (
-            <p className="mt-0.5 text-xs text-slate-600">
-              {e.headline.explanation}
-            </p>
-          )}
-        </div>
+        </p>
         <div className="shrink-0 text-right">
-          {e.display?.end_date && (
+          {d?.end_date && (
             <p className="text-xs text-slate-600">
-              Trial ends {formatTrialDate(e.display.end_date)}
+              Trial ends {activityShortDate(d.end_date)}
+            </p>
+          )}
+          {endingSoon && (
+            <p className="mt-1 inline-block rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800">
+              Ends in {d?.nights_remaining} day
+              {d?.nights_remaining === 1 ? "" : "s"}
             </p>
           )}
           {fee != null && (fee.amount_cents ?? 0) > 0 && (
@@ -825,31 +831,142 @@ function TrialHeroCard({
                           : ""
                       }`}
                   {fee.next_change.on
-                    ? ` on ${formatTrialDate(fee.next_change.on)}`
+                    ? ` on ${activityShortDate(fee.next_change.on)}`
                     : ""}
                 </p>
               )}
             </>
           )}
-          {endingSoon && (
-            <p className="mt-1 inline-block rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800">
-              Ends in {e.display?.nights_remaining} day
-              {e.display?.nights_remaining === 1 ? "" : "s"}
+        </div>
+      </div>
+
+      {d?.night != null && (
+        <div className="mt-1.5">
+          <p className="text-xs text-slate-600">
+            Night {d.night} of {d.length_nights}
+            {(d.extension_nights ?? 0) > 0 && ` +${d.extension_nights} ext`}
+          </p>
+          {nightPct != null && (
+            <div className="relative mt-1 h-1.5 rounded-full bg-slate-200">
+              <div
+                className="h-full rounded-full bg-slate-400"
+                style={{ width: `${nightPct}%` }}
+              />
+              {minNightPct != null && (
+                <div
+                  className="absolute -bottom-0.5 -top-0.5 w-px bg-slate-500"
+                  style={{ left: `${minNightPct}%` }}
+                />
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* One eligibility line — the evaluator's headline label plus its
+          explanation for any non-minimum-night status, and a fixed
+          two-line form for the minimum-nights wait and eligible states. */}
+      <div className="mt-1.5 flex items-start gap-1.5">
+        <span
+          className={`mt-1 inline-block h-2 w-2 shrink-0 rounded-full ${TRIAL_STATUS_DOT[tone]}`}
+        />
+        <div className="min-w-0">
+          <p
+            className={`text-xs font-medium ${
+              tone === "red"
+                ? "text-red-700"
+                : tone === "amber"
+                ? "text-amber-700"
+                : tone === "green"
+                ? "text-green-700"
+                : "text-slate-600"
+            }`}
+          >
+            {isMinNightWait
+              ? `Not yet ${actionNoun} eligible`
+              : isEligible
+              ? `✓ ${actionKey === "RETURN" ? "Return" : "Exchange"} eligible`
+              : statusLabel}
+          </p>
+          {isMinNightWait && (
+            <p className="text-xs text-slate-500">
+              {d?.eligible_on ? `Eligible ${activityShortDate(d.eligible_on)}` : ""}
+              {d?.days_until_eligible != null
+                ? ` · ${d.days_until_eligible} nights to go`
+                : ""}
             </p>
+          )}
+          {isEligible && d?.eligible_on && (
+            <p className="text-xs text-slate-500">
+              Eligible since {activityShortDate(d.eligible_on)}
+            </p>
+          )}
+          {!isMinNightWait && !isEligible && e.headline?.explanation && (
+            <p className="text-xs text-slate-600">{e.headline.explanation}</p>
           )}
         </div>
       </div>
 
-      {/* Eligibility checklist — collapsible, open when not eligible */}
-      {e.display?.night != null && (
+      {summaryParts.length > 0 && (
+        <p className="mt-1 text-xs text-slate-500">{summaryParts.join(" · ")}</p>
+      )}
+
+      {d?.started_on && (
+        <p className="mt-0.5 text-xs text-slate-500">
+          Trial started {activityShortDate(d.started_on)}
+          {canCorrectStart && (
+            <>
+              {" · "}
+              <button
+                onClick={onCorrectStart}
+                className="text-brand-700 underline"
+              >
+                Edit
+              </button>
+            </>
+          )}
+        </p>
+      )}
+
+      {hasDetails && (
         <>
           <button
-            onClick={() => setChecklistOpen((v) => !v)}
+            onClick={() => setDetailsOpen((v) => !v)}
+            aria-expanded={detailsOpen}
             className="mt-2 flex items-center gap-1 text-xs font-medium text-teal-700"
           >
-            <span>{checklistOpen ? "▾" : "▸"}</span> Eligibility
+            <span>{detailsOpen ? "▾" : "▸"}</span> View eligibility details
           </button>
-          {checklistOpen && <EligibilityChecklist evaluation={e} />}
+          {detailsOpen && (
+            <div className="mt-2 space-y-2 border-t border-slate-100 pt-2">
+              {d?.night != null && <EligibilityChecklist evaluation={e} />}
+              {corrections.length > 0 && (
+                <div>
+                  <p className="text-xs text-slate-500">
+                    Start date corrected {corrections.length} time
+                    {corrections.length === 1 ? "" : "s"} ·{" "}
+                    <button
+                      onClick={() => setCorrHistoryOpen((v) => !v)}
+                      aria-expanded={corrHistoryOpen}
+                      className="text-brand-700 underline"
+                    >
+                      View history
+                    </button>
+                  </p>
+                  {corrHistoryOpen &&
+                    corrections.map((c) => (
+                      <p key={c.id} className="mt-1 text-xs text-slate-500">
+                        {c.previous_started_at ?? "unset"} → {c.new_started_at}{" "}
+                        by {c.corrected_by?.name ?? "Unknown"} on{" "}
+                        {new Date(c.created_at).toLocaleDateString()} —{" "}
+                        {c.reason}
+                      </p>
+                    ))}
+                </div>
+              )}
+              <PolicyWhyPanel evaluation={e} />
+            </div>
+          )}
         </>
       )}
 
@@ -858,7 +975,6 @@ function TrialHeroCard({
         onAction={onAction}
         noApprovers={noApproverRequests}
       />
-      <PolicyWhyPanel evaluation={e} />
     </div>
   );
 }
@@ -1072,16 +1188,7 @@ function NextActionBar({
     <div className="mt-2 flex flex-wrap items-center gap-1.5">
       {primary && renderAction(primary, true)}
       {secondary.map((a) => renderAction(a))}
-      {showBlockedExchange && (
-        <button
-          disabled
-          title={e.actions?.EXCHANGE?.explanation ?? "Blocked"}
-          className={`${btnBase} border border-slate-300 bg-white text-slate-700`}
-        >
-          Start Exchange
-        </button>
-      )}
-      {more.length > 0 && (
+      {(more.length > 0 || showBlockedExchange) && (
         <div className="relative">
           <button
             onClick={() => setMoreOpen((v) => !v)}
@@ -1096,6 +1203,17 @@ function NextActionBar({
                 onClick={() => setMoreOpen(false)}
               />
               <div className="absolute left-0 z-20 mt-1 min-w-[190px] rounded-md border border-slate-200 bg-white py-1 shadow-lg">
+                {showBlockedExchange && (
+                  <button
+                    disabled
+                    className="block w-full cursor-not-allowed px-3 py-1.5 text-left text-xs text-slate-500"
+                  >
+                    Start Exchange
+                    <span className="block font-normal text-slate-400">
+                      {e.actions?.EXCHANGE?.explanation ?? "Blocked"}
+                    </span>
+                  </button>
+                )}
                 {more.map((a) => {
                   const comingSoon = COMING_SOON_ACTIONS.has(a);
                   const blocked = requestBlocked(a);
@@ -1212,15 +1330,23 @@ function PolicyWhyPanel({ evaluation: e }: { evaluation: SleepTrialEvaluation })
   if (keys.length === 0 && !e.policy?.version_label) return null;
 
   return (
-    <div className="mt-2 border-t border-slate-100 pt-1.5">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 text-xs font-medium text-slate-500"
-      >
-        <span>{open ? "▾" : "▸"}</span>
-        Why these terms?
+    <div>
+      <p className="text-xs text-slate-500">
+        Policy details
         {e.policy?.version_label ? ` — ${e.policy.version_label}` : ""}
-      </button>
+        {keys.length > 0 && (
+          <>
+            {" · "}
+            <button
+              onClick={() => setOpen((v) => !v)}
+              aria-expanded={open}
+              className="text-brand-700 underline"
+            >
+              View trial terms
+            </button>
+          </>
+        )}
+      </p>
       {open && (
         <ul className="mt-1 space-y-1.5 rounded-md bg-slate-50 p-2">
           {keys.map((k) => {
