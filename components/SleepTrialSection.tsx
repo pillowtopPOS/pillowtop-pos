@@ -61,6 +61,7 @@ import {
 } from "@/lib/journeys/interactions";
 import type { Employee, JourneyWithDetails } from "@/lib/journeys/queries";
 import { activityShortDate } from "@/lib/journeys/activityLabels";
+import { localTodayISO } from "@/lib/dates";
 import Modal from "@/components/Modal";
 
 // Some EXCEPTION_TYPE_LABELS already end in "exception" (e.g. "Return
@@ -396,7 +397,9 @@ export default function SleepTrialSection({
                     evaluation={e}
                     onAction={(a) => handleAction(e, a)}
                     noApproverRequests={noApproverForRequest}
-                    corrections={corrections}
+                    // Journey-level corrections show only on the first
+                    // card — repeating them per mattress is noise.
+                    corrections={[]}
                     canCorrectStart={isManager}
                     onCorrectStart={() => setShowCorrection(true)}
                   />
@@ -740,6 +743,14 @@ function TrialHeroCard({
 
   const isMinNightWait = status === "NOT_YET_ELIGIBLE";
   const isEligible = status === "ELIGIBLE";
+  // eligible_on in the future while ELIGIBLE means eligibility came
+  // from an approved exception (or another early path) — eligible_on
+  // then reads as the *normal* date, not a "since" date. Local-date
+  // string compare is safe: both sides are YYYY-MM-DD.
+  const eligibleViaException =
+    isEligible &&
+    (!!res?.applied_exception_id ||
+      (d?.eligible_on != null && d.eligible_on > localTodayISO()));
   // Headline label for every status other than the minimum-night wait
   // and eligible — never hides a blocker explanation.
   const statusLabel = trialStatusLabel(e);
@@ -885,18 +896,31 @@ function TrialHeroCard({
             {isMinNightWait
               ? `Not yet ${actionNoun} eligible`
               : isEligible
-              ? `✓ ${actionKey === "RETURN" ? "Return" : "Exchange"} eligible`
+              ? eligibleViaException
+                ? "Eligible by approved exception"
+                : `✓ ${actionKey === "RETURN" ? "Return" : "Exchange"} eligible`
               : statusLabel}
           </p>
           {isMinNightWait && (
             <p className="text-xs text-slate-500">
-              {d?.eligible_on ? `Eligible ${activityShortDate(d.eligible_on)}` : ""}
-              {d?.days_until_eligible != null
-                ? ` · ${d.days_until_eligible} nights to go`
-                : ""}
+              {[
+                d?.eligible_on
+                  ? `Eligible ${activityShortDate(d.eligible_on)}`
+                  : null,
+                d?.days_until_eligible != null
+                  ? `${d.days_until_eligible} nights to go`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
             </p>
           )}
-          {isEligible && d?.eligible_on && (
+          {isEligible && eligibleViaException && d?.eligible_on && (
+            <p className="text-xs text-slate-500">
+              Normal date {activityShortDate(d.eligible_on)}
+            </p>
+          )}
+          {isEligible && !eligibleViaException && d?.eligible_on && (
             <p className="text-xs text-slate-500">
               Eligible since {activityShortDate(d.eligible_on)}
             </p>
