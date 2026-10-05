@@ -834,6 +834,7 @@ export default function JourneyWorkspace({
                   currentEmployee={currentEmployee}
                   canModerate={canReconcile}
                   onChanged={handlePanelRefresh}
+                  followUps={followUps}
                 />
               )}
             </div>

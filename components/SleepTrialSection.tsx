@@ -59,7 +59,11 @@ import {
   recordJourneyInteraction,
   type CustomerContact,
 } from "@/lib/journeys/interactions";
-import type { Employee, JourneyWithDetails } from "@/lib/journeys/queries";
+import type {
+  Employee,
+  FollowUp,
+  JourneyWithDetails,
+} from "@/lib/journeys/queries";
 import { activityShortDate } from "@/lib/journeys/activityLabels";
 import { localTodayISO } from "@/lib/dates";
 import Modal from "@/components/Modal";
@@ -181,14 +185,19 @@ export default function SleepTrialSection({
   currentEmployee,
   canModerate,
   onChanged,
+  followUps,
 }: {
   journey: JourneyWithDetails;
   currentEmployee: Employee | null;
   canModerate: boolean;
   onChanged: () => void;
+  followUps: FollowUp[];
 }) {
   const [concerns, setConcerns] = useState<SleepConcern[]>([]);
   const [issues, setIssues] = useState<SleepConcernIssue[]>([]);
+  const [entriesByConcern, setEntriesByConcern] = useState<
+    Record<string, SleepConcernEntry[]>
+  >({});
   const [exceptions, setExceptions] = useState<SleepTrialExceptionRequest[]>([]);
   const [corrections, setCorrections] = useState<TrialStartCorrection[]>([]);
   const [contacts, setContacts] = useState<CustomerContact[]>([]);
@@ -240,6 +249,14 @@ export default function SleepTrialSection({
     setApprovers(appr);
     setPermKeys(pk);
     setIssues(await fetchSleepConcernIssues(c.map((x) => x.id)));
+    // Entries load upfront (one fetch per concern) so the collapsed
+    // card summary and the expanded history share the same data.
+    const entryLists = await Promise.all(
+      c.map((x) => fetchSleepConcernEntries(x.id))
+    );
+    setEntriesByConcern(
+      Object.fromEntries(c.map((x, idx) => [x.id, entryLists[idx]]))
+    );
   };
 
   useEffect(() => {
@@ -445,6 +462,21 @@ export default function SleepTrialSection({
             key={c.id}
             concern={c}
             issues={issuesFor(c.id)}
+            entries={entriesByConcern[c.id] ?? []}
+            // Earliest open follow-up linked to this concern —
+            // follow_ups.sleep_concern_id is written directly by the
+            // concern RPCs (058).
+            nextFollowUp={
+              followUps
+                .filter(
+                  (f) => f.sleep_concern_id === c.id && !f.completed_at
+                )
+                .sort(
+                  (a, b) =>
+                    new Date(a.due_at).getTime() -
+                    new Date(b.due_at).getTime()
+                )[0] ?? null
+            }
             expanded={expandedConcern === c.id}
             onToggle={() =>
               setExpandedConcern(expandedConcern === c.id ? null : c.id)
@@ -1587,6 +1619,8 @@ function TrialNoteModal({
 function ConcernCard({
   concern,
   issues,
+  entries,
+  nextFollowUp,
   expanded,
   onToggle,
   onAddUpdate,
@@ -1595,19 +1629,20 @@ function ConcernCard({
 }: {
   concern: SleepConcern;
   issues: SleepConcernIssue[];
+  entries: SleepConcernEntry[];
+  nextFollowUp: FollowUp | null;
   expanded: boolean;
   onToggle: () => void;
   onAddUpdate: () => void;
   onChanged: () => void;
   canExchange: boolean;
 }) {
-  const [entries, setEntries] = useState<SleepConcernEntry[]>([]);
   const [diagnostics, setDiagnostics] = useState<SleepConcernDiagnostic[]>([]);
   const [exchangeError, setExchangeError] = useState<string | null>(null);
 
+  // Entries arrive from the parent; diagnostics stay lazy (expanded only).
   useEffect(() => {
     if (expanded) {
-      fetchSleepConcernEntries(concern.id).then(setEntries);
       fetchSleepConcernDiagnostics(concern.id).then(setDiagnostics);
     }
   }, [expanded, concern.id, concern.updated_at]);
@@ -1634,14 +1669,34 @@ function ConcernCard({
             {issues.map((i) => i.issue_name).join(" · ") || "—"}
           </p>
           <p className="text-xs text-slate-500">
-            Opened {new Date(concern.opened_at).toLocaleDateString()}
+            Opened {activityShortDate(concern.opened_at)}
             {concern.opened_by ? ` by ${concern.opened_by.name}` : ""}
             {concern.resolved_at &&
-              ` · Resolved ${new Date(concern.resolved_at).toLocaleDateString()}`}
+              ` · Resolved ${activityShortDate(concern.resolved_at)}`}
           </p>
+          {/* Collapsed summary block — open concerns only, and every
+              line renders only when real data exists. */}
+          {open && entries[0] && (
+            <p className="mt-0.5 text-xs text-slate-500">
+              Last update: {activityShortDate(entries[0].occurred_at)} ·{" "}
+              {entries[0].created_by?.name ?? "Unknown"}
+            </p>
+          )}
           {lastRecommendation && (
             <p className="mt-0.5 text-xs text-slate-600">
               Last recommendation: {lastRecommendation.recommendation_summary}
+            </p>
+          )}
+          {open && nextFollowUp && (
+            <p className="mt-0.5 text-xs text-slate-500">
+              Next follow-up:{" "}
+              {new Date(nextFollowUp.due_at) < new Date() ? (
+                <span className="text-red-600">
+                  {activityShortDate(nextFollowUp.due_at)}
+                </span>
+              ) : (
+                activityShortDate(nextFollowUp.due_at)
+              )}
             </p>
           )}
           {concern.status === "resolved" && concern.resolution_summary && (
