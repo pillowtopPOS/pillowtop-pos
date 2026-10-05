@@ -736,61 +736,6 @@ export default function JourneyWorkspace({
               </RailRow>
             </RailCard>
 
-            <RailCard title="Financial">
-              {journey.price !== null && (
-                <RailRow label="Agreed price" align="right">
-                  <span className="font-medium">${journey.price.toFixed(2)}</span>
-                </RailRow>
-              )}
-              {journey.price !== null && (
-                <RailRow label="Paid" align="right">
-                  <span className="font-medium">${paid.toFixed(2)}</span>
-                </RailRow>
-              )}
-              {journey.price !== null && paid > journey.price && (
-                <RailRow label="Credit due" align="right">
-                  <span className="font-medium text-blue-600">
-                    ${(paid - journey.price).toFixed(2)}
-                  </span>
-                </RailRow>
-              )}
-              {balance !== null && paid <= (journey.price ?? 0) && (
-                <RailRow label="Balance due" align="right">
-                  <span className={`font-medium ${balance > 0 ? "text-amber-600" : "text-green-600"}`}>
-                    ${balance.toFixed(2)}
-                  </span>
-                </RailRow>
-              )}
-              {journey.price === null && (
-                <p className="text-slate-500">No price set.</p>
-              )}
-            </RailCard>
-
-            <RailCard title="Fulfillment">
-              <RailRow label="Type">
-                {canReassign && !orderLocked ? (
-                  <select
-                    value={journey.fulfillment_type}
-                    disabled={fulfillmentSaving}
-                    onChange={(e) =>
-                      submitFulfillmentChange(e.target.value as "delivery" | "pickup")
-                    }
-                    className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700"
-                  >
-                    <option value="delivery" disabled={!hasDeliveryAddress}>Delivery</option>
-                    <option value="pickup">Pickup</option>
-                  </select>
-                ) : (
-                  journey.fulfillment_type === "pickup" ? "Pickup" : "Delivery"
-                )}
-              </RailRow>
-              {journey.delivered_at && (
-                <RailRow label="Delivered">
-                  {new Date(journey.delivered_at).toLocaleDateString()}
-                </RailRow>
-              )}
-            </RailCard>
-
             <RailCard title="Order">
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-slate-500">{lineItems.length} item{lineItems.length === 1 ? "" : "s"}</span>
@@ -901,6 +846,61 @@ export default function JourneyWorkspace({
                 <div className="mt-3">
                   <ProductPicker storeId={inventoryStoreId} onSelect={addLineItem} />
                 </div>
+              )}
+            </RailCard>
+
+            <RailCard title="Financial">
+              {journey.price !== null && (
+                <RailRow label="Agreed price" align="right">
+                  <span className="font-medium">${journey.price.toFixed(2)}</span>
+                </RailRow>
+              )}
+              {journey.price !== null && (
+                <RailRow label="Paid" align="right">
+                  <span className="font-medium">${paid.toFixed(2)}</span>
+                </RailRow>
+              )}
+              {journey.price !== null && paid > journey.price && (
+                <RailRow label="Credit due" align="right">
+                  <span className="font-medium text-blue-600">
+                    ${(paid - journey.price).toFixed(2)}
+                  </span>
+                </RailRow>
+              )}
+              {balance !== null && paid <= (journey.price ?? 0) && (
+                <RailRow label="Balance due" align="right">
+                  <span className={`font-medium ${balance > 0 ? "text-amber-600" : "text-green-600"}`}>
+                    ${balance.toFixed(2)}
+                  </span>
+                </RailRow>
+              )}
+              {journey.price === null && (
+                <p className="text-slate-500">No price set.</p>
+              )}
+            </RailCard>
+
+            <RailCard title="Fulfillment">
+              <RailRow label="Type">
+                {canReassign && !orderLocked ? (
+                  <select
+                    value={journey.fulfillment_type}
+                    disabled={fulfillmentSaving}
+                    onChange={(e) =>
+                      submitFulfillmentChange(e.target.value as "delivery" | "pickup")
+                    }
+                    className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700"
+                  >
+                    <option value="delivery" disabled={!hasDeliveryAddress}>Delivery</option>
+                    <option value="pickup">Pickup</option>
+                  </select>
+                ) : (
+                  journey.fulfillment_type === "pickup" ? "Pickup" : "Delivery"
+                )}
+              </RailRow>
+              {journey.delivered_at && (
+                <RailRow label="Delivered">
+                  {new Date(journey.delivered_at).toLocaleDateString()}
+                </RailRow>
               )}
             </RailCard>
 
