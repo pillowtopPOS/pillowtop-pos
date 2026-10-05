@@ -211,6 +211,7 @@ export default function SleepTrialSection({
     useState<TrialItemException | null>(null);
   const [showNote, setShowNote] = useState(false);
   const [showAllTrials, setShowAllTrials] = useState(false);
+  const [showExceptionHistory, setShowExceptionHistory] = useState(false);
   const exceptionRef = useRef<HTMLDivElement>(null);
 
   // The evaluator is the single source of trial truth (ST-4). Heroes render
@@ -431,7 +432,7 @@ export default function SleepTrialSection({
             onClick={() => setShowConcernForm(true)}
             className="rounded-md bg-teal-700 px-2 py-1 text-xs font-medium text-white hover:bg-teal-800"
           >
-            + Start Sleep Concern
+            + Add Sleep Concern
           </button>
         </div>
 
@@ -572,51 +573,67 @@ export default function SleepTrialSection({
           . Approval grants authority only — it does not start an exchange.
         </p>
       )}
-      {decidedExceptions.map((e) => (
-        <p key={e.id} className="mt-1 text-xs text-slate-500">
-          Early exchange exception{" "}
-          {e.status === "pending" ? "expired" : e.status}
-          {e.approver ? ` by ${e.approver.name}` : ""}
-          {e.decided_at
-            ? ` on ${new Date(e.decided_at).toLocaleDateString()}`
-            : ""}
-          .
-        </p>
-      ))}
-      {decidedItemExceptions.map((ex) => (
-        <p key={ex.id} className="mt-1 text-xs text-slate-500">
-          {exceptionPhrase(ex.exception_type)}{" "}
-          {ex.status === "APPROVED"
-            ? `approved by ${ex.approver?.name ?? "unknown"}${
-                ex.self_authorized ? " (self-authorized)" : ""
-              }${
-                ex.decided_at
-                  ? ` on ${new Date(ex.decided_at).toLocaleDateString()}`
-                  : ""
-              }${
-                ex.valid_until
-                  ? ` · valid until ${new Date(ex.valid_until).toLocaleDateString()}`
-                  : ""
-              }`
-            : ex.status === "CONSUMED"
-            ? `applied${
-                ex.consumed_at
-                  ? ` on ${new Date(ex.consumed_at).toLocaleDateString()}`
-                  : ""
-              }`
-            : `${ex.status.toLowerCase()}${
-                ex.approver ? ` by ${ex.approver.name}` : ""
-              }${
-                ex.decided_at
-                  ? ` on ${new Date(ex.decided_at).toLocaleDateString()}`
-                  : ""
-              }`}
-          .
-          {ex.status === "DENIED" && ex.decision_note
-            ? ` ${ex.decision_note}`
-            : ""}
-        </p>
-      ))}
+      {decidedExceptions.length + decidedItemExceptions.length > 0 && (
+        <div>
+          <button
+            onClick={() => setShowExceptionHistory((v) => !v)}
+            aria-expanded={showExceptionHistory}
+            className="mt-1 text-xs text-slate-500 underline"
+          >
+            Exception history (
+            {decidedExceptions.length + decidedItemExceptions.length})
+          </button>
+          {showExceptionHistory && (
+            <>
+              {decidedExceptions.map((e) => (
+                <p key={e.id} className="mt-1 text-xs text-slate-500">
+                  Early exchange exception{" "}
+                  {e.status === "pending" ? "expired" : e.status}
+                  {e.approver ? ` by ${e.approver.name}` : ""}
+                  {e.decided_at
+                    ? ` on ${new Date(e.decided_at).toLocaleDateString()}`
+                    : ""}
+                  .
+                </p>
+              ))}
+              {decidedItemExceptions.map((ex) => (
+                <p key={ex.id} className="mt-1 text-xs text-slate-500">
+                  {exceptionPhrase(ex.exception_type)}{" "}
+                  {ex.status === "APPROVED"
+                    ? `approved by ${ex.approver?.name ?? "unknown"}${
+                        ex.self_authorized ? " (self-authorized)" : ""
+                      }${
+                        ex.decided_at
+                          ? ` on ${new Date(ex.decided_at).toLocaleDateString()}`
+                          : ""
+                      }${
+                        ex.valid_until
+                          ? ` · valid until ${new Date(ex.valid_until).toLocaleDateString()}`
+                          : ""
+                      }`
+                    : ex.status === "CONSUMED"
+                    ? `applied${
+                        ex.consumed_at
+                          ? ` on ${new Date(ex.consumed_at).toLocaleDateString()}`
+                          : ""
+                      }`
+                    : `${ex.status.toLowerCase()}${
+                        ex.approver ? ` by ${ex.approver.name}` : ""
+                      }${
+                        ex.decided_at
+                          ? ` on ${new Date(ex.decided_at).toLocaleDateString()}`
+                          : ""
+                      }`}
+                  .
+                  {ex.status === "DENIED" && ex.decision_note
+                    ? ` ${ex.decision_note}`
+                    : ""}
+                </p>
+              ))}
+            </>
+          )}
+        </div>
+      )}
       </div>
 
       {showConcernForm && (
@@ -1155,7 +1172,11 @@ function NextActionBar({
   noApprovers?: boolean;
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
-  const allowed = e.allowed_ui_actions ?? [];
+  // ADD_SLEEP_CONCERN has its own home in the Sleep Concerns header —
+  // never render it in the action bar.
+  const allowed = (e.allowed_ui_actions ?? []).filter(
+    (a) => a !== "ADD_SLEEP_CONCERN"
+  );
   const ordered = ACTION_PRIORITY.filter((a) => allowed.includes(a)).concat(
     allowed.filter((a) => !ACTION_PRIORITY.includes(a))
   );
@@ -1171,9 +1192,10 @@ function NextActionBar({
       ? NO_APPROVER_MESSAGE
       : undefined;
 
-  const [primary, ...rest] = ordered;
-  const secondary = rest.slice(0, 3);
-  const more = rest.slice(3);
+  // One allowed action renders as a plain button; otherwise everything
+  // (plus the blocked Start Exchange placeholder) lives under "More".
+  const singleAction = ordered.length === 1 && !showBlockedExchange;
+  const menuCount = ordered.length + (showBlockedExchange ? 1 : 0);
 
   // Spec 20 rule: a blocked action is shown disabled with its reason when
   // the user would reasonably expect it (e.g. Start Exchange while blocked).
@@ -1210,61 +1232,69 @@ function NextActionBar({
 
   return (
     <div className="mt-2 flex flex-wrap items-center gap-1.5">
-      {primary && renderAction(primary, true)}
-      {secondary.map((a) => renderAction(a))}
-      {(more.length > 0 || showBlockedExchange) && (
-        <div className="relative">
-          <button
-            onClick={() => setMoreOpen((v) => !v)}
-            className={`${btnBase} border border-slate-300 bg-white text-slate-700 hover:bg-slate-50`}
-          >
-            More ▾
-          </button>
-          {moreOpen && (
-            <>
-              <div
-                className="fixed inset-0 z-10"
-                onClick={() => setMoreOpen(false)}
-              />
-              <div className="absolute left-0 z-20 mt-1 min-w-[190px] rounded-md border border-slate-200 bg-white py-1 shadow-lg">
-                {showBlockedExchange && (
-                  <button
-                    disabled
-                    className="block w-full cursor-not-allowed px-3 py-1.5 text-left text-xs text-slate-500"
-                  >
-                    Start Exchange
-                    <span className="block font-normal text-slate-400">
-                      {e.actions?.EXCHANGE?.explanation ?? "Blocked"}
-                    </span>
-                  </button>
-                )}
-                {more.map((a) => {
-                  const comingSoon = COMING_SOON_ACTIONS.has(a);
-                  const blocked = requestBlocked(a);
-                  return (
+      {singleAction ? (
+        renderAction(ordered[0], true)
+      ) : (
+        menuCount > 0 && (
+          <div className="relative">
+            <button
+              onClick={() => setMoreOpen((v) => !v)}
+              aria-expanded={moreOpen}
+              className={`${btnBase} border border-slate-300 bg-white text-slate-700 hover:bg-slate-50`}
+            >
+              More ▾
+            </button>
+            {moreOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-10"
+                  onClick={() => setMoreOpen(false)}
+                />
+                <div className="absolute left-0 z-20 mt-1 min-w-[190px] rounded-md border border-slate-200 bg-white py-1 shadow-lg">
+                  {showBlockedExchange && (
                     <button
-                      key={a}
-                      disabled={comingSoon || blocked}
-                      title={actionTitle(a, comingSoon)}
-                      onClick={() => {
-                        setMoreOpen(false);
-                        onAction(a);
-                      }}
-                      className="block w-full px-3 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled
+                      className="block w-full cursor-not-allowed px-3 py-1.5 text-left text-xs text-slate-500"
                     >
-                      {ACTION_LABELS[a] ?? a}
-                      {comingSoon && (
-                        <span className="ml-1 text-slate-400">
-                          — coming soon
-                        </span>
-                      )}
+                      Start Exchange
+                      <span className="block font-normal text-slate-400">
+                        {e.actions?.EXCHANGE?.explanation ?? "Blocked"}
+                      </span>
                     </button>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </div>
+                  )}
+                  {ordered.map((a) => {
+                    const comingSoon = COMING_SOON_ACTIONS.has(a);
+                    const blocked = requestBlocked(a);
+                    return (
+                      <button
+                        key={a}
+                        disabled={comingSoon || blocked}
+                        title={actionTitle(a, comingSoon)}
+                        onClick={() => {
+                          setMoreOpen(false);
+                          onAction(a);
+                        }}
+                        className="block w-full px-3 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {ACTION_LABELS[a] ?? a}
+                        {comingSoon && (
+                          <span className="ml-1 text-slate-400">
+                            — coming soon
+                          </span>
+                        )}
+                        {blocked && (
+                          <span className="block font-normal text-slate-400">
+                            {NO_APPROVER_MESSAGE}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        )
       )}
     </div>
   );
