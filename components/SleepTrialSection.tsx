@@ -1192,17 +1192,17 @@ function NextActionBar({
       ? NO_APPROVER_MESSAGE
       : undefined;
 
-  // One allowed action renders as a plain button; otherwise everything
-  // (plus the blocked Start Exchange placeholder) lives under "More".
-  const singleAction = ordered.length === 1 && !showBlockedExchange;
-  const menuCount = ordered.length + (showBlockedExchange ? 1 : 0);
-
   // Spec 20 rule: a blocked action is shown disabled with its reason when
   // the user would reasonably expect it (e.g. Start Exchange while blocked).
   const showBlockedExchange =
     e.item?.status === "ACTIVE" &&
     e.actions?.EXCHANGE?.status !== "ELIGIBLE" &&
     !ordered.includes("START_EXCHANGE");
+
+  // One allowed action renders as a plain button; otherwise everything
+  // (plus the blocked Start Exchange placeholder) lives under "More".
+  const singleAction = ordered.length === 1 && !showBlockedExchange;
+  const menuCount = ordered.length + (showBlockedExchange ? 1 : 0);
 
   const btnBase =
     "rounded-md px-2.5 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50";
