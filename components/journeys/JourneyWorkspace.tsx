@@ -985,6 +985,10 @@ export default function JourneyWorkspace({
                 <p className="text-sm text-slate-500">No items on this journey.</p>
               )}
 
+              {!lineItemsLoading && lineItems.length === 0 && !orderLocked && (
+                <ProductPicker storeId={inventoryStoreId} onSelect={addLineItem} />
+              )}
+
               {!lineItemsLoading && lineItems.length > 0 && !orderEditing && (
                 <div className="divide-y divide-slate-100">
                   {lineItems.map((item) => (
