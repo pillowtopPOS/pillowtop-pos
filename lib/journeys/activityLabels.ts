@@ -166,17 +166,21 @@ export function interactionBadgeLabel(i: JourneyInteraction): string {
   );
 }
 
-// A few older sleep-trial summaries embed the raw exception type code
-// ("EARLY_EXCHANGE exception self-authorized…"). Swap known codes for
-// their labels at render time only — stored data is untouched.
+// Sleep-trial summaries are written as "<CODE> exception …" (migrations
+// 074/075). Match the code plus an optional trailing " exception" and
+// apply the same phrase logic as exceptionPhrase: the label alone when
+// it already ends in "exception", otherwise label + " exception" — so
+// "RETURN_NOT_ALLOWED exception denied" renders "Return exception
+// denied", never "Return exception exception denied". Display only;
+// stored data is untouched.
 const EXCEPTION_CODE_RE = new RegExp(
-  `\\b(${Object.keys(EXCEPTION_TYPE_LABELS).join("|")})\\b`,
+  `\\b(${Object.keys(EXCEPTION_TYPE_LABELS).join("|")})( exception)?\\b`,
   "g"
 );
 
 export function interactionSummaryText(i: JourneyInteraction): string {
-  return i.summary.replace(
-    EXCEPTION_CODE_RE,
-    (code) => EXCEPTION_TYPE_LABELS[code] ?? code
-  );
+  return i.summary.replace(EXCEPTION_CODE_RE, (_match, code: string) => {
+    const label = EXCEPTION_TYPE_LABELS[code] ?? code;
+    return label.endsWith("exception") ? label : `${label} exception`;
+  });
 }
