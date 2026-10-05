@@ -42,6 +42,10 @@ import {
 import Modal from "@/components/Modal";
 import ProductPicker, { type ProductSelection } from "@/components/ProductPicker";
 import JourneyActivity from "@/components/JourneyActivity";
+import {
+  activityEventDetail,
+  activityEventTitle,
+} from "@/lib/journeys/activityLabels";
 import SleepTrialSection from "@/components/SleepTrialSection";
 
 // The inventory-ready flag is a one-time notification marker, not a live
@@ -75,22 +79,11 @@ function shortDate(iso: string): string {
 }
 
 function formatHistoryEntry(e: JourneyEvent) {
-  const data = e.event_data ?? {};
-  if (
-    e.event_type === "deposit_received" ||
-    e.event_type === "payment_completed"
-  ) {
-    const amount =
-      typeof data.amount === "number" ? data.amount : parseFloat(String(data.amount ?? 0));
-    const method = String(data.payment_method ?? "Unknown");
-    return {
-      title: `Payment recorded: $${amount.toFixed(2)} via ${method}`,
-      detail: undefined,
-    };
-  }
+  // Shares the Journey Activity wording map so the reconcile block can
+  // never show a raw event name or contradict the feed's title.
   return {
-    title: e.event_type,
-    detail: undefined,
+    title: activityEventTitle(e),
+    detail: activityEventDetail(e),
   };
 }
 
@@ -882,6 +875,7 @@ export default function JourneyWorkspace({
               journey={journey}
               events={events}
               followUps={followUps}
+              employees={employees}
               currentEmployee={currentEmployee}
               canModerate={canReconcile}
               onChanged={handlePanelRefresh}

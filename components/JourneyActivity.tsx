@@ -30,6 +30,12 @@ import {
 } from "@/lib/journeys/interactions";
 import { localTodayISO } from "@/lib/dates";
 import {
+  activityEventAuthor,
+  activityEventDetail,
+  activityEventTitle,
+  interactionBadgeLabel,
+} from "@/lib/journeys/activityLabels";
+import {
   FOLLOW_UP_METHOD_LABELS,
   FOLLOW_UP_TYPE_LABELS,
 } from "@/lib/journeys/queries";
@@ -88,76 +94,15 @@ function eventCategory(e: JourneyEvent): FeedFilter {
 }
 
 function interactionCategory(i: JourneyInteraction): FeedFilter {
-  if (i.source_domain === "sleep_concern" || i.source_domain === "sleep_trial") {
-    return "sleep_trial";
-  }
-  if (i.source_domain === "sleep_trial_exception") {
+  if (
+    i.source_domain === "sleep_concern" ||
+    i.source_domain === "sleep_trial" ||
+    i.source_domain === "sleep_trial_exception" ||
+    i.source_domain === "sleep_trial_protector_override"
+  ) {
     return "sleep_trial";
   }
   return i.is_internal ? "notes" : "interactions";
-}
-
-function formatEventTitle(e: JourneyEvent): string {
-  const data = e.event_data ?? {};
-  if (e.event_type === "deposit_received" || e.event_type === "payment_completed") {
-    const amount =
-      typeof data.amount === "number" ? data.amount : parseFloat(String(data.amount ?? 0));
-    const method = String(data.payment_method ?? "Unknown");
-    return `Payment recorded: $${amount.toFixed(2)} via ${method}`;
-  }
-  switch (e.event_type) {
-    case "quote_created":
-      return "Quote created";
-    case "quote_sent":
-      return "Quote sent";
-    case "delivery_scheduled":
-      return `Delivery scheduled${data.delivery_date ? ` — ${data.delivery_date}` : ""}`;
-    case "delivery_completed":
-      return "Delivery completed";
-    case "inventory_required":
-      return "Moved to Waiting for Inventory";
-    case "inventory_received":
-      return "Inventory received — ready to schedule";
-    case "trial_completed":
-      return "Sleep trial completed";
-    case "journey_cancelled":
-      return `Journey cancelled${data.reason ? ` — ${data.reason}` : ""}`;
-    case "line_item_added":
-      return `Item added to order${data.item_name ? `: ${data.item_name}` : ""}`;
-    case "line_item_updated":
-      return `Item updated${data.item_name ? `: ${data.item_name}` : ""}`;
-    case "line_item_removed":
-      return `Item removed from order${data.item_name ? `: ${data.item_name}` : ""}`;
-    default:
-      return e.event_type;
-  }
-}
-
-// Detail lines are whitelisted per event type — a type without an explicit
-// formatter renders no detail at all. Raw event_data JSON must never be
-// visible to an employee.
-function eventDetail(e: JourneyEvent): string | undefined {
-  const data = e.event_data ?? {};
-  switch (e.event_type) {
-    case "delivery_completed":
-      return data.delivered_at
-        ? `Delivered ${new Date(`${String(data.delivered_at)}T00:00:00`).toLocaleDateString()}`
-        : undefined;
-    case "line_item_added":
-    case "line_item_updated":
-    case "line_item_removed": {
-      const qty = typeof data.quantity === "number" ? data.quantity : null;
-      const price =
-        typeof data.unit_price === "number" ? `$${data.unit_price.toFixed(2)}` : null;
-      const parts = [
-        qty !== null ? `Qty ${qty}` : null,
-        price !== null ? `${price} each` : null,
-      ].filter(Boolean);
-      return parts.length > 0 ? parts.join(" · ") : undefined;
-    }
-    default:
-      return undefined;
-  }
 }
 
 // A pin is live only while important, not entered in error, and either
@@ -219,6 +164,7 @@ export default function JourneyActivity({
   journey,
   events,
   followUps,
+  employees,
   currentEmployee,
   canModerate,
   onChanged,
@@ -228,6 +174,7 @@ export default function JourneyActivity({
   journey: JourneyWithDetails;
   events: JourneyEvent[];
   followUps: FollowUp[];
+  employees: Employee[];
   currentEmployee: Employee | null;
   canModerate: boolean;
   onChanged: () => void;
@@ -462,18 +409,25 @@ export default function JourneyActivity({
         {filtered.map((item) => {
           if (item.kind === "event") {
             const e = item.event;
+            const detail = activityEventDetail(e);
+            const isPayment =
+              e.event_type === "deposit_received" ||
+              e.event_type === "payment_completed";
             return (
-              <div
-                key={`e-${e.id}`}
-                className="rounded-md border border-slate-200 bg-slate-50 p-2 text-sm"
-              >
-                <p className="font-medium text-slate-700">{formatEventTitle(e)}</p>
-                {eventDetail(e) && (
-                  <p className="text-xs text-slate-500">{eventDetail(e)}</p>
-                )}
+              <div key={`e-${e.id}`} className="px-1 py-1">
+                <p
+                  className={`text-sm ${
+                    isPayment
+                      ? "font-medium text-slate-700"
+                      : "text-slate-500"
+                  }`}
+                >
+                  {activityEventTitle(e)}
+                </p>
+                {detail && <p className="text-xs text-slate-500">{detail}</p>}
                 <p className="text-xs text-slate-400">
-                  {new Date(e.created_at).toLocaleString()} ·{" "}
-                  {e.triggered_by === "system" ? "System" : "User"}
+                  {activityEventAuthor(e.triggered_by, employees)} ·{" "}
+                  {new Date(e.created_at).toLocaleString()}
                 </p>
               </div>
             );
@@ -521,26 +475,38 @@ export default function JourneyActivity({
           const isError = !!i.entered_in_error_at;
           const isConcern = i.source_domain === "sleep_concern";
           const isSystemSourced = i.source_domain !== "manual";
+          const isSleepSourced =
+            i.source_domain === "sleep_trial" ||
+            i.source_domain === "sleep_trial_exception" ||
+            i.source_domain === "sleep_trial_protector_override";
+          const isCustomerInteraction =
+            !isError && !isConcern && !isSleepSourced && !i.is_internal;
           return (
             <div
               key={`i-${i.id}`}
-              className={`rounded-md border p-2 text-sm ${
+              className={`text-sm ${
                 isError
-                  ? "border-slate-200 bg-slate-50 opacity-60"
+                  ? "rounded-md border border-slate-200 bg-slate-50 p-2 opacity-60"
                   : isConcern
-                  ? "border-teal-200 bg-teal-50"
+                  ? "rounded-md border border-teal-200 bg-teal-50 p-2"
+                  : isSleepSourced
+                  ? "px-1 py-1"
                   : i.is_internal
-                  ? "border-slate-200 bg-white"
-                  : "border-blue-200 bg-blue-50"
+                  ? "border-l-2 border-slate-300 py-1.5 pl-3"
+                  : "border-l-2 border-brand-600 py-1.5 pl-3"
               }`}
             >
               <div className="flex items-start justify-between gap-2">
-                <p className="font-medium text-slate-800">
-                  {isConcern
-                    ? "Sleep Concern"
-                    : INTERACTION_TYPE_LABELS[i.interaction_type] ?? i.interaction_type}
+                <p
+                  className={`font-semibold uppercase tracking-wide ${
+                    isSleepSourced
+                      ? "text-[10px] text-slate-400"
+                      : "text-[10px] text-slate-500"
+                  }`}
+                >
+                  {isSleepSourced ? "Sleep Trial" : interactionBadgeLabel(i)}
                   {i.topic_label ?? i.topic ? (
-                    <span className="ml-1 font-normal text-slate-500">
+                    <span className="ml-1 font-medium normal-case text-slate-400">
                       · {i.topic_label ?? TOPIC_LABELS[i.topic!] ?? i.topic}
                     </span>
                   ) : null}
@@ -550,7 +516,17 @@ export default function JourneyActivity({
                 )}
               </div>
 
-              <p className={`mt-0.5 ${isError ? "line-through" : "text-slate-700"}`}>
+              <p
+                className={`mt-0.5 ${
+                  isError
+                    ? "line-through"
+                    : isCustomerInteraction
+                    ? "font-medium text-slate-900"
+                    : isSleepSourced
+                    ? "text-slate-500"
+                    : "text-slate-700"
+                }`}
+              >
                 {i.summary}
               </p>
 
@@ -574,8 +550,8 @@ export default function JourneyActivity({
               </div>
 
               <p className="mt-1 text-xs text-slate-400">
-                {new Date(i.occurred_at).toLocaleString()} ·{" "}
-                {i.created_by?.name ?? (isSystemSourced ? "System" : "Unknown")}
+                {i.created_by?.name ?? (isSystemSourced ? "System" : "Unknown")} ·{" "}
+                {new Date(i.occurred_at).toLocaleString()}
                 {isError &&
                   ` · Entered in error${
                     i.entered_in_error_reason ? `: ${i.entered_in_error_reason}` : ""

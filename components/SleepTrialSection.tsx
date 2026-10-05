@@ -63,6 +63,14 @@ import {
 import type { Employee, JourneyWithDetails } from "@/lib/journeys/queries";
 import Modal from "@/components/Modal";
 
+// Some EXCEPTION_TYPE_LABELS already end in "exception" (e.g. "Return
+// exception") — appending the word again would print "Return exception
+// exception denied". Add the suffix only when the label lacks it.
+function exceptionPhrase(type: string | null | undefined): string {
+  const label = exceptionTypeLabel(type);
+  return label.endsWith("exception") ? label : `${label} exception`;
+}
+
 // ============================================================
 // Next Action bar (spec 19.3 / 20). The evaluator returns
 // allowed_ui_actions already filtered by policy AND the caller's
@@ -483,7 +491,7 @@ export default function SleepTrialSection({
             className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs"
           >
             <p className="font-medium text-amber-800">
-              {exceptionTypeLabel(ex.exception_type)} exception — waiting for
+              {exceptionPhrase(ex.exception_type)} — waiting for
               approval
             </p>
             <p className="text-amber-700">
@@ -596,7 +604,7 @@ export default function SleepTrialSection({
       ))}
       {decidedItemExceptions.map((ex) => (
         <p key={ex.id} className="mt-1 text-xs text-slate-500">
-          {exceptionTypeLabel(ex.exception_type)} exception{" "}
+          {exceptionPhrase(ex.exception_type)}{" "}
           {ex.status === "APPROVED"
             ? `approved by ${ex.approver?.name ?? "unknown"}${
                 ex.self_authorized ? " (self-authorized)" : ""
@@ -2286,7 +2294,7 @@ function ExceptionRequestModal({
     <Modal onClose={onClose} dirty={reasonNote.trim() !== ""} saving={saving}>
       <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
         <h2 className="mb-2 text-lg font-semibold text-slate-900">
-          Request {exceptionTypeLabel(exceptionType)} exception
+          Request {exceptionPhrase(exceptionType)}
         </h2>
         <p className="mb-3 text-sm text-slate-600">
           {res?.explanation ??
