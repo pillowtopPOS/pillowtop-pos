@@ -108,24 +108,31 @@ function HeaderMenu({ items }: { items: MenuItem[] }) {
     if (returnFocus) buttonRef.current?.focus();
   }
 
-  // On open, move focus into the menu so Esc/arrow keys land here and
-  // not on the workspace behind it.
+  // On open, move focus into the menu so arrow keys land here, and
+  // install a CAPTURE-phase native Esc handler. Modal's close-on-Esc is
+  // a bubble-phase document listener that React's synthetic
+  // stopPropagation cannot reach — only a native capture listener that
+  // runs first can intercept it. stopImmediatePropagation covers any
+  // other same-phase document listeners.
   useEffect(() => {
     if (!open) return;
     menuRef.current
       ?.querySelector<HTMLButtonElement>('[role="menuitem"]')
       ?.focus();
+
+    function onEscape(e: globalThis.KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      close();
+    }
+    document.addEventListener("keydown", onEscape, true);
+    return () => document.removeEventListener("keydown", onEscape, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   function onMenuKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Escape") {
-      // Closes only the menu — stopping here keeps Esc from also
-      // closing the whole workspace.
-      e.stopPropagation();
-      e.preventDefault();
-      close();
-      return;
-    }
     if (!open) return;
     const buttons = menuRef.current?.querySelectorAll<HTMLButtonElement>(
       '[role="menuitem"]'
