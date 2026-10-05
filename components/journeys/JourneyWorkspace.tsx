@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Trash2, X } from "lucide-react";
+import { Check, MoreHorizontal, Trash2, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { resolveLineItemLocation } from "@/lib/journeys/fulfillment";
 import { fetchProductStock } from "@/lib/inventory/queries";
@@ -61,11 +61,15 @@ function followUpLabel(f: FollowUp): string {
   return f.type === "interaction" ? type : `${type} follow-up`;
 }
 
-// The summary bar is a glance, not a transcript — never raw notes.
-// "Follow-up: Call" (method only); "Follow-up" when no method is set.
-function followUpCompactLabel(f: FollowUp): string {
-  const method = f.method ? FOLLOW_UP_METHOD_LABELS[f.method] ?? f.method : null;
-  return method ? `Follow-up: ${method}` : "Follow-up";
+// Short date used across the workspace: "Nov 30", with the year only
+// when it isn't the current one.
+function shortDate(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`);
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(d.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
+  });
 }
 
 function formatHistoryEntry(e: JourneyEvent) {
@@ -88,12 +92,84 @@ function formatHistoryEntry(e: JourneyEvent) {
   };
 }
 
+type MenuItem = { label: string; danger?: boolean; onSelect: () => void };
+
+// "..." overflow menu in the workspace header. Rarely used / destructive
+// actions live here so the default view stays calm.
+function HeaderMenu({ items }: { items: MenuItem[] }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  function onMenuKeyDown(e: React.KeyboardEvent) {
+    const buttons = menuRef.current?.querySelectorAll<HTMLButtonElement>(
+      '[role="menuitem"]'
+    );
+    if (!buttons || buttons.length === 0) return;
+    const items = Array.from(buttons);
+    const idx = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      setOpen(false);
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      items[(idx + 1) % items.length].focus();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      items[(idx - 1 + items.length) % items.length].focus();
+    }
+  }
+
+  if (items.length === 0) return null;
+  return (
+    <div className="relative">
+      <button
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="More actions"
+        onClick={() => setOpen((o) => !o)}
+        className="flex h-10 w-10 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+      >
+        <MoreHorizontal className="h-5 w-5" />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div
+            ref={menuRef}
+            role="menu"
+            onKeyDown={onMenuKeyDown}
+            className="absolute right-0 z-20 mt-1 w-52 rounded-md border border-slate-200 bg-white py-1 shadow-lg"
+          >
+            {items.map((item) => (
+              <button
+                key={item.label}
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  item.onSelect();
+                }}
+                className={`block w-full px-3 py-2.5 text-left text-sm hover:bg-slate-50 focus-visible:outline-none focus-visible:bg-slate-100 ${
+                  item.danger ? "text-red-600" : "text-slate-700"
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function JourneyWorkspaceHeader({
   journey,
   onClose,
+  menuItems,
 }: {
   journey: JourneyWithDetails;
   onClose: () => void;
+  menuItems: MenuItem[];
 }) {
   return (
     <div className="flex items-start justify-between gap-4">
@@ -115,16 +191,19 @@ function JourneyWorkspaceHeader({
         </div>
         <p className="mt-0.5 truncate text-xs text-slate-500">
           {journey.store?.name ?? "—"}
-          {journey.employee ? ` · ${journey.employee.name}` : ""}
-          {journey.product_summary ? ` · ${journey.product_summary}` : ""}
+          {journey.employee ? ` · Owner: ${journey.employee.name}` : ""}
         </p>
       </div>
-      <button
-        onClick={onClose}
-        className="shrink-0 rounded-md p-1 text-slate-500 hover:bg-slate-100"
-      >
-        <X className="h-5 w-5" />
-      </button>
+      <div className="flex shrink-0 items-center gap-1">
+        <HeaderMenu items={menuItems} />
+        <button
+          onClick={onClose}
+          aria-label="Close workspace"
+          className="flex h-10 w-10 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
     </div>
   );
 }
@@ -144,24 +223,23 @@ function SummaryCell({ label, children }: { label: string; children?: React.Reac
   );
 }
 
+type AttentionItem = { text: string; tone: "red" | "amber" };
+
 function JourneyStateSummaryBar({
   journey,
   nextFollowUp,
-  attention,
-  transitions,
+  stateDetail,
+  attentionItems,
 }: {
   journey: JourneyWithDetails;
   nextFollowUp: FollowUp | undefined;
-  attention: string | null;
-  transitions: { label: string; event: JourneyEventType }[];
+  stateDetail: string | null;
+  attentionItems: AttentionItem[];
 }) {
-  // trial_completed is excluded from the transition-label fallback on
-  // purpose: the Sleep Trial → Completed transition is ungated, so
-  // surfacing "Complete Trial" here would recommend ending a trial early
-  // as the default next step on any night with no follow-up scheduled.
-  const nextAction = nextFollowUp
-    ? followUpCompactLabel(nextFollowUp)
-    : transitions.find((t) => t.event !== "trial_completed")?.label || null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const followUpOverdue =
+    nextFollowUp !== undefined && new Date(nextFollowUp.due_at) < today;
   return (
     <div className="mt-3 grid grid-cols-3 divide-x divide-slate-200 rounded-md border border-slate-200 bg-slate-50">
       <SummaryCell label="Current State">
@@ -171,22 +249,54 @@ function JourneyStateSummaryBar({
             <span className="text-xs font-normal text-red-600">(cancelled)</span>
           )}
         </span>
+        {stateDetail && (
+          <span className="block text-xs font-normal text-slate-500">
+            {stateDetail}
+          </span>
+        )}
       </SummaryCell>
       <SummaryCell label="Next Action">
-        {nextAction ? (
-          <span className="line-clamp-2">
-            {nextAction}
-            {nextFollowUp && (
-              <span className="text-xs font-normal text-slate-500">
-                {" "}
-                · due {new Date(nextFollowUp.due_at).toLocaleDateString()}
+        {nextFollowUp ? (
+          followUpOverdue ? (
+            <span className="text-red-700">
+              Follow-up overdue ({shortDate(nextFollowUp.due_at)})
+            </span>
+          ) : (
+            <span>
+              Follow up {shortDate(nextFollowUp.due_at)}
+              <span className="block text-xs font-normal text-slate-500">
+                {followUpLabel(nextFollowUp)}
               </span>
-            )}
-          </span>
-        ) : null}
+            </span>
+          )
+        ) : journey.current_state === "Waiting for Inventory" ? (
+          <span>Call customer when inventory arrives</span>
+        ) : (
+          <span className="font-normal text-slate-400">No action needed</span>
+        )}
       </SummaryCell>
       <SummaryCell label="Attention">
-        {attention ? <span className="text-amber-700">{attention}</span> : null}
+        {attentionItems.length === 0 ? (
+          <span className="text-xs font-normal text-slate-400">None</span>
+        ) : (
+          <>
+            {attentionItems.slice(0, 2).map((a) => (
+              <span
+                key={a.text}
+                className={`block text-xs font-normal ${
+                  a.tone === "red" ? "text-red-700" : "text-amber-700"
+                }`}
+              >
+                {a.text}
+              </span>
+            ))}
+            {attentionItems.length > 2 && (
+              <span className="block text-xs font-normal text-slate-500">
+                +{attentionItems.length - 2} more
+              </span>
+            )}
+          </>
+        )}
       </SummaryCell>
     </div>
   );
@@ -200,11 +310,11 @@ function RailCard({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-md border border-slate-200 bg-white">
-      <h3 className="border-b border-slate-100 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+    <section className="py-4 first:pt-0 last:pb-0">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
         {title}
       </h3>
-      <div className="px-3 py-2 text-sm">{children}</div>
+      <div className="mt-2 text-sm">{children}</div>
     </section>
   );
 }
@@ -289,6 +399,7 @@ export default function JourneyWorkspace({
   const [addressSaving, setAddressSaving] = useState(false);
   const [address, setAddress] = useState({ street: "", line2: "", city: "", state: "", zip: "" });
   const [lineAvailability, setLineAvailability] = useState<Record<string, number>>({});
+  const [orderEditing, setOrderEditing] = useState(false);
   const [customerContacts, setCustomerContacts] = useState<CustomerContact[]>([]);
   const mismatchedRequested = useRef<Set<string>>(new Set());
   // Bumped on every panel refresh so JourneyActivity refetches its
@@ -312,13 +423,33 @@ export default function JourneyWorkspace({
   );
   const hasDeliveryAddress =
     (journey.customer?.street_address ?? "").trim() !== "";
+  const customerAddress = [
+    journey.customer?.street_address,
+    journey.customer?.street_address_line_2,
+    [journey.customer?.city, journey.customer?.state, journey.customer?.zip_code]
+      .filter(Boolean)
+      .join(" "),
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  // Latest scheduled delivery date, if a delivery_scheduled event
+  // carries one — drives the Fulfillment status line.
+  const scheduledDate =
+    [...events]
+      .filter(
+        (e) =>
+          e.event_type === "delivery_scheduled" && e.event_data?.delivery_date
+      )
+      .map((e) => String(e.event_data?.delivery_date))
+      .pop() ?? null;
 
   const storeOptions = stores.filter((s) => s.is_active && s.id !== journey.store_id);
   const employeeOptions = employees.filter(
     (e) => e.home_store_id === journey.store_id && e.id !== journey.assigned_employee_id
   );
 
-  function openReassign(mode: "store" | "employee") {
+  function openReassign(mode: "choose" | "store" | "employee") {
     setReassignMode(mode);
     setReassignTarget("");
     setReassignReason("");
@@ -563,21 +694,63 @@ export default function JourneyWorkspace({
     addressSaving ||
     activityState.saving;
 
-  // Attention column: unresolved payment first, then the worst trial
-  // status the evaluator reports. Both are reads of existing data — no
-  // new logic about what's "wrong" with a journey.
+  // Attention column: a short prioritized list of real signals, all
+  // reads of existing data — overdue follow-up, unknown payment outcome,
+  // pending exception (manager approval), trial ending within 7 days.
   const urgentTrial = mostUrgentEvaluation(trialEvals);
   const trialStatus = urgentTrial?.headline?.status;
-  const attention =
-    events.some((e) => e.outcome === "UNKNOWN")
-      ? "Unresolved payment"
-      : trialStatus === "BLOCKED"
-      ? "Trial blocked"
-      : trialStatus === "APPROVAL_REQUIRED"
-      ? "Approval needed"
-      : trialStatus === "EXPIRED"
-      ? "Trial ended"
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const followUpOverdue =
+    nextFollowUp !== undefined && new Date(nextFollowUp.due_at) < today;
+  const daysToTrialEnd = urgentTrial?.display.end_date
+    ? Math.ceil(
+        (new Date(`${urgentTrial.display.end_date}T00:00:00`).getTime() -
+          today.getTime()) /
+          86400000
+      )
+    : null;
+  const attentionItems: AttentionItem[] = [];
+  if (followUpOverdue) attentionItems.push({ text: "Follow-up overdue", tone: "red" });
+  if (events.some((e) => e.outcome === "UNKNOWN"))
+    attentionItems.push({ text: "Payment outcome unknown", tone: "red" });
+  if (trialStatus === "APPROVAL_REQUIRED" || urgentTrial?.item?.pending_exception_id)
+    attentionItems.push({ text: "Manager approval required", tone: "amber" });
+  if (daysToTrialEnd !== null && daysToTrialEnd >= 0 && daysToTrialEnd <= 7)
+    attentionItems.push({
+      text: `Trial ends ${shortDate(urgentTrial!.display.end_date!)}`,
+      tone: "amber",
+    });
+
+  // Secondary line under Current State — only where the spec defines one.
+  const outstandingItems = lineItems.filter(
+    (i) => (lineAvailability[i.id] ?? 0) < i.quantity
+  ).length;
+  const stateDetail =
+    journey.current_state === "Sleep Trial" &&
+    urgentTrial?.display.night != null &&
+    urgentTrial.display.length_nights != null
+      ? `Night ${urgentTrial.display.night} of ${urgentTrial.display.length_nights}`
+      : journey.current_state === "Waiting for Inventory" &&
+        outstandingItems > 0
+      ? `${outstandingItems} item${outstandingItems === 1 ? "" : "s"} outstanding`
       : null;
+
+  // Rarely used / destructive actions live in the header "..." menu.
+  const menuItems: MenuItem[] = [
+    ...(canReassign
+      ? [{ label: "Reassign", onSelect: () => openReassign("choose") }]
+      : []),
+    ...(journey.current_state !== "Completed" && !journey.cancelled_at
+      ? [
+          {
+            label: "Cancel Journey…",
+            danger: true,
+            onSelect: () => onCancel(journey),
+          },
+        ]
+      : []),
+  ];
 
   return (
     <Modal
@@ -588,12 +761,16 @@ export default function JourneyWorkspace({
     >
       <div className="w-full overflow-y-auto border-l border-slate-200 bg-white shadow-lg min-[900px]:w-[90vw] min-[1280px]:w-[min(72vw,1200px)]">
         <div className="sticky top-0 z-10 border-b border-slate-200 bg-white px-6 pt-4 pb-3">
-          <JourneyWorkspaceHeader journey={journey} onClose={onClose} />
+          <JourneyWorkspaceHeader
+            journey={journey}
+            onClose={onClose}
+            menuItems={menuItems}
+          />
           <JourneyStateSummaryBar
             journey={journey}
             nextFollowUp={nextFollowUp}
-            attention={attention}
-            transitions={transitions}
+            stateDetail={stateDetail}
+            attentionItems={attentionItems}
           />
         </div>
 
@@ -637,7 +814,6 @@ export default function JourneyWorkspace({
             )}
 
             <div className="mt-6">
-              <h3 className="mb-2 text-sm font-semibold text-slate-900">Actions</h3>
               <div className="flex flex-wrap gap-2">
                 {transitions.map((t) => (
                   <button
@@ -648,14 +824,6 @@ export default function JourneyWorkspace({
                     {t.label}
                   </button>
                 ))}
-                {journey.current_state !== "Completed" && !journey.cancelled_at && (
-                  <button
-                    onClick={() => onCancel(journey)}
-                    className="rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700"
-                  >
-                    Cancel Journey
-                  </button>
-                )}
               </div>
             </div>
 
@@ -700,48 +868,67 @@ export default function JourneyWorkspace({
             )}
           </div>
 
-          <aside className="min-w-0 space-y-4">
+          <aside className="min-w-0 divide-y divide-slate-200">
             <RailCard title="Customer">
-              <RailRow label="Name">
+              <p className="text-lg font-semibold text-slate-900">
+                <span className="sr-only">Name: </span>
                 {journey.customer
                   ? `${journey.customer.first_name} ${journey.customer.last_name}`
                   : "Unknown"}
-              </RailRow>
-              <RailRow label="Phone">{journey.customer?.phone ?? "—"}</RailRow>
-              <RailRow label="Email">{journey.customer?.email ?? "—"}</RailRow>
+              </p>
+              {journey.customer?.phone && (
+                <p className="mt-0.5 text-base font-medium text-slate-800">
+                  <span className="sr-only">Phone: </span>
+                  {journey.customer.phone}
+                </p>
+              )}
+              {journey.customer?.email && (
+                <p className="mt-0.5 text-sm text-slate-600">
+                  <span className="sr-only">Email: </span>
+                  {journey.customer.email}
+                </p>
+              )}
+              {customerAddress ? (
+                <p className="mt-0.5 text-sm text-slate-600">
+                  <span className="sr-only">Address: </span>
+                  {customerAddress}
+                </p>
+              ) : (
+                <p className="mt-0.5 text-sm text-slate-500">No address on file</p>
+              )}
               {customerContacts.length > 0 && (
-                <RailRow label="Contacts">
+                <div className="mt-2 text-sm text-slate-600">
                   {customerContacts.map((c) => (
-                    <div key={c.id}>
+                    <p key={c.id}>
+                      <span className="sr-only">Additional contact: </span>
                       {c.name}
                       {c.role_label ? ` — ${c.role_label}` : ""}
                       {c.phone ? ` · ${c.phone}` : ""}
-                    </div>
+                    </p>
                   ))}
-                </RailRow>
-              )}
-              <RailRow label="Address">
-                <div>
-                  <div>
-                    {[journey.customer?.street_address, journey.customer?.street_address_line_2, journey.customer?.city, journey.customer?.state, journey.customer?.zip_code]
-                      .filter(Boolean)
-                      .join(", ") || "No address on file"}
-                  </div>
-                  {journey.customer && (
-                    <button onClick={openAddressEditor} className="mt-1 text-xs text-brand-600 hover:text-brand-700">
-                      Edit address
-                    </button>
-                  )}
                 </div>
-              </RailRow>
+              )}
+              {journey.customer && (
+                <button
+                  onClick={openAddressEditor}
+                  className="mt-1.5 text-xs text-brand-600 hover:text-brand-700"
+                >
+                  {customerAddress ? "Edit address" : "Add address"}
+                </button>
+              )}
             </RailCard>
 
             <RailCard title="Order">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-slate-500">{lineItems.length} item{lineItems.length === 1 ? "" : "s"}</span>
-                <span className="font-medium text-slate-900">
-                  Total: ${(journey.price ?? 0).toFixed(2)}
-                </span>
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-xs text-slate-500">{lineItems.length} item{lineItems.length === 1 ? "" : "s"}</span>
+                {!orderLocked && (
+                  <button
+                    onClick={() => setOrderEditing((o) => !o)}
+                    className="text-xs font-medium text-brand-600 hover:text-brand-700"
+                  >
+                    {orderEditing ? "Done editing" : "Edit order"}
+                  </button>
+                )}
               </div>
 
               {lineItemsLoading && (
@@ -752,7 +939,27 @@ export default function JourneyWorkspace({
                 <p className="text-sm text-slate-500">No items on this journey.</p>
               )}
 
-              {!lineItemsLoading && lineItems.length > 0 && (
+              {!lineItemsLoading && lineItems.length > 0 && !orderEditing && (
+                <div className="divide-y divide-slate-100">
+                  {lineItems.map((item) => (
+                    <div key={item.id} className="py-1.5">
+                      <div className="leading-snug text-slate-900">{item.item_name}</div>
+                      {!orderLocked &&
+                        item.product_id &&
+                        (lineAvailability[item.id] ?? 0) < item.quantity && (
+                          <div className="mt-0.5 text-xs text-slate-500">
+                            Availability: {lineAvailability[item.id] ?? "Loading…"}
+                          </div>
+                        )}
+                      <div className="mt-0.5 text-xs text-slate-500">
+                        Qty {item.quantity} · ${item.unit_price.toFixed(2)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {!lineItemsLoading && lineItems.length > 0 && orderEditing && !orderLocked && (
                 <div className="space-y-2">
                   {lineItems.map((item) => (
                     <div
@@ -762,49 +969,39 @@ export default function JourneyWorkspace({
                       <div className="leading-snug text-slate-900">{item.item_name}</div>
                       {item.product_id && <div className="mt-0.5 text-slate-500">Availability: {lineAvailability[item.id] ?? "Loading…"}</div>}
                       <div className="mt-1.5 flex items-center gap-2">
-                        {orderLocked ? (
-                          <span className="whitespace-nowrap text-slate-600">
-                            {item.quantity} × ${item.unit_price.toFixed(2)}
-                          </span>
-                        ) : (
-                          <>
-                            <input
-                              type="number"
-                              min={1}
-                              defaultValue={item.quantity}
-                              onBlur={(e) =>
-                                updateLineItem(item.id, { quantity: Math.max(1, parseInt(e.target.value) || 1) })
-                              }
-                              className="w-12 rounded-md border border-slate-300 px-1 py-1 text-center text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                            />
-                            <span className="text-slate-400">×</span>
-                            <span className="text-slate-400">$</span>
-                            <input
-                              type="number"
-                              min={0}
-                              step="0.01"
-                              defaultValue={item.unit_price.toFixed(2)}
-                              onBlur={(e) =>
-                                updateLineItem(item.id, { unit_price: parseFloat(e.target.value) || 0 })
-                              }
-                              className="w-20 rounded-md border border-slate-300 px-1 py-1 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                            />
-                          </>
-                        )}
+                        <input
+                          type="number"
+                          min={1}
+                          defaultValue={item.quantity}
+                          onBlur={(e) =>
+                            updateLineItem(item.id, { quantity: Math.max(1, parseInt(e.target.value) || 1) })
+                          }
+                          className="w-12 rounded-md border border-slate-300 px-1 py-1 text-center text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        />
+                        <span className="text-slate-400">×</span>
+                        <span className="text-slate-400">$</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          defaultValue={item.unit_price.toFixed(2)}
+                          onBlur={(e) =>
+                            updateLineItem(item.id, { unit_price: parseFloat(e.target.value) || 0 })
+                          }
+                          className="w-20 rounded-md border border-slate-300 px-1 py-1 text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                        />
                         <div className="ml-auto whitespace-nowrap text-slate-600">
                           ${(item.quantity * item.unit_price).toFixed(2)}
                         </div>
-                        {!orderLocked && (
-                          <button
-                            onClick={() => removeLineItem(item.id)}
-                            className="rounded p-1 text-slate-400 hover:bg-red-100 hover:text-red-600"
-                            aria-label="Remove"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                        )}
+                        <button
+                          onClick={() => removeLineItem(item.id)}
+                          className="rounded p-1 text-slate-400 hover:bg-red-100 hover:text-red-600"
+                          aria-label="Remove"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
                       </div>
-                      {canReassign && !orderLocked && (
+                      {canReassign && (
                         <div className="mt-1.5 space-y-1">
                           <select
                             value={item.fulfillment_type_override ?? "inherit"}
@@ -833,54 +1030,94 @@ export default function JourneyWorkspace({
                       )}
                     </div>
                   ))}
-                </div>
-              )}
-
-              {orderLocked && lineItems.length > 0 && (
-                <p className="mt-2 text-xs text-slate-500">
-                  Delivered — use Start Exchange to change items.
-                </p>
-              )}
-
-              {!orderLocked && (
-                <div className="mt-3">
                   <ProductPicker storeId={inventoryStoreId} onSelect={addLineItem} />
                 </div>
               )}
+
+              {journey.current_state === "Waiting for Inventory" && (
+                <p className="mt-2 text-xs text-slate-500">Waiting for inventory</p>
+              )}
+
+              <div className="mt-2 flex items-center justify-between">
+                <span>
+                  {orderLocked && lineItems.length > 0 && (
+                    <span className="text-xs text-slate-500">
+                      Delivered — use Start Exchange to change items.
+                    </span>
+                  )}
+                </span>
+                <span className="text-sm font-medium text-slate-900">
+                  Total: ${(journey.price ?? 0).toFixed(2)}
+                </span>
+              </div>
             </RailCard>
 
             <RailCard title="Financial">
-              {journey.price !== null && (
-                <RailRow label="Agreed price" align="right">
-                  <span className="font-medium">${journey.price.toFixed(2)}</span>
-                </RailRow>
-              )}
-              {journey.price !== null && (
-                <RailRow label="Paid" align="right">
-                  <span className="font-medium">${paid.toFixed(2)}</span>
-                </RailRow>
-              )}
-              {journey.price !== null && paid > journey.price && (
-                <RailRow label="Credit due" align="right">
-                  <span className="font-medium text-blue-600">
-                    ${(paid - journey.price).toFixed(2)}
-                  </span>
-                </RailRow>
-              )}
-              {balance !== null && paid <= (journey.price ?? 0) && (
-                <RailRow label="Balance due" align="right">
-                  <span className={`font-medium ${balance > 0 ? "text-amber-600" : "text-green-600"}`}>
-                    ${balance.toFixed(2)}
-                  </span>
-                </RailRow>
-              )}
-              {journey.price === null && (
-                <p className="text-slate-500">No price set.</p>
-              )}
+              {(() => {
+                const paymentUnknown = events.some((e) => e.outcome === "UNKNOWN");
+                const paidInFull =
+                  journey.price !== null && journey.price !== undefined && paid >= journey.price;
+                return (
+                  <>
+                    <p
+                      className={`text-sm font-semibold ${
+                        paymentUnknown
+                          ? "text-amber-700"
+                          : paidInFull
+                          ? "text-green-700"
+                          : "text-slate-900"
+                      }`}
+                    >
+                      {paymentUnknown
+                        ? "Payment outcome unknown"
+                        : journey.price === null || journey.price === undefined
+                        ? "No price set"
+                        : paidInFull
+                        ? "Paid in full"
+                        : paid > 0
+                        ? `Deposit paid $${paid.toFixed(2)} of $${journey.price.toFixed(2)}`
+                        : `Balance due $${(journey.price - paid).toFixed(2)}`}
+                    </p>
+                    <div className="mt-1">
+                      {journey.price !== null && journey.price !== undefined && (
+                        <RailRow label="Agreed price" align="right">
+                          ${journey.price.toFixed(2)}
+                        </RailRow>
+                      )}
+                      {journey.price !== null && journey.price !== undefined && (
+                        <RailRow label="Paid" align="right">
+                          ${paid.toFixed(2)}
+                        </RailRow>
+                      )}
+                      {balance !== null && paid <= (journey.price ?? 0) && (
+                        <RailRow label="Balance due" align="right">
+                          <span className={balance > 0 ? "text-amber-600" : "text-green-600"}>
+                            ${balance.toFixed(2)}
+                          </span>
+                        </RailRow>
+                      )}
+                      {journey.price !== null && journey.price !== undefined && paid > journey.price && (
+                        <RailRow label="Credit due" align="right">
+                          <span className="text-blue-600">
+                            ${(paid - journey.price).toFixed(2)}
+                          </span>
+                        </RailRow>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
             </RailCard>
 
             <RailCard title="Fulfillment">
-              <RailRow label="Type">
+              <p className="text-sm font-semibold text-slate-900">
+                {journey.delivered_at
+                  ? `Delivered ${shortDate(journey.delivered_at)}`
+                  : scheduledDate
+                  ? `Scheduled ${shortDate(scheduledDate)}`
+                  : "Not yet scheduled"}
+              </p>
+              <div className="mt-1 text-sm text-slate-600">
                 {canReassign && !orderLocked ? (
                   <select
                     value={journey.fulfillment_type}
@@ -896,11 +1133,14 @@ export default function JourneyWorkspace({
                 ) : (
                   journey.fulfillment_type === "pickup" ? "Pickup" : "Delivery"
                 )}
-              </RailRow>
-              {journey.delivered_at && (
-                <RailRow label="Delivered">
-                  {new Date(journey.delivered_at).toLocaleDateString()}
-                </RailRow>
+              </div>
+              {journey.fulfillment_type === "pickup" && journey.store && (
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Pickup at {journey.store.name}
+                </p>
+              )}
+              {journey.fulfillment_type === "delivery" && customerAddress && (
+                <p className="mt-0.5 text-xs text-slate-500">{customerAddress}</p>
               )}
             </RailCard>
 
@@ -991,6 +1231,14 @@ export default function JourneyWorkspace({
                   </div>
                 </div>
               )}
+
+              {reassignments.length > 0 &&
+                Date.now() - new Date(reassignments[0].created_at).getTime() <
+                  7 * 86400000 && (
+                  <p className="mt-1 text-xs text-slate-500">
+                    Reassigned {shortDate(reassignments[0].created_at.slice(0, 10))}
+                  </p>
+                )}
 
               {reassignments.length > 0 && (
                 <details className="mt-3 border-t border-slate-100 pt-2">
