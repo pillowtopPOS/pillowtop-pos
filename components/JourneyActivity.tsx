@@ -34,6 +34,7 @@ import {
   activityEventDetail,
   activityEventTitle,
   interactionBadgeLabel,
+  interactionSummaryText,
 } from "@/lib/journeys/activityLabels";
 import {
   FOLLOW_UP_METHOD_LABELS,
@@ -374,7 +375,8 @@ export default function JourneyActivity({
               key={i.id}
               className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
             >
-              <span className="font-semibold uppercase">Important</span> — {i.summary}
+              <span className="font-semibold uppercase">Important</span> —{" "}
+              {interactionSummaryText(i)}
               {i.pinned_until && (
                 <span className="ml-1 font-normal">
                   (pinned until {new Date(`${i.pinned_until}T00:00:00`).toLocaleDateString()})
@@ -479,8 +481,14 @@ export default function JourneyActivity({
             i.source_domain === "sleep_trial" ||
             i.source_domain === "sleep_trial_exception" ||
             i.source_domain === "sleep_trial_protector_override";
+          // The prominent customer-interaction look is reserved for
+          // manually-logged, customer-facing entries. Anything from
+          // another source_domain renders as a quiet line.
           const isCustomerInteraction =
-            !isError && !isConcern && !isSleepSourced && !i.is_internal;
+            !isError &&
+            !isConcern &&
+            i.source_domain === "manual" &&
+            !i.is_internal;
           return (
             <div
               key={`i-${i.id}`}
@@ -489,7 +497,7 @@ export default function JourneyActivity({
                   ? "rounded-md border border-slate-200 bg-slate-50 p-2 opacity-60"
                   : isConcern
                   ? "rounded-md border border-teal-200 bg-teal-50 p-2"
-                  : isSleepSourced
+                  : isSystemSourced
                   ? "px-1 py-1"
                   : i.is_internal
                   ? "border-l-2 border-slate-300 py-1.5 pl-3"
@@ -522,12 +530,12 @@ export default function JourneyActivity({
                     ? "line-through"
                     : isCustomerInteraction
                     ? "font-medium text-slate-900"
-                    : isSleepSourced
+                    : isSystemSourced && !isConcern
                     ? "text-slate-500"
                     : "text-slate-700"
                 }`}
               >
-                {i.summary}
+                {interactionSummaryText(i)}
               </p>
 
               {i.contact_name_snapshot && (
@@ -1320,7 +1328,7 @@ function CorrectionModal({
       <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
         <h2 className="mb-2 text-lg font-semibold text-slate-900">Add correction</h2>
         <p className="mb-3 rounded-md bg-slate-50 p-2 text-xs text-slate-600">
-          Original: {original.summary}
+          Original: {interactionSummaryText(original)}
         </p>
         <textarea
           value={text}

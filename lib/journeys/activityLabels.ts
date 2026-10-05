@@ -9,6 +9,7 @@ import {
   INTERACTION_TYPE_LABELS,
   type JourneyInteraction,
 } from "@/lib/journeys/interactions";
+import { EXCEPTION_TYPE_LABELS } from "@/lib/journeys/sleepTrial";
 import type { Employee, JourneyEvent } from "@/lib/journeys/queries";
 
 // "Oct 12" — year appended only when it isn't the current one.
@@ -162,5 +163,20 @@ export function interactionBadgeLabel(i: JourneyInteraction): string {
     INTERACTION_BADGES[i.interaction_type] ??
     INTERACTION_TYPE_LABELS[i.interaction_type] ??
     "Update"
+  );
+}
+
+// A few older sleep-trial summaries embed the raw exception type code
+// ("EARLY_EXCHANGE exception self-authorized…"). Swap known codes for
+// their labels at render time only — stored data is untouched.
+const EXCEPTION_CODE_RE = new RegExp(
+  `\\b(${Object.keys(EXCEPTION_TYPE_LABELS).join("|")})\\b`,
+  "g"
+);
+
+export function interactionSummaryText(i: JourneyInteraction): string {
+  return i.summary.replace(
+    EXCEPTION_CODE_RE,
+    (code) => EXCEPTION_TYPE_LABELS[code] ?? code
   );
 }
