@@ -1107,10 +1107,20 @@ export type PendingApproval = {
   customer_name: string | null;
 };
 
+export type ReadyJourney = {
+  journey_id: string;
+  customer_name: string | null;
+  store_name: string | null;
+  ready_after_wait_at: string;
+  assigned_employee_name: string | null;
+  item_summary: string | null;
+};
+
 export type MyWorkItem =
   | { kind: "follow_up"; data: FollowUp & { journey: JourneyWithDetails | null } }
   | { kind: "opportunity"; data: Opportunity }
-  | { kind: "approval"; data: PendingApproval };
+  | { kind: "approval"; data: PendingApproval }
+  | { kind: "ready_for_scheduling"; data: ReadyJourney };
 
 export async function fetchMyWork(): Promise<MyWorkItem[]> {
   const supabase = createClient();
@@ -1119,6 +1129,7 @@ export async function fetchMyWork(): Promise<MyWorkItem[]> {
     { data: followUps, error: followError },
     { data: opportunities, error: oppError },
     { data: approvals, error: apprError },
+    { data: ready, error: readyError },
   ] =
     await Promise.all([
       supabase
@@ -1135,11 +1146,16 @@ export async function fetchMyWork(): Promise<MyWorkItem[]> {
       // My Work APPROVAL kind). Derived at query time server-side so the
       // approver set is never a stale copy.
       supabase.rpc("list_pending_exception_approvals"),
+      // Journeys that reached Ready to Schedule from Waiting for Inventory
+      // (082). Derived like approvals — drops out when the journey is
+      // scheduled or otherwise leaves the state.
+      supabase.rpc("list_ready_journeys"),
     ]);
 
   if (followError) console.error("fetchMyWork follow_ups error", followError);
   if (oppError) console.error("fetchMyWork opportunities error", oppError);
   if (apprError) console.error("fetchMyWork approvals error", apprError);
+  if (readyError) console.error("fetchMyWork ready journeys error", readyError);
 
   const journeyIds = ((followUps as unknown as FollowUp[]) ?? [])
     .map((f) => f.journey_id)
@@ -1174,6 +1190,10 @@ export async function fetchMyWork(): Promise<MyWorkItem[]> {
 
   for (const a of (approvals as unknown as PendingApproval[]) ?? []) {
     items.push({ kind: "approval", data: a });
+  }
+
+  for (const r of (ready as unknown as ReadyJourney[]) ?? []) {
+    items.push({ kind: "ready_for_scheduling", data: r });
   }
 
   return items;
