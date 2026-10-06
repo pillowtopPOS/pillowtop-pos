@@ -1224,6 +1224,15 @@ export default function JourneyWorkspace({
               {journey.fulfillment_type === "delivery" && customerAddress && (
                 <p className="mt-0.5 text-xs text-slate-500">{customerAddress}</p>
               )}
+              {journey.current_state === "Ready to Schedule" &&
+                transitions.find((t) => t.event === "delivery_scheduled") && (
+                  <button
+                    onClick={() => onAction(journey, "delivery_scheduled")}
+                    className="mt-2 w-full rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
+                  >
+                    {transitions.find((t) => t.event === "delivery_scheduled")!.label}
+                  </button>
+                )}
             </RailCard>
 
             <RailCard title="Ownership">
