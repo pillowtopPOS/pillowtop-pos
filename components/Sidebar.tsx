@@ -19,6 +19,7 @@ import { isStoreConfirmedToday, storeSelectUrl } from "@/lib/journeys/storeConfi
 import {
   fetchCurrentEmployee,
   fetchStores,
+  fetchMyWorkCount,
   type Employee,
   type Store,
 } from "@/lib/journeys/queries";
@@ -42,6 +43,7 @@ export default function Sidebar({
   const [collapsed, setCollapsed] = useState(false);
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [stores, setStores] = useState<Store[]>([]);
+  const [workCount, setWorkCount] = useState(0);
   const [activeStoreId, setActiveStoreId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -86,6 +88,9 @@ export default function Sidebar({
         setStores(s);
         setLoading(false);
       });
+      fetchMyWorkCount()
+        .then(setWorkCount)
+        .catch((e) => console.error("fetchMyWorkCount error", e));
     });
 
     return () => {
@@ -143,7 +148,7 @@ export default function Sidebar({
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${
+                className={`relative flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${
                   isActive
                     ? "bg-brand-50 text-brand-700"
                     : "text-slate-600 hover:bg-slate-100"
@@ -151,6 +156,14 @@ export default function Sidebar({
               >
                 <Icon className="h-5 w-5 shrink-0" />
                 {!collapsed && <span>{item.label}</span>}
+                {item.href === "/my-work" && workCount > 0 &&
+                  (collapsed ? (
+                    <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-brand-600" />
+                  ) : (
+                    <span className="ml-auto rounded-full bg-brand-600 px-2 py-0.5 text-xs font-semibold text-white">
+                      {workCount}
+                    </span>
+                  ))}
               </Link>
             );
           })}

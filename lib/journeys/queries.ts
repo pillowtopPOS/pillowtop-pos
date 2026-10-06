@@ -1199,6 +1199,33 @@ export async function fetchMyWork(): Promise<MyWorkItem[]> {
   return items;
 }
 
+// Badge count for the My Work nav item — counts the same four sources as
+// fetchMyWork without hydrating journeys.
+export async function fetchMyWorkCount(): Promise<number> {
+  const supabase = createClient();
+
+  const [followUps, opportunities, approvals, ready] = await Promise.all([
+    supabase
+      .from("follow_ups")
+      .select("id", { count: "exact", head: true })
+      .is("completed_at", null),
+    supabase
+      .from("opportunities")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "new"),
+    supabase.rpc("list_pending_exception_approvals"),
+    supabase.rpc("list_ready_journeys"),
+  ]);
+
+  const rpcLen = (d: unknown) => (Array.isArray(d) ? d.length : 0);
+  return (
+    (followUps.count ?? 0) +
+    (opportunities.count ?? 0) +
+    rpcLen(approvals.data) +
+    rpcLen(ready.data)
+  );
+}
+
 export async function completeFollowUp(followUpId: string) {
   const supabase = createClient();
   const { error } = await supabase.rpc("complete_follow_up", {
