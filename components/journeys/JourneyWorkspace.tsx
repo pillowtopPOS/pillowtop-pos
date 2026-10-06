@@ -254,12 +254,14 @@ function JourneyStateSummaryBar({
   stateDetail,
   attentionItems,
   transitions,
+  onAction,
 }: {
   journey: JourneyWithDetails;
   nextFollowUp: FollowUp | undefined;
   stateDetail: string | null;
   attentionItems: AttentionItem[];
   transitions: { label: string; event: JourneyEventType }[];
+  onAction: (j: JourneyWithDetails, e: JourneyEventType) => void;
 }) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -300,9 +302,17 @@ function JourneyStateSummaryBar({
           // trial_completed stays excluded: Sleep Trial → Completed is
           // ungated, so "Complete Trial" must never read as the default
           // next step just because no follow-up is scheduled.
-          <span>
+          <button
+            onClick={() =>
+              onAction(
+                journey,
+                transitions.find((t) => t.event !== "trial_completed")!.event
+              )
+            }
+            className="text-left font-medium text-brand-600 hover:text-brand-700"
+          >
             {transitions.find((t) => t.event !== "trial_completed")!.label}
-          </span>
+          </button>
         ) : (
           <span className="font-normal text-slate-400">No action needed</span>
         )}
@@ -815,6 +825,7 @@ export default function JourneyWorkspace({
             stateDetail={stateDetail}
             attentionItems={attentionItems}
             transitions={transitions}
+            onAction={onAction}
           />
         </div>
 
@@ -1157,6 +1168,16 @@ export default function JourneyWorkspace({
                         </RailRow>
                       )}
                     </div>
+                    {balance !== null &&
+                      balance > 0 &&
+                      transitions.find((t) => t.event === "payment_completed") && (
+                        <button
+                          onClick={() => onAction(journey, "payment_completed")}
+                          className="mt-2 w-full rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
+                        >
+                          {transitions.find((t) => t.event === "payment_completed")!.label}
+                        </button>
+                      )}
                   </>
                 );
               })()}
