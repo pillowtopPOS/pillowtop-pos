@@ -694,6 +694,12 @@ export default function JourneyWorkspace({
   }
 
   async function removeLineItem(id: string) {
+    if (lineItems.length === 1 && paid > 0) {
+      const ok = window.confirm(
+        `Removing the last item leaves $${paid.toFixed(2)} paid with nothing to apply it to. Continue?`
+      );
+      if (!ok) return;
+    }
     try {
       await deleteJourneyLineItem(id);
       handlePanelRefresh();
@@ -1138,6 +1144,8 @@ export default function JourneyWorkspace({
                         ? "No price set"
                         : paidInFull
                         ? "Paid in full"
+                        : journey.price === 0 && paid > 0
+                        ? `No items on this order. $${paid.toFixed(2)} paid, shown as Credit due below.`
                         : paid > 0
                         ? `Deposit paid $${paid.toFixed(2)} of $${journey.price.toFixed(2)}`
                         : `Balance due $${(journey.price - paid).toFixed(2)}`}
