@@ -119,7 +119,7 @@ begin
     if v_req.quantity_reserved > 0 then
       perform pg_advisory_xact_lock(hashtextextended(v_req.variant_id::text || ':' || v_req.location_id::text || ':Prime', 7137));
       update public.inventory_positions
-      set committed_quantity = committed_quantity - v_req.quantity_reserved,
+      set committed_quantity = greatest(0, committed_quantity - v_req.quantity_reserved),
           updated_at = now()
       where variant_id = v_req.variant_id
         and location_id = v_req.location_id
@@ -258,7 +258,7 @@ begin
       if v_req.quantity_reserved > 0 then
         perform pg_advisory_xact_lock(hashtextextended(v_req.variant_id::text || ':' || v_req.location_id::text || ':Prime', 7137));
         update public.inventory_positions
-        set committed_quantity = committed_quantity - v_req.quantity_reserved,
+        set committed_quantity = greatest(0, committed_quantity - v_req.quantity_reserved),
             updated_at = now()
         where variant_id = v_req.variant_id
           and location_id = v_req.location_id
