@@ -88,15 +88,63 @@ export default function Sidebar({
         setStores(s);
         setLoading(false);
       });
-      fetchMyWorkCount()
-        .then(setWorkCount)
-        .catch((e) => console.error("fetchMyWorkCount error", e));
     });
 
     return () => {
       if (cronInterval) clearInterval(cronInterval);
     };
   }, [hide, router]);
+
+  // Badge freshness: refetch on route change, on window focus, and every
+  // 30s while the tab is visible. The My Work page reports its rendered
+  // count via the "my-work-count" event so the badge always equals the list
+  // there.
+  useEffect(() => {
+    if (hide) return;
+
+    let interval: ReturnType<typeof setInterval> | null = null;
+
+    const refresh = () => {
+      fetchMyWorkCount()
+        .then(setWorkCount)
+        .catch((e) => console.error("fetchMyWorkCount error", e));
+    };
+
+    const startTimer = () => {
+      if (interval == null) interval = setInterval(refresh, 30000);
+    };
+    const stopTimer = () => {
+      if (interval != null) {
+        clearInterval(interval);
+        interval = null;
+      }
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refresh();
+        startTimer();
+      } else {
+        stopTimer();
+      }
+    };
+    const onMyWorkCount = (e: Event) => {
+      const n = (e as CustomEvent<number>).detail;
+      if (typeof n === "number") setWorkCount(n);
+    };
+
+    refresh();
+    if (document.visibilityState === "visible") startTimer();
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("my-work-count", onMyWorkCount);
+
+    return () => {
+      stopTimer();
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("my-work-count", onMyWorkCount);
+    };
+  }, [hide, pathname]);
 
   if (hide) {
     return <>{children}</>;

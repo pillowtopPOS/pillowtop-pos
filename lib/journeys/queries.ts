@@ -1196,6 +1196,36 @@ export async function fetchMyWork(): Promise<MyWorkItem[]> {
     items.push({ kind: "ready_for_scheduling", data: r });
   }
 
+  // Display order: ready journeys (oldest ready first), overdue follow-ups
+  // (oldest due first), approvals (oldest request first), new opportunities
+  // (newest first), then not-yet-due follow-ups (soonest first).
+  const overdue = (d: string) => new Date(d) < new Date();
+  const rank = (i: MyWorkItem) =>
+    i.kind === "ready_for_scheduling"
+      ? 0
+      : i.kind === "follow_up"
+        ? overdue(i.data.due_at)
+          ? 1
+          : 4
+        : i.kind === "approval"
+          ? 2
+          : 3;
+  const sortKey = (i: MyWorkItem) =>
+    i.kind === "ready_for_scheduling"
+      ? i.data.ready_after_wait_at
+      : i.kind === "follow_up"
+        ? i.data.due_at
+        : i.kind === "approval"
+          ? i.data.requested_at
+          : i.data.created_at;
+  items.sort((a, b) => {
+    const d = rank(a) - rank(b);
+    if (d !== 0) return d;
+    const ta = new Date(sortKey(a)).getTime();
+    const tb = new Date(sortKey(b)).getTime();
+    return a.kind === "opportunity" ? tb - ta : ta - tb;
+  });
+
   return items;
 }
 

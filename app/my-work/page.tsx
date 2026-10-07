@@ -29,6 +29,10 @@ export default function MyWorkPage() {
     const data = await fetchMyWork();
     setItems(data);
     setLoading(false);
+    // Keep the sidebar badge equal to exactly what this page renders.
+    window.dispatchEvent(
+      new CustomEvent<number>("my-work-count", { detail: data.length })
+    );
   }
 
   async function handleComplete(id: string) {
@@ -126,29 +130,37 @@ export default function MyWorkPage() {
             if (item.kind === "ready_for_scheduling") {
               const r = item.data;
               return (
-                <Link
+                <div
                   key={r.journey_id}
-                  href={`/board?journey=${r.journey_id}`}
-                  className="block rounded-lg border border-emerald-200 bg-emerald-50 p-4 transition-colors hover:bg-emerald-100"
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4"
                 >
-                  <p className="text-sm font-medium text-slate-900">
-                    Ready to schedule: {r.customer_name ?? "Unknown customer"}
-                    <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-normal text-emerald-700">
-                      Stock ready
-                    </span>
-                  </p>
-                  <p className="mt-1 text-xs text-slate-600">
-                    Stock arrived{" "}
-                    {formatDistanceToNow(new Date(r.ready_after_wait_at), {
-                      addSuffix: true,
-                    })}
-                    {r.store_name ? ` at ${r.store_name}` : ""}
-                    {r.item_summary ? ` · ${r.item_summary}` : ""}
-                    {r.assigned_employee_name
-                      ? ` · assigned to ${r.assigned_employee_name}`
-                      : ""}
-                  </p>
-                </Link>
+                  <div>
+                    <p className="text-sm font-medium text-slate-900">
+                      Ready to schedule:{" "}
+                      {r.customer_name ?? "Unknown customer"}
+                      <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-normal text-emerald-700">
+                        Stock ready
+                      </span>
+                    </p>
+                    <p className="mt-1 text-xs text-slate-600">
+                      Stock arrived{" "}
+                      {formatDistanceToNow(new Date(r.ready_after_wait_at), {
+                        addSuffix: true,
+                      })}
+                      {r.store_name ? ` at ${r.store_name}` : ""}
+                      {r.item_summary ? ` · ${r.item_summary}` : ""}
+                      {r.assigned_employee_name
+                        ? ` · assigned to ${r.assigned_employee_name}`
+                        : ""}
+                    </p>
+                  </div>
+                  <Link
+                    href={`/board?journey=${r.journey_id}`}
+                    className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    View Journey
+                  </Link>
+                </div>
               );
             }
 
