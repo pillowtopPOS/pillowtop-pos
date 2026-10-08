@@ -16,12 +16,27 @@ import {
   setRolePermission,
 } from "@/lib/sleepTrial/permissions";
 
-// The only company-editable role grant that is not Sleep Trial scoped; lives
+// Company-editable role grants that are not Sleep Trial scoped (plus the
+// exchange/inspection keys from Exchange Builder spec Section 12); they live
 // here instead of the Sleep Trial "Who can do what" grid.
-const INVENTORY_PERMISSION = {
-  key: "inventory.reduce_below_committed",
-  label: "Reduce stock below committed reservations",
-};
+const INVENTORY_PERMISSIONS = [
+  {
+    key: "inventory.reduce_below_committed",
+    label: "Reduce stock below committed reservations",
+  },
+  {
+    key: "sleep_trial.complete_exchange",
+    label: "Complete exchanges and returns",
+  },
+  {
+    key: "inventory.inspect_returns",
+    label: "Inspect and disposition returned mattresses",
+  },
+  {
+    key: "inventory.manage_inspection_checklist",
+    label: "Edit the returned mattress inspection checklist",
+  },
+];
 
 type CompanySettings = {
   business_timezone: string;
@@ -139,15 +154,19 @@ export default function CompanySettingsForm() {
   const canEditPermissions =
     employee?.role === "owner" || employee?.role === "admin";
 
-  function permGranted(role: string): boolean {
+  function permGranted(role: string, permissionKey: string): boolean {
     // Owner always holds every permission, whether or not a row exists.
     if (role === "owner") return true;
-    return permGrants?.has(grantKey(role, INVENTORY_PERMISSION.key)) ?? false;
+    return permGrants?.has(grantKey(role, permissionKey)) ?? false;
   }
 
-  async function togglePermission(role: string, granted: boolean) {
+  async function togglePermission(
+    role: string,
+    permissionKey: string,
+    granted: boolean
+  ) {
     if (!permGrants) return;
-    const cell = grantKey(role, INVENTORY_PERMISSION.key);
+    const cell = grantKey(role, permissionKey);
     setPermSaving(cell);
     setPermError(null);
 
@@ -156,7 +175,7 @@ export default function CompanySettingsForm() {
     else next.delete(cell);
 
     try {
-      await setRolePermission(role, INVENTORY_PERMISSION.key, granted);
+      await setRolePermission(role, permissionKey, granted);
       setPermGrants(next);
     } catch (e) {
       setPermError(e instanceof Error ? e.message : "Save failed");
@@ -254,41 +273,52 @@ export default function CompanySettingsForm() {
           {permGrants !== null && (
             <div className="border-t border-slate-200 pt-4">
               <h2 className="text-sm font-medium text-slate-700">
-                Inventory permissions
+                Inventory and exchange permissions
               </h2>
               <p className="mt-1 text-xs text-slate-500">
-                Who may confirm lowering on-hand stock below what open
-                journeys have reserved.
+                Who may settle and close exchanges, inspect returned
+                mattresses, edit the inspection checklist, and confirm
+                lowering on-hand stock below what open journeys have
+                reserved.
                 {!canEditPermissions &&
-                  " Only owners and admins can change this."}
+                  " Only owners and admins can change these."}
               </p>
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
-                <span className="text-sm text-slate-700">
-                  {INVENTORY_PERMISSION.label}
-                </span>
-                <div className="flex flex-wrap gap-3">
-                  {PERMISSION_ROLES.map((r) => (
-                    <label
-                      key={r.value}
-                      className="flex items-center gap-1.5 text-xs text-slate-600"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={permGranted(r.value)}
-                        disabled={
-                          r.value === "owner" ||
-                          !canEditPermissions ||
-                          permSaving !== null
-                        }
-                        onChange={(e) =>
-                          togglePermission(r.value, e.target.checked)
-                        }
-                        className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 disabled:opacity-50"
-                      />
-                      {r.label}
-                    </label>
-                  ))}
-                </div>
+              <div className="mt-2 space-y-2">
+                {INVENTORY_PERMISSIONS.map((p) => (
+                  <div
+                    key={p.key}
+                    className="flex flex-wrap items-center justify-between gap-3"
+                  >
+                    <span className="text-sm text-slate-700">{p.label}</span>
+                    <div className="flex flex-wrap gap-3">
+                      {PERMISSION_ROLES.map((r) => (
+                        <label
+                          key={r.value}
+                          className="flex items-center gap-1.5 text-xs text-slate-600"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={permGranted(r.value, p.key)}
+                            disabled={
+                              r.value === "owner" ||
+                              !canEditPermissions ||
+                              permSaving !== null
+                            }
+                            onChange={(e) =>
+                              togglePermission(
+                                r.value,
+                                p.key,
+                                e.target.checked
+                              )
+                            }
+                            className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 disabled:opacity-50"
+                          />
+                          {r.label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
               {permError && (
                 <p className="mt-2 text-xs text-red-600">{permError}</p>

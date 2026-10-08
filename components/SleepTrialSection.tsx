@@ -2429,9 +2429,10 @@ function TrialStartCorrectionModal({
           Correct trial start date
         </h2>
         <p className="mb-3 text-sm text-slate-600">
-          {title} — current start: {currentStart || "—"}. The correction
-          applies to this mattress only; it is preserved in history and
-          recalculates its trial dates.
+          {title} — current start: {currentStart || "—"}. The date you enter
+          is this mattress&rsquo;s New Night 1 (first night of the trial).
+          The correction applies to this mattress only; it is preserved in
+          history and recalculates its trial dates.
         </p>
         <input
           type="date"
