@@ -78,7 +78,7 @@ export default function SleepTrialPermissionsGrid({
       </h3>
       <p className="mt-1 text-sm text-slate-500">
         Changes apply to everyone with that role, immediately. The owner role
-        always has every Sleep Trial permission.
+        always has every permission listed here.
         {!canEdit && " Only owners and admins can change these."}
       </p>
 
@@ -111,7 +111,14 @@ export default function SleepTrialPermissionsGrid({
                 key={p.key}
                 className="border-b border-slate-100 last:border-0"
               >
-                <td className="py-2.5 pr-4 text-slate-700">{p.label}</td>
+                <td className="py-2.5 pr-4 text-slate-700">
+                  {p.label}
+                  {p.description && (
+                    <span className="block text-xs font-normal text-slate-400">
+                      {p.description}
+                    </span>
+                  )}
+                </td>
                 {PERMISSION_ROLES.map((r) => {
                   const granted = isGranted(r.value, p.key);
                   const disabled = cellDisabled(r.value, p.key);
