@@ -1,12 +1,9 @@
 import { createClient } from "@/lib/supabase/client";
 
-// Mirrors migrations 066/084/085 and spec Section 27. Keep order stable:
-// this is the row order of the "Who can do what" grid.
-export const SLEEP_TRIAL_PERMISSIONS: {
-  key: string;
-  label: string;
-  description?: string;
-}[] = [
+// Mirrors migration 066 and spec Section 27. Keep order stable: this is the
+// row order of the "Who can do what" grid. inventory.reduce_below_committed
+// is deliberately absent — it lives in Company Settings, not Sleep Trial.
+export const SLEEP_TRIAL_PERMISSIONS = [
   {
     key: "sleep_trial.manage_concerns",
     label: "Log and update sleep concerns",
@@ -47,12 +44,6 @@ export const SLEEP_TRIAL_PERMISSIONS: {
   {
     key: "sleep_trial.view_policy_details",
     label: "See policy source details and financial impact",
-  },
-  {
-    key: "inventory.reduce_below_committed",
-    label: "Reduce stock below committed reservations",
-    description:
-      "Confirm lowering on-hand below what open journeys have reserved; the newest reservations are released and their journeys move back to Waiting for Inventory.",
   },
 ];
 

@@ -9,6 +9,19 @@ import {
   type Employee,
   type Store,
 } from "@/lib/journeys/queries";
+import {
+  fetchRolePermissionGrants,
+  grantKey,
+  PERMISSION_ROLES,
+  setRolePermission,
+} from "@/lib/sleepTrial/permissions";
+
+// The only company-editable role grant that is not Sleep Trial scoped; lives
+// here instead of the Sleep Trial "Who can do what" grid.
+const INVENTORY_PERMISSION = {
+  key: "inventory.reduce_below_committed",
+  label: "Reduce stock below committed reservations",
+};
 
 type CompanySettings = {
   business_timezone: string;
@@ -37,6 +50,10 @@ export default function CompanySettingsForm() {
   const [timezoneSupported, setTimezoneSupported] = useState(false);
   const [saving, setSaving] = useState<keyof CompanySettings | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // null while loading or when role_permission_grants doesn't exist yet
+  const [permGrants, setPermGrants] = useState<Set<string> | null>(null);
+  const [permSaving, setPermSaving] = useState<string | null>(null);
+  const [permError, setPermError] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([fetchCurrentEmployee(), fetchStores()]).then(([e, s]) => {
@@ -46,6 +63,7 @@ export default function CompanySettingsForm() {
       setCompanyId(company ?? null);
       loadSettings(company);
     });
+    fetchRolePermissionGrants().then(setPermGrants);
   }, []);
 
   async function loadSettings(company: string | undefined) {
@@ -115,6 +133,35 @@ export default function CompanySettingsForm() {
       setError(error.message);
     } else {
       setSettings((prev) => ({ ...prev, [key]: next }));
+    }
+  }
+
+  const canEditPermissions =
+    employee?.role === "owner" || employee?.role === "admin";
+
+  function permGranted(role: string): boolean {
+    // Owner always holds every permission, whether or not a row exists.
+    if (role === "owner") return true;
+    return permGrants?.has(grantKey(role, INVENTORY_PERMISSION.key)) ?? false;
+  }
+
+  async function togglePermission(role: string, granted: boolean) {
+    if (!permGrants) return;
+    const cell = grantKey(role, INVENTORY_PERMISSION.key);
+    setPermSaving(cell);
+    setPermError(null);
+
+    const next = new Set(permGrants);
+    if (granted) next.add(cell);
+    else next.delete(cell);
+
+    try {
+      await setRolePermission(role, INVENTORY_PERMISSION.key, granted);
+      setPermGrants(next);
+    } catch (e) {
+      setPermError(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setPermSaving(null);
     }
   }
 
@@ -202,6 +249,51 @@ export default function CompanySettingsForm() {
             "managers_can_manage_par_levels",
             "managers-can-manage-par-levels",
             "Allow managers to manage par levels"
+          )}
+
+          {permGrants !== null && (
+            <div className="border-t border-slate-200 pt-4">
+              <h2 className="text-sm font-medium text-slate-700">
+                Inventory permissions
+              </h2>
+              <p className="mt-1 text-xs text-slate-500">
+                Who may confirm lowering on-hand stock below what open
+                journeys have reserved.
+                {!canEditPermissions &&
+                  " Only owners and admins can change this."}
+              </p>
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+                <span className="text-sm text-slate-700">
+                  {INVENTORY_PERMISSION.label}
+                </span>
+                <div className="flex flex-wrap gap-3">
+                  {PERMISSION_ROLES.map((r) => (
+                    <label
+                      key={r.value}
+                      className="flex items-center gap-1.5 text-xs text-slate-600"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={permGranted(r.value)}
+                        disabled={
+                          r.value === "owner" ||
+                          !canEditPermissions ||
+                          permSaving !== null
+                        }
+                        onChange={(e) =>
+                          togglePermission(r.value, e.target.checked)
+                        }
+                        className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 disabled:opacity-50"
+                      />
+                      {r.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              {permError && (
+                <p className="mt-2 text-xs text-red-600">{permError}</p>
+              )}
+            </div>
           )}
 
           <div className="border-t border-slate-200 pt-4">
