@@ -289,34 +289,39 @@ begin
   where e.auth_user_id = auth.uid();
 
   for v_req in
-    select
-      jir.id, jir.journey_id, jir.quantity_reserved, jir.created_at,
-      sj.current_state, sj.assigned_employee_id,
-      (select (je.event_data ->> 'delivery_date')::date
-       from public.journey_events je
-       where je.journey_id = sj.id
-         and je.event_type = 'delivery_scheduled'
-       order by je.created_at desc
-       limit 1) as delivery_date
-    from public.journey_inventory_requirements jir
-    join public.sleep_journeys sj on sj.id = jir.journey_id
-    where jir.variant_id = p_variant_id
-      and jir.location_id = p_location_id
-      and jir.status = 'ready'
-      and jir.quantity_reserved > 0
-      and sj.cancelled_at is null
-      and sj.delivered_at is null
-      and sj.current_state in ('Waiting for Inventory', 'Ready to Schedule', 'Scheduled')
+    -- Derived table: ORDER BY may not reference a select-list alias inside
+    -- an expression, so delivery_date is materialized as a real column of q.
+    select q.*
+    from (
+      select
+        jir.id, jir.journey_id, jir.quantity_reserved, jir.created_at,
+        sj.current_state, sj.assigned_employee_id,
+        (select (je.event_data ->> 'delivery_date')::date
+         from public.journey_events je
+         where je.journey_id = sj.id
+           and je.event_type = 'delivery_scheduled'
+         order by je.created_at desc
+         limit 1) as delivery_date
+      from public.journey_inventory_requirements jir
+      join public.sleep_journeys sj on sj.id = jir.journey_id
+      where jir.variant_id = p_variant_id
+        and jir.location_id = p_location_id
+        and jir.status = 'ready'
+        and jir.quantity_reserved > 0
+        and sj.cancelled_at is null
+        and sj.delivered_at is null
+        and sj.current_state in ('Waiting for Inventory', 'Ready to Schedule', 'Scheduled')
+    ) q
     order by
-      case sj.current_state
+      case q.current_state
         when 'Waiting for Inventory' then 0
         when 'Ready to Schedule' then 1
         else 2 end,
-      case when sj.current_state in ('Waiting for Inventory', 'Ready to Schedule')
-           then jir.created_at end desc,
-      case when sj.current_state = 'Scheduled'
-           then delivery_date end desc nulls last,
-      jir.created_at desc
+      case when q.current_state in ('Waiting for Inventory', 'Ready to Schedule')
+           then q.created_at end desc,
+      case when q.current_state = 'Scheduled'
+           then q.delivery_date end desc nulls last,
+      q.created_at desc
   loop
     exit when v_deficit <= 0;
 
