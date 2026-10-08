@@ -74,10 +74,12 @@ export default function InventoryPage() {
     productId: string;
     qty: number;
     items: CommittedShortfallPreviewItem[];
+    unattributedUnits: number;
     canOverride: boolean;
   } | null>(null);
   const [overrideReason, setOverrideReason] = useState("");
   const [shortfallSaving, setShortfallSaving] = useState(false);
+  const [stockInputsVersion, setStockInputsVersion] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkCategories, setBulkCategories] = useState<ProductCategory[]>([]);
   const [bulkCategoryId, setBulkCategoryId] = useState<string>("");
@@ -370,21 +372,33 @@ export default function InventoryPage() {
     loadProducts(currentStoreId);
   }
 
+  // defaultValue inputs never re-read props: bumping the version remounts
+  // them so a cancelled or failed edit can never leave a typed number on
+  // screen, and a re-fetch shows the real stock after a save.
+  function resetStockInputs() {
+    setStockInputsVersion((v) => v + 1);
+    loadProducts(currentStoreId);
+  }
+
   async function saveStock(productId: string, value: string) {
     const qty = Math.max(0, Math.floor(Number(value) || 0));
     try {
       await adjustInventoryPosition(productId, currentStoreId, qty);
-      setProducts((prev) =>
-        prev.map((p) => (p.id === productId ? { ...p, stock: qty } : p))
-      );
+      resetStockInputs();
     } catch (e: any) {
       if (typeof e?.message === "string" && e.message.startsWith("COMMITTED_SHORTFALL:")) {
-        const [items, canOverride] = await Promise.all([
+        const [preview, canOverride] = await Promise.all([
           previewCommittedShortfall(productId, currentStoreId, qty),
           hasPermission("inventory.reduce_below_committed"),
         ]);
         setOverrideReason("");
-        setShortfall({ productId, qty, items, canOverride });
+        setShortfall({
+          productId,
+          qty,
+          items: preview.items,
+          unattributedUnits: preview.unattributed_units,
+          canOverride,
+        });
         return;
       }
       window.alert(
@@ -392,6 +406,7 @@ export default function InventoryPage() {
           ? "Something else was updating this item. Please try again."
           : e?.message ?? "Failed to update stock"
       );
+      resetStockInputs();
     }
   }
 
@@ -403,19 +418,23 @@ export default function InventoryPage() {
         overrideBelowCommitted: true,
         overrideReason: overrideReason.trim(),
       });
-      setProducts((prev) =>
-        prev.map((p) => (p.id === shortfall.productId ? { ...p, stock: shortfall.qty } : p))
-      );
       setShortfall(null);
+      resetStockInputs();
     } catch (e: any) {
       window.alert(
         e?.code === "40P01"
           ? "Something else was updating this item. Please try again."
           : e?.message ?? "Failed to update stock"
       );
+      resetStockInputs();
     } finally {
       setShortfallSaving(false);
     }
+  }
+
+  function closeShortfall() {
+    setShortfall(null);
+    resetStockInputs();
   }
 
   async function saveProduct(product: Product | null) {
@@ -661,6 +680,7 @@ export default function InventoryPage() {
                         <input
                           type="number"
                           min={0}
+                          key={`${p.id}:${p.physical ?? 0}:${stockInputsVersion}`}
                           defaultValue={p.physical ?? 0}
                           onBlur={(e) => saveStock(p.id, e.target.value)}
                           className="w-20 rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
@@ -689,16 +709,16 @@ export default function InventoryPage() {
       )}
 
       {shortfall && (
-        <Modal onClose={() => setShortfall(null)} saving={shortfallSaving}>
+        <Modal onClose={closeShortfall} saving={shortfallSaving}>
           <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
             <h2 className="mb-1 text-lg font-semibold text-slate-900">
               Stock below committed
             </h2>
             <p className="mb-4 text-sm text-slate-600">
               Setting on-hand to {shortfall.qty} leaves reserved units uncovered.
-              These journeys hold reservations and will move back to{" "}
-              <span className="font-medium">Waiting for Inventory</span>; a
-              follow-up task will be created for each.
+              {shortfall.items.some((it) => it.will_release && !it.already_waiting)
+                ? " Journeys marked below move back to Waiting for Inventory and a follow-up task will be created for each."
+                : " These journeys hold reservations for this item."}
             </p>
             <ul className="mb-4 max-h-64 space-y-2 overflow-y-auto">
               {shortfall.items.map((it) => (
@@ -717,9 +737,11 @@ export default function InventoryPage() {
                     {it.delivery_date
                       ? ` · delivery ${new Date(it.delivery_date + "T00:00:00").toLocaleDateString()}`
                       : ""}
-                    {it.will_release
-                      ? " · will move back to Waiting for Inventory"
-                      : ""}
+                    {it.will_release && it.already_waiting
+                      ? " · already waiting, no change"
+                      : it.will_release
+                        ? " · will move back to Waiting for Inventory"
+                        : ""}
                   </div>
                 </li>
               ))}
@@ -729,6 +751,12 @@ export default function InventoryPage() {
                 </li>
               )}
             </ul>
+            {shortfall.unattributedUnits > 0 && (
+              <p className="mb-4 text-sm text-slate-600">
+                {shortfall.unattributedUnits} reserved unit(s) are not tied to
+                any open journey and will be cleared.
+              </p>
+            )}
             {shortfall.canOverride ? (
               <>
                 <label className="mb-1 block text-xs font-medium text-slate-600">
@@ -743,7 +771,7 @@ export default function InventoryPage() {
                 />
                 <div className="flex justify-end gap-2">
                   <button
-                    onClick={() => setShortfall(null)}
+                    onClick={closeShortfall}
                     disabled={shortfallSaving}
                     className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                   >
@@ -764,7 +792,7 @@ export default function InventoryPage() {
                   Ask a manager to make this change
                 </p>
                 <button
-                  onClick={() => setShortfall(null)}
+                  onClick={closeShortfall}
                   className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
                 >
                   Cancel

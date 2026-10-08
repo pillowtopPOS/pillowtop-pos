@@ -182,16 +182,22 @@ export type CommittedShortfallPreviewItem = {
   current_state: string;
   quantity_reserved: number;
   delivery_date: string | null;
+  already_waiting: boolean;
   will_release: boolean;
 };
 
+export type CommittedShortfallPreview = {
+  items: CommittedShortfallPreviewItem[];
+  unattributed_units: number;
+};
+
 // Which journeys would lose reserved stock if on-hand dropped to
-// newOnHand? Empty array when there is no shortfall.
+// newOnHand? Empty items list when there is no shortfall.
 export async function previewCommittedShortfall(
   productId: string,
   storeId: string,
   newOnHand: number
-): Promise<CommittedShortfallPreviewItem[]> {
+): Promise<CommittedShortfallPreview> {
   const supabase = createClient();
   const { data, error } = await supabase.rpc("preview_committed_shortfall", {
     p_variant_id: productId,
@@ -200,9 +206,12 @@ export async function previewCommittedShortfall(
   });
   if (error) {
     console.error("preview_committed_shortfall error", error);
-    return [];
+    return { items: [], unattributed_units: 0 };
   }
-  return (data as CommittedShortfallPreviewItem[]) ?? [];
+  return {
+    items: (data?.items as CommittedShortfallPreviewItem[]) ?? [],
+    unattributed_units: (data?.unattributed_units as number) ?? 0,
+  };
 }
 
 export async function hasPermission(key: string): Promise<boolean> {
