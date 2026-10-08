@@ -162,7 +162,11 @@ export async function adjustInventoryPosition(
   });
 
   if (error) {
-    throw new Error(error.message);
+    // Keep the Postgres sqlstate (e.g. 40P01 deadlock) reachable by callers —
+    // the raw Error.message drops it otherwise.
+    const e = new Error(error.message) as Error & { code?: string };
+    e.code = error.code;
+    throw e;
   }
 
   return (data as string) ?? "";

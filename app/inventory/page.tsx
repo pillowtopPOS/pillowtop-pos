@@ -361,10 +361,18 @@ export default function InventoryPage() {
 
   async function saveStock(productId: string, value: string) {
     const qty = Math.max(0, Math.floor(Number(value) || 0));
-    await adjustInventoryPosition(productId, currentStoreId, qty);
-    setProducts((prev) =>
-      prev.map((p) => (p.id === productId ? { ...p, stock: qty } : p))
-    );
+    try {
+      await adjustInventoryPosition(productId, currentStoreId, qty);
+      setProducts((prev) =>
+        prev.map((p) => (p.id === productId ? { ...p, stock: qty } : p))
+      );
+    } catch (e: any) {
+      window.alert(
+        e?.code === "40P01"
+          ? "Something else was updating this item. Please try again."
+          : e?.message ?? "Failed to update stock"
+      );
+    }
   }
 
   async function saveProduct(product: Product | null) {

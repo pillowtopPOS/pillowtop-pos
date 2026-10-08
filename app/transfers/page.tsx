@@ -871,7 +871,13 @@ export default function TransfersPage() {
       await markTransferInTransit(t.id);
       await loadAll();
     } catch (err: any) {
-      window.alert(err.message ?? "Failed to mark in transit");
+      // Soften the raw RPC guard message (048: "committed to other orders
+      // at the origin") into something a shipper can act on.
+      const raw = err?.message ?? "";
+      const msg = /committed to other orders/i.test(raw)
+        ? "Some of these units are reserved for open customer orders. Resolve or cancel those orders before shipping."
+        : raw || "Failed to mark in transit";
+      window.alert(msg);
     }
   }
 
