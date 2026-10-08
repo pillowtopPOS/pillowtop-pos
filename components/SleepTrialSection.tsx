@@ -205,7 +205,8 @@ export default function SleepTrialSection({
   const [expandedConcern, setExpandedConcern] = useState<string | null>(null);
   const [showConcernForm, setShowConcernForm] = useState(false);
   const [showEntryForm, setShowEntryForm] = useState<string | null>(null);
-  const [showCorrection, setShowCorrection] = useState(false);
+  const [correctionEval, setCorrectionEval] =
+    useState<SleepTrialEvaluation | null>(null);
   const [requestDraft, setRequestDraft] = useState<{
     evaluation: SleepTrialEvaluation;
     exceptionType: string;
@@ -403,9 +404,13 @@ export default function SleepTrialSection({
             evaluation={orderedEvals[0]}
             onAction={(a) => handleAction(orderedEvals[0], a)}
             noApproverRequests={noApproverForRequest}
-            corrections={corrections}
+            corrections={corrections.filter(
+              (c) =>
+                c.trial_item_id === orderedEvals[0].trial_item_id ||
+                c.trial_item_id == null
+            )}
             canCorrectStart={isManager}
-            onCorrectStart={() => setShowCorrection(true)}
+            onCorrectStart={() => setCorrectionEval(orderedEvals[0])}
           />
           {orderedEvals.length > 1 &&
             (showAllTrials ? (
@@ -415,11 +420,14 @@ export default function SleepTrialSection({
                     evaluation={e}
                     onAction={(a) => handleAction(e, a)}
                     noApproverRequests={noApproverForRequest}
-                    // Journey-level corrections show only on the first
-                    // card — repeating them per mattress is noise.
-                    corrections={[]}
+                    // Corrections are item-scoped (086); legacy
+                    // journey-level rows (trial_item_id null) show only on
+                    // the first card — repeating them per mattress is noise.
+                    corrections={corrections.filter(
+                      (c) => c.trial_item_id === e.trial_item_id
+                    )}
                     canCorrectStart={isManager}
-                    onCorrectStart={() => setShowCorrection(true)}
+                    onCorrectStart={() => setCorrectionEval(e)}
                   />
                 </div>
               ))
@@ -694,12 +702,13 @@ export default function SleepTrialSection({
         />
       )}
 
-      {showCorrection && (
+      {correctionEval && (
         <TrialStartCorrectionModal
           journey={journey}
-          onClose={() => setShowCorrection(false)}
+          evaluation={correctionEval}
+          onClose={() => setCorrectionEval(null)}
           onSaved={() => {
-            setShowCorrection(false);
+            setCorrectionEval(null);
             refresh();
           }}
         />
@@ -987,7 +996,7 @@ function TrialHeroCard({
       {d?.started_on && (
         <p className="mt-0.5 text-xs text-slate-500">
           Trial started {activityShortDate(d.started_on)}
-          {canCorrectStart && (
+          {canCorrectStart && e.item?.status === "ACTIVE" && (
             <>
               {" · "}
               <button
@@ -1027,14 +1036,30 @@ function TrialHeroCard({
                     </button>
                   </p>
                   {corrHistoryOpen &&
-                    corrections.map((c) => (
-                      <p key={c.id} className="mt-1 text-xs text-slate-500">
-                        {c.previous_started_at ?? "unset"} → {c.new_started_at}{" "}
-                        by {c.corrected_by?.name ?? "Unknown"} on{" "}
-                        {new Date(c.created_at).toLocaleDateString()} —{" "}
-                        {c.reason}
-                      </p>
-                    ))}
+                    corrections.map((c) => {
+                      // Item-scoped rows name their mattress; pre-086
+                      // journey-level rows (trial_item_id null) have no
+                      // item and render without one.
+                      const itemName = c.item
+                        ? [c.item.size_snapshot, c.item.product_name_snapshot]
+                            .filter(Boolean)
+                            .join(" · ") || "Mattress"
+                        : null;
+                      return (
+                        <p key={c.id} className="mt-1 text-xs text-slate-500">
+                          {itemName && (
+                            <span className="font-medium text-slate-600">
+                              {itemName}:{" "}
+                            </span>
+                          )}
+                          {c.previous_started_at ?? "unset"} →{" "}
+                          {c.new_started_at} by{" "}
+                          {c.corrected_by?.name ?? "Unknown"} on{" "}
+                          {new Date(c.created_at).toLocaleDateString()} —{" "}
+                          {c.reason}
+                        </p>
+                      );
+                    })}
                 </div>
               )}
               <PolicyWhyPanel evaluation={e} />
@@ -2355,14 +2380,23 @@ function ConcernEntryModal({
 
 function TrialStartCorrectionModal({
   journey,
+  evaluation,
   onClose,
   onSaved,
 }: {
   journey: JourneyWithDetails;
+  evaluation: SleepTrialEvaluation;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [date, setDate] = useState(journey.delivered_at ?? "");
+  // The entered date is this mattress's new Night 1 — the evaluator's
+  // display.started_on — not the journey's delivery date.
+  const currentStart = evaluation.display?.started_on ?? "";
+  const title =
+    [evaluation.item?.size, evaluation.item?.product_name]
+      .filter(Boolean)
+      .join(" · ") || "Mattress";
+  const [date, setDate] = useState(currentStart);
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -2372,7 +2406,12 @@ function TrialStartCorrectionModal({
     setSaving(true);
     setError(null);
     try {
-      await correctTrialStart(journey.id, date, reason.trim());
+      await correctTrialStart(
+        journey.id,
+        evaluation.trial_item_id,
+        date,
+        reason.trim()
+      );
       onSaved();
     } catch (e: any) {
       setError(e.message ?? "Failed to correct trial start");
@@ -2381,8 +2420,7 @@ function TrialStartCorrectionModal({
     }
   }
 
-  const formDirty =
-    date !== (journey.delivered_at ?? "") || reason.trim() !== "";
+  const formDirty = date !== currentStart || reason.trim() !== "";
 
   return (
     <Modal onClose={onClose} dirty={formDirty} saving={saving}>
@@ -2391,8 +2429,9 @@ function TrialStartCorrectionModal({
           Correct trial start date
         </h2>
         <p className="mb-3 text-sm text-slate-600">
-          Current start: {journey.delivered_at ?? "—"}. The correction is
-          preserved in history and recalculates all trial dates.
+          {title} — current start: {currentStart || "—"}. The correction
+          applies to this mattress only; it is preserved in history and
+          recalculates its trial dates.
         </p>
         <input
           type="date"

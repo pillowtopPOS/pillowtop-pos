@@ -596,19 +596,27 @@ export async function fetchMySleepTrialPermissions(
 }
 
 // ============================================================
-// Trial-start correction history (unchanged — journey-level RPC
-// writes delivered_at, which item triggers then propagate).
+// Trial-start correction history (086 — the RPC is item-scoped:
+// it writes that item's started_on and records trial_item_id;
+// journey-level rows predating 086 have trial_item_id null).
 // ============================================================
 
 export type TrialStartCorrection = {
   id: string;
   journey_id: string;
+  trial_item_id: string | null;
   previous_started_at: string | null;
   new_started_at: string;
   reason: string;
   corrected_by_employee_id: string;
   created_at: string;
   corrected_by?: { id: string; name: string } | null;
+  item?: {
+    id: string;
+    product_name_snapshot: string | null;
+    size_snapshot: string | null;
+    unit_index: number | null;
+  } | null;
 };
 
 export async function fetchTrialStartCorrections(
@@ -618,9 +626,11 @@ export async function fetchTrialStartCorrections(
   const { data, error } = await supabase
     .from("sleep_trial_start_corrections")
     .select(
-      `id, journey_id, previous_started_at, new_started_at, reason,
-       corrected_by_employee_id, created_at,
-       corrected_by:employees!corrected_by_employee_id ( id, name )`
+      `id, journey_id, trial_item_id, previous_started_at, new_started_at,
+       reason, corrected_by_employee_id, created_at,
+       corrected_by:employees!corrected_by_employee_id ( id, name ),
+       item:sleep_trial_items!trial_item_id (
+         id, product_name_snapshot, size_snapshot, unit_index )`
     )
     .eq("journey_id", journeyId)
     .order("created_at", { ascending: false });
@@ -632,14 +642,18 @@ export async function fetchTrialStartCorrections(
   return (data as unknown as TrialStartCorrection[]) ?? [];
 }
 
+/** Correct one mattress's trial start (086). newStartedAt is the new
+ *  Night 1 for that item — not the journey's delivery date. */
 export async function correctTrialStart(
   journeyId: string,
+  trialItemId: string,
   newStartedAt: string,
   reason: string
 ) {
   const supabase = createClient();
   const { error } = await supabase.rpc("correct_trial_start", {
     p_journey_id: journeyId,
+    p_trial_item_id: trialItemId,
     p_new_started_at: newStartedAt,
     p_reason: reason,
   });
