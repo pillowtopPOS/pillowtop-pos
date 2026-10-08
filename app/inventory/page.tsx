@@ -10,7 +10,10 @@ import { fetchCurrentEmployee, fetchStores, type Employee, type Store } from "@/
 import {
   fetchProductsWithStock,
   adjustInventoryPosition,
+  previewCommittedShortfall,
+  hasPermission,
   upsertProduct,
+  type CommittedShortfallPreviewItem,
   type Product,
   type ProductWithStock,
 } from "@/lib/inventory/queries";
@@ -67,6 +70,14 @@ export default function InventoryPage() {
   const [sortBy, setSortBy] = useState<"ats" | "physical">("ats");
 
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [shortfall, setShortfall] = useState<{
+    productId: string;
+    qty: number;
+    items: CommittedShortfallPreviewItem[];
+    canOverride: boolean;
+  } | null>(null);
+  const [overrideReason, setOverrideReason] = useState("");
+  const [shortfallSaving, setShortfallSaving] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkCategories, setBulkCategories] = useState<ProductCategory[]>([]);
   const [bulkCategoryId, setBulkCategoryId] = useState<string>("");
@@ -367,11 +378,43 @@ export default function InventoryPage() {
         prev.map((p) => (p.id === productId ? { ...p, stock: qty } : p))
       );
     } catch (e: any) {
+      if (typeof e?.message === "string" && e.message.startsWith("COMMITTED_SHORTFALL:")) {
+        const [items, canOverride] = await Promise.all([
+          previewCommittedShortfall(productId, currentStoreId, qty),
+          hasPermission("inventory.reduce_below_committed"),
+        ]);
+        setOverrideReason("");
+        setShortfall({ productId, qty, items, canOverride });
+        return;
+      }
       window.alert(
         e?.code === "40P01"
           ? "Something else was updating this item. Please try again."
           : e?.message ?? "Failed to update stock"
       );
+    }
+  }
+
+  async function proceedWithShortfall() {
+    if (!shortfall) return;
+    setShortfallSaving(true);
+    try {
+      await adjustInventoryPosition(shortfall.productId, currentStoreId, shortfall.qty, {
+        overrideBelowCommitted: true,
+        overrideReason: overrideReason.trim(),
+      });
+      setProducts((prev) =>
+        prev.map((p) => (p.id === shortfall.productId ? { ...p, stock: shortfall.qty } : p))
+      );
+      setShortfall(null);
+    } catch (e: any) {
+      window.alert(
+        e?.code === "40P01"
+          ? "Something else was updating this item. Please try again."
+          : e?.message ?? "Failed to update stock"
+      );
+    } finally {
+      setShortfallSaving(false);
     }
   }
 
@@ -643,6 +686,93 @@ export default function InventoryPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {shortfall && (
+        <Modal onClose={() => setShortfall(null)} saving={shortfallSaving}>
+          <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+            <h2 className="mb-1 text-lg font-semibold text-slate-900">
+              Stock below committed
+            </h2>
+            <p className="mb-4 text-sm text-slate-600">
+              Setting on-hand to {shortfall.qty} leaves reserved units uncovered.
+              These journeys hold reservations and will move back to{" "}
+              <span className="font-medium">Waiting for Inventory</span>; a
+              follow-up task will be created for each.
+            </p>
+            <ul className="mb-4 max-h-64 space-y-2 overflow-y-auto">
+              {shortfall.items.map((it) => (
+                <li
+                  key={it.requirement_id}
+                  className="rounded-md border border-slate-200 px-3 py-2 text-sm"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-slate-900">
+                      {it.customer_name}
+                    </span>
+                    <span className="text-slate-500">{it.current_state}</span>
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    {it.quantity_reserved} reserved
+                    {it.delivery_date
+                      ? ` · delivery ${new Date(it.delivery_date + "T00:00:00").toLocaleDateString()}`
+                      : ""}
+                    {it.will_release
+                      ? " · will move back to Waiting for Inventory"
+                      : ""}
+                  </div>
+                </li>
+              ))}
+              {shortfall.items.length === 0 && (
+                <li className="text-sm text-slate-500">
+                  No open journeys hold reservations for this item.
+                </li>
+              )}
+            </ul>
+            {shortfall.canOverride ? (
+              <>
+                <label className="mb-1 block text-xs font-medium text-slate-600">
+                  Reason for reducing below committed
+                </label>
+                <input
+                  type="text"
+                  value={overrideReason}
+                  onChange={(e) => setOverrideReason(e.target.value)}
+                  placeholder="e.g. 2 units damaged in warehouse"
+                  className="mb-4 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={() => setShortfall(null)}
+                    disabled={shortfallSaving}
+                    className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={proceedWithShortfall}
+                    disabled={shortfallSaving || overrideReason.trim() === ""}
+                    className="rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                  >
+                    {shortfallSaving ? "Saving…" : "Proceed anyway"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center justify-between gap-4">
+                <p className="text-sm text-slate-600">
+                  Ask a manager to make this change
+                </p>
+                <button
+                  onClick={() => setShortfall(null)}
+                  className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+        </Modal>
       )}
 
       {uploadStep !== "idle" && (

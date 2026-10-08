@@ -487,15 +487,20 @@ export default function JourneyWorkspace({
     .join(", ");
 
   // Latest scheduled delivery date, if a delivery_scheduled event
-  // carries one — drives the Fulfillment status line.
+  // carries one — drives the Fulfillment status line. Shown only while
+  // the journey is actually Scheduled; the event stays in history after
+  // a journey is pulled back to Waiting for Inventory.
   const scheduledDate =
-    [...events]
-      .filter(
-        (e) =>
-          e.event_type === "delivery_scheduled" && e.event_data?.delivery_date
-      )
-      .map((e) => String(e.event_data?.delivery_date))
-      .pop() ?? null;
+    journey.current_state === "Scheduled"
+      ? [...events]
+          .filter(
+            (e) =>
+              e.event_type === "delivery_scheduled" &&
+              e.event_data?.delivery_date
+          )
+          .map((e) => String(e.event_data?.delivery_date))
+          .pop() ?? null
+      : null;
 
   const storeOptions = stores.filter((s) => s.is_active && s.id !== journey.store_id);
   const employeeOptions = employees.filter(

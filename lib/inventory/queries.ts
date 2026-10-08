@@ -139,7 +139,8 @@ export async function upsertProduct(product: Partial<Product> & { company_id: st
 export async function adjustInventoryPosition(
   productId: string,
   storeId: string,
-  quantity: number
+  quantity: number,
+  opts?: { overrideBelowCommitted?: boolean; overrideReason?: string }
 ) {
   const supabase = createClient();
   const {
@@ -159,6 +160,8 @@ export async function adjustInventoryPosition(
     p_reason: "manual_adjustment",
     p_reference_type: "manual",
     p_actor_id: session.user.id,
+    p_override_below_committed: opts?.overrideBelowCommitted ?? false,
+    p_override_reason: opts?.overrideReason ?? null,
   });
 
   if (error) {
@@ -170,4 +173,46 @@ export async function adjustInventoryPosition(
   }
 
   return (data as string) ?? "";
+}
+
+export type CommittedShortfallPreviewItem = {
+  journey_id: string;
+  requirement_id: string;
+  customer_name: string;
+  current_state: string;
+  quantity_reserved: number;
+  delivery_date: string | null;
+  will_release: boolean;
+};
+
+// Which journeys would lose reserved stock if on-hand dropped to
+// newOnHand? Empty array when there is no shortfall.
+export async function previewCommittedShortfall(
+  productId: string,
+  storeId: string,
+  newOnHand: number
+): Promise<CommittedShortfallPreviewItem[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("preview_committed_shortfall", {
+    p_variant_id: productId,
+    p_location_id: storeId,
+    p_new_on_hand: Math.max(0, Math.floor(newOnHand)),
+  });
+  if (error) {
+    console.error("preview_committed_shortfall error", error);
+    return [];
+  }
+  return (data as CommittedShortfallPreviewItem[]) ?? [];
+}
+
+export async function hasPermission(key: string): Promise<boolean> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("has_permission", {
+    p_key: key,
+  });
+  if (error) {
+    console.error("has_permission error", error);
+    return false;
+  }
+  return data === true;
 }
