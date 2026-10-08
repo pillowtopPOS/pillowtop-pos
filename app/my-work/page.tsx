@@ -53,6 +53,7 @@ export default function MyWorkPage() {
     deposit: "Deposit",
     interaction: "Follow-up",
     sleep_concern: "Sleep Concern",
+    inventory_shortage: "Inventory shortage",
   };
 
   return (
