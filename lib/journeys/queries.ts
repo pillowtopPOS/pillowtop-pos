@@ -78,7 +78,7 @@ export type FollowUp = {
   id: string;
   journey_id: string;
   employee_id: string | null;
-  type: "quote" | "deposit" | "interaction" | "sleep_concern";
+  type: "quote" | "deposit" | "interaction" | "sleep_concern" | "inventory_shortage";
   due_at: string;
   completed_at: string | null;
   notes: string | null;
@@ -1196,20 +1196,23 @@ export async function fetchMyWork(): Promise<MyWorkItem[]> {
     items.push({ kind: "ready_for_scheduling", data: r });
   }
 
-  // Display order: ready journeys (oldest ready first), overdue follow-ups
-  // (oldest due first), approvals (oldest request first), new opportunities
+  // Display order: inventory_shortage follow-ups first (oldest due first),
+  // then ready journeys (oldest ready first), overdue follow-ups (oldest
+  // due first), approvals (oldest request first), new opportunities
   // (newest first), then not-yet-due follow-ups (soonest first).
   const overdue = (d: string) => new Date(d) < new Date();
   const rank = (i: MyWorkItem) =>
-    i.kind === "ready_for_scheduling"
-      ? 0
-      : i.kind === "follow_up"
-        ? overdue(i.data.due_at)
-          ? 1
-          : 4
-        : i.kind === "approval"
-          ? 2
-          : 3;
+    i.kind === "follow_up" && i.data.type === "inventory_shortage"
+      ? -1
+      : i.kind === "ready_for_scheduling"
+        ? 0
+        : i.kind === "follow_up"
+          ? overdue(i.data.due_at)
+            ? 1
+            : 4
+          : i.kind === "approval"
+            ? 2
+            : 3;
   const sortKey = (i: MyWorkItem) =>
     i.kind === "ready_for_scheduling"
       ? i.data.ready_after_wait_at
