@@ -97,3 +97,111 @@ export async function discardExchangeDraft(actionId: string): Promise<void> {
   });
   if (error) throw new Error(error.message);
 }
+
+// ---------------------------------------------------------------------------
+// EB-2 (migration 088): commit / edit / cancel / refund / complete.
+// ---------------------------------------------------------------------------
+
+export type UpdateExchangeDraftParams = {
+  /** Changing the product re-checks the company, resets the price to the
+   *  default and clears any price-override reason. */
+  replacementProductId?: string | null;
+  fulfillmentMethod?: FulfillmentMethod | null;
+  otherFeesCents?: number | null;
+  taxCents?: number | null;
+  /** sleep_trial.complete_exchange only; requires priceReason. */
+  replacementPriceCents?: number | null;
+  priceReason?: string | null;
+};
+
+/** Edits a DRAFT. Null/absent fields stay unchanged. Starter or a
+ *  sleep_trial.complete_exchange holder; price overrides also require the
+ *  permission and a non-empty reason. Returns the action id. */
+export async function updateExchangeDraft(
+  actionId: string,
+  params: UpdateExchangeDraftParams = {}
+): Promise<string> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("update_exchange_draft", {
+    p_action_id: actionId,
+    p_replacement_product_id: params.replacementProductId ?? null,
+    p_fulfillment_method: params.fulfillmentMethod ?? null,
+    p_other_fees_cents: params.otherFeesCents ?? null,
+    p_tax_cents: params.taxCents ?? null,
+    p_replacement_price_cents: params.replacementPriceCents ?? null,
+    p_price_reason: params.priceReason ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
+}
+
+/** Commits a DRAFT exchange: creates the linked child journey with its
+ *  flagged lines, moves the trial item to EXCHANGE_IN_PROGRESS and locks
+ *  the evaluation, fee and money on the action. Idempotent — a COMMITTED
+ *  action returns its existing child journey id. */
+export async function commitSleepTrialAction(
+  actionId: string
+): Promise<string> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("commit_sleep_trial_action", {
+    p_action_id: actionId,
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
+}
+
+/** Cancels a COMMITTED exchange: cancels the child journey through the
+ *  guarded path and reopens the original trial item. Refused once the
+ *  original is received, the replacement is delivered, or the child has a
+ *  SUCCEEDED payment. */
+export async function cancelSleepTrialAction(
+  actionId: string,
+  reason: string | null
+): Promise<void> {
+  const supabase = createClient();
+  const { error } = await supabase.rpc("cancel_sleep_trial_action", {
+    p_action_id: actionId,
+    p_reason: reason,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export type ExchangeRefundMethod =
+  | "card"
+  | "cash"
+  | "check"
+  | "store_credit"
+  | "none";
+
+/** Documents the refund owed to the customer (complete_exchange holder,
+ *  COMMITTED only). Amount must equal refund_owed_cents unless a different
+ *  settled amount is being documented — then a reference is required. */
+export async function recordExchangeRefund(
+  actionId: string,
+  method: ExchangeRefundMethod,
+  amountCents: number,
+  reference: string | null
+): Promise<void> {
+  const supabase = createClient();
+  const { error } = await supabase.rpc("record_exchange_refund", {
+    p_action_id: actionId,
+    p_method: method,
+    p_amount_cents: amountCents,
+    p_reference: reference,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** Completes a COMMITTED exchange once all milestones are met, in order:
+ *  replacement delivered, original received, money settled. Closes the
+ *  trial item as EXCHANGED. "Original received" is EB-4 functionality, so
+ *  completion is unreachable until then. */
+export async function completeSleepTrialAction(
+  actionId: string
+): Promise<void> {
+  const supabase = createClient();
+  const { error } = await supabase.rpc("complete_sleep_trial_action", {
+    p_action_id: actionId,
+  });
+  if (error) throw new Error(error.message);
+}

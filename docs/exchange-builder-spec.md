@@ -126,16 +126,16 @@ The original journey stays in its current state while the exchange is in progres
 
 ### 7.1 Creation (at commit, one atomic security-definer RPC)
 
-- Same `customer_id`. `store_id` = the starter's active store. `assigned_employee_id` = the starter (this is the sale attribution for commission data).
-- `fulfillment_type` from the builder (delivery or pickup). The customer already has an address if the original was a delivery; the existing delivery-address guard still applies.
-- Do NOT emit `quote_sent` and do NOT create a deposit follow-up (no quote noise). The required-deposit policy must not apply to an exchange journey; Devin confirms how `calculate_required_deposit` is bypassed (the balance is the difference only).
-- Line items (flagged `exchange_action_id`):
-  1. Replacement mattress at `replacement_price_cents` (quantity 1; a split king pair is two lines).
+- Same `customer_id`. `store_id` = the committer's `active_store_id` JWT claim (`auth.jwt() -> 'user_metadata' ->> 'active_store_id'`), validated against the company; falls back to the committer's `employees.home_store_id`. No client parameter. `assigned_employee_id` = the committer; `sale_attribution_employee_id` on the exchange record stays the starter (the sale attribution for commission data).
+- `fulfillment_type` from the builder (delivery or pickup, default delivery). Commit checks the customer has a street address for delivery BEFORE inserting anything; the existing delivery-address trigger also applies.
+- The child is inserted at its default `Quoted` state. Do NOT emit `journey_updated_to_sold`, `quote_sent`, or any quote/deposit event. `calculate_required_deposit` returns 0 for `sale_kind = 'EXCHANGE'` via a CASE in its select list. If the net lands at zero or below, the credit line insert flips the child to Sold through the existing `reevaluate_journey_balance` logic; if the net is positive, the child stays in Quoted until paid through the normal Record Payment.
+- Line items inserted in this order, all flagged `exchange_action_id`, `unit_price` = cents / 100.0 as numeric:
+  1. Replacement mattress at `replacement_price_cents` (quantity `replacement_quantity`, default 1). Stamped `trial_ineligible_reason = 'EXCHANGE_NO_NEW_TRIAL'` for display.
   2. "Exchange fee" at `+locked_fee_cents` (only if fee > 0).
-  3. "Credit: returned [item]" at `-min(original_credit_cents, replacement + fee)`. Never below zero total.
-  4. "Other fees" at `+other_fees_cents` (only if > 0).
-- The journey price then equals `max(0, net)`; any leftover credit is `refund_owed_cents` on the exchange record (Section 8). Line `unit_price` has no CHECK, so negative lines are allowed, but nobody has used one yet: Devin must verify the `sync_journey_price` trigger, the UI line list, and every price/balance display with a negative line, and report before relying on it.
-- Created directly in Sold: if price > 0, the customer pays the difference through the normal Record Payment on the child journey; if price = 0, `reevaluate_journey_balance` moves it to Sold without a payment. Devin must report the exact safe mechanism for creating a Sold journey without a payment event (the DB does not validate event order today; do not rely on a hole; use a security-definer RPC and document it).
+  3. "Other fees" at `+other_fees_cents` (only if > 0).
+  4. "Exchange credit — [item]" at `-credit_line_cents` LAST (only if > 0), where `credit_line_cents = least(original_credit_cents, replacement + fee + other_fees)`. The credit lands last so a zero-or-below net flips the child to Sold here and never below zero.
+- The journey price equals `max(0, net)`; any leftover credit is `refund_owed_cents` on the exchange record (Section 8). Line `unit_price` has no CHECK, so negative lines are allowed.
+- Replacement trial (EB-2): only rule `NONE` is supported. Commit reads the ORIGINAL item's snapshotted `resolved_terms.exchange.replacement_trial` entry for exchange number `exchanges_used + 1` and refuses with a clear message if the rule is `FULL_NEW`, `REMAINING`, `FIXED`, or anything else. The other rules ship in EB-2b.
 
 ### 7.2 Inventory (reused, not rebuilt)
 
@@ -167,6 +167,7 @@ All values integer cents, stored on the exchange record. Signed: positive means 
 | `other_fees_cents` | manual, labeled |
 | `net_cents` | replacement + fee + other - credit (signed) |
 | `refund_owed_cents` | max(0, -net) |
+| `credit_line_cents` (not stored; computed at commit) | least(original_credit_cents, replacement + fee + other_fees). The negative credit line on the child uses this capped value so the journey price equals max(0, net) and never goes below zero; the uncapped remainder of the credit is `refund_owed_cents`. |
 | `tax_cents` | manual entry, labeled "enter manually; tax engine not built yet". Recorded on the exchange only; NOT on the journey. |
 | `commission_basis_cents` | = net_cents, signed (negative on a downgrade). Captured for the future commission engine. |
 | `sale_attribution_employee_id` | the starter |
