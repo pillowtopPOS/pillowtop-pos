@@ -1507,6 +1507,10 @@ begin
   if v_action.status <> 'DRAFT' then
     raise exception 'Only a draft can be committed (status %)', v_action.status;
   end if;
+  if coalesce(v_action.replacement_variant_id,
+              v_action.replacement_product_id) is null then
+    raise exception 'Choose a replacement mattress before committing this exchange';
+  end if;
 
   select * into v_item
   from public.sleep_trial_items
@@ -1655,7 +1659,9 @@ begin
   from public.products p
   where p.id = coalesce(v_action.replacement_variant_id,
                         v_action.replacement_product_id);
-  v_repl_name := coalesce(v_repl_name, 'Replacement item');
+  if v_repl_name is null then
+    raise exception 'Replacement product not found in this company';
+  end if;
 
   -- Child: default Quoted state; same customer; committer assigned;
   -- exchange kind; parent + action links; fulfillment from the action.
@@ -1866,6 +1872,9 @@ begin
 
   if v_action.original_received_on is not null then
     raise exception 'The original mattress was already received — this exchange cannot be cancelled';
+  end if;
+  if v_action.refund_recorded_at is not null then
+    raise exception 'A refund was already recorded on this exchange — it cannot be cancelled';
   end if;
   if exists (
     select 1 from public.sleep_journeys sj
