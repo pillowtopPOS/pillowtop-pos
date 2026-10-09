@@ -1137,6 +1137,7 @@ as $$
 declare
   v_item public.sleep_trial_items%rowtype;
   v_reason text;
+  v_expected text;
   v_employee uuid;
 begin
   if p_action not in ('EXCHANGE','RETURN') then
@@ -1144,6 +1145,11 @@ begin
   end if;
   v_reason := case when p_action = 'EXCHANGE'
                    then 'EXCHANGED' else 'RETURNED' end;
+  -- Computed here, not inline in the IF: plpgsql ends an IF condition at the
+  -- first THEN, so a CASE ... THEN inside it is a syntax error.
+  v_expected := case when p_action = 'EXCHANGE'
+                     then 'EXCHANGE_IN_PROGRESS'
+                     else 'RETURN_IN_PROGRESS' end;
 
   select * into v_item
   from public.sleep_trial_items
@@ -1153,12 +1159,9 @@ begin
     raise exception 'Trial item not found';
   end if;
   -- Only the matching in-progress state can close as EXCHANGED/RETURNED.
-  if v_item.status <> case when p_action = 'EXCHANGE'
-                           then 'EXCHANGE_IN_PROGRESS'
-                           else 'RETURN_IN_PROGRESS' end then
+  if v_item.status <> v_expected then
     raise exception 'Trial item must be in % to close it as % (status %)',
-      case when p_action = 'EXCHANGE'
-           then 'EXCHANGE_IN_PROGRESS' else 'RETURN_IN_PROGRESS' end,
+      v_expected,
       v_reason,
       v_item.status;
   end if;
