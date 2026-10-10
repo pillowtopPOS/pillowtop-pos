@@ -660,7 +660,13 @@ export default function JourneyWorkspace({
       .catch(() => setExchangeParent(null));
     if (journey.exchange_action_id) {
       getExchangeAction(journey.exchange_action_id)
-        .then((a) => setExchangeRefundCents(a.refund_owed_cents ?? 0))
+        .then((a) =>
+          setExchangeRefundCents(
+            a.status === "COMMITTED" && a.refund_recorded_at == null
+              ? a.refund_owed_cents ?? 0
+              : 0
+          )
+        )
         .catch(() => setExchangeRefundCents(0));
     } else {
       setExchangeRefundCents(0);

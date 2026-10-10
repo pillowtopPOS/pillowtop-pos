@@ -226,6 +226,7 @@ export type ExchangeActionRead = {
   tax_cents: number | null;
   net_cents: number | null;
   refund_owed_cents: number | null;
+  refund_recorded_at: string | null;
   fulfillment_method: FulfillmentMethod | null;
   created_by: string | null;
   created_by_name: string | null;

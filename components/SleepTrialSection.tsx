@@ -272,7 +272,11 @@ export default function SleepTrialSection({
         .filter((a) => a.status === "COMMITTED")
         .map(async (a) => {
           const full = await getExchangeAction(a.action_id).catch(() => null);
-          return [a.trial_item_id, full?.refund_owed_cents ?? 0] as const;
+          const owed =
+            full?.status === "COMMITTED" && full?.refund_recorded_at == null
+              ? full.refund_owed_cents ?? 0
+              : 0;
+          return [a.trial_item_id, owed] as const;
         })
     );
     setRefundByItem(

@@ -653,15 +653,36 @@ export async function fetchCurrentEmployee(): Promise<Employee | null> {
   return (data as unknown as Employee) ?? null;
 }
 
-/** Live (not CLOSED/VOIDED) sleep-trial item statuses per journey id.
- *  Used by the board to hide journeys whose whole trial is parked in an
- *  exchange/return — display only, nothing else reads this. */
-export async function fetchLiveTrialItemStatuses(
-  journeyIds: string[]
-): Promise<Map<string, string[]>> {
+/** Live (not CLOSED/VOIDED) sleep-trial item statuses for journeys that
+ *  have at least one item parked in an exchange/return. Two queries so no
+ *  .in() list ever grows with board size — the first selects only the
+ *  affected journey ids (inherently a small set), the second fetches
+ *  their live items. On any error: logs and returns an empty map, so
+ *  callers keep showing every journey instead of hiding wrongly. */
+export async function fetchLiveTrialItemStatuses(): Promise<
+  Map<string, string[]>
+> {
   const map = new Map<string, string[]>();
-  if (journeyIds.length === 0) return map;
   const supabase = createClient();
+
+  const { data: parked, error: parkedError } = await supabase
+    .from("sleep_trial_items")
+    .select("journey_id")
+    .in("status", ["EXCHANGE_IN_PROGRESS", "RETURN_IN_PROGRESS"]);
+  if (parkedError) {
+    console.error(
+      "fetchLiveTrialItemStatuses parked-items error",
+      parkedError
+    );
+    return map;
+  }
+  const journeyIds = Array.from(
+    new Set(
+      ((parked ?? []) as { journey_id: string }[]).map((r) => r.journey_id)
+    )
+  );
+  if (journeyIds.length === 0) return map;
+
   const { data, error } = await supabase
     .from("sleep_trial_items")
     .select("journey_id,status")

@@ -200,7 +200,7 @@ export default function BoardPage() {
         .select("journey_id")
         .in("event_type", ["deposit_received", "payment_completed"])
         .eq("outcome", "UNKNOWN"),
-      fetchLiveTrialItemStatuses(data.map((j) => j.id)),
+      fetchLiveTrialItemStatuses(),
     ]);
     setUnresolvedJourneyIds(
       new Set((unresolved ?? []).map((e: { journey_id: string }) => e.journey_id))
@@ -273,9 +273,9 @@ export default function BoardPage() {
     }
     // Panel actions (committing/cancelling an exchange) change trial-item
     // statuses, so the board-hide set is refreshed alongside the journey.
-    fetchLiveTrialItemStatuses(
-      Array.from(new Set([...journeys.map((j) => j.id), journeyId]))
-    ).then((m) => setHiddenJourneyIds(hiddenByInProgressAction(m)));
+    fetchLiveTrialItemStatuses().then((m) =>
+      setHiddenJourneyIds(hiddenByInProgressAction(m))
+    );
   }
 
   useEffect(() => {
