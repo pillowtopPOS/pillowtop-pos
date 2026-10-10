@@ -707,6 +707,7 @@ declare
   v_child_paid numeric := 0;
   v_child_paid_at timestamptz;
   v_child_has_payment boolean := false;
+  v_child_reserved boolean := false;
   v_can_start boolean;
   v_can_complete boolean;
   v_can_void boolean;
@@ -765,6 +766,26 @@ begin
     where je.journey_id = v_action.child_journey_id
       and je.event_type in ('deposit_received','payment_completed')
       and je.outcome = 'SUCCEEDED';
+
+    -- "Replacement reserved" = the child's own inventory requirement is
+    -- fully reserved — the same journey_inventory_requirements.status the
+    -- readiness evaluator (028) flips to 'ready'. Rows only exist once the
+    -- company's reservation trigger fires (default paid_in_full), so a
+    -- child whose payment hasn't been taken yet reads open: PillowTop
+    -- hasn't actually reserved anything. No ready timestamp is stored, so
+    -- the milestone carries no date.
+    select
+      exists (
+        select 1
+        from public.journey_inventory_requirements r
+        where r.journey_id = v_action.child_journey_id
+          and r.status <> 'cancelled')
+      and not exists (
+        select 1
+        from public.journey_inventory_requirements r
+        where r.journey_id = v_action.child_journey_id
+          and r.status = 'pending')
+    into v_child_reserved;
   end if;
 
   v_can_start := public.has_permission('sleep_trial.start_exchange');
@@ -874,9 +895,9 @@ begin
     'child_has_succeeded_payment', v_child_has_payment,
     'milestones', jsonb_build_object(
       'replacement_reserved', jsonb_build_object(
-        'done', v_action.committed_at is not null,
-        'at', v_action.committed_at,
-        'by', v_committed_by_name),
+        'done', v_child_reserved,
+        'at', null,
+        'by', null),
       'replacement_delivered', jsonb_build_object(
         'done', v_action.replacement_delivered_on is not null,
         'at', v_action.replacement_delivered_on,
@@ -942,7 +963,7 @@ begin
   v_can_complete := public.has_permission('sleep_trial.complete_exchange');
 
   return coalesce((
-    select jsonb_agg(r.row order by r.committed_at)
+    select jsonb_agg(r.payload order by r.committed_at)
     from (
       select
         a.committed_at,
@@ -950,7 +971,9 @@ begin
           'action_id', a.id,
           'journey_id', a.journey_id,
           'child_journey_id', a.child_journey_id,
-          'customer_name', c.first_name || ' ' || c.last_name,
+          'customer_name',
+            btrim(coalesce(c.first_name, '') || ' ' ||
+                  coalesce(c.last_name, '')),
           'replacement_product_name', p.item_name,
           'committed_at', a.committed_at,
           'days_committed',
@@ -960,7 +983,7 @@ begin
             (a.committed_at
                < now() - make_interval(days => co.exchange_stalled_days))
             and jsonb_array_length(open_ms.items) > 0
-        ) as row
+        ) as payload
       from public.sleep_trial_actions a
       join public.sleep_journeys sj on sj.id = a.journey_id
       join public.customers c on c.id = sj.customer_id

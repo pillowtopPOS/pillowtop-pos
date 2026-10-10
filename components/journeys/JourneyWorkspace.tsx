@@ -258,24 +258,35 @@ function JourneyWorkspaceHeader({
             </button>
           </p>
         )}
-        {exchangeParent && exchangeAction && (
-          <p className="mt-0.5 text-xs text-slate-500">
-            {exchangeAction.original_received_on
-              ? `Original mattress received on ${shortDate(
-                  exchangeAction.original_received_on
-                )}`
-              : "Original mattress not yet received"}
-            {exchangeAction.refund_recorded_at != null
-              ? ` · Refund recorded: ${
-                  exchangeAction.refund_method ?? "—"
-                }, ${shortDate(exchangeAction.refund_recorded_at)}`
-              : (exchangeAction.refund_owed_cents ?? 0) > 0
-              ? ` · Refund owed to customer: $${(
-                  (exchangeAction.refund_owed_cents ?? 0) / 100
-                ).toFixed(2)}`
-              : ""}
-          </p>
-        )}
+        {exchangeParent &&
+          exchangeAction &&
+          // original_received_on arrives with 091; a pre-091 action read
+          // lacks it entirely — render nothing rather than guess.
+          exchangeAction.original_received_on !== undefined &&
+          (exchangeAction.status === "COMMITTED" ? (
+            <p className="mt-0.5 text-xs text-slate-500">
+              {exchangeAction.original_received_on
+                ? `Original mattress received on ${shortDate(
+                    exchangeAction.original_received_on
+                  )}`
+                : "Original mattress not yet received"}
+              {exchangeAction.refund_recorded_at != null
+                ? ` · Refund recorded: ${
+                    exchangeAction.refund_method ?? "—"
+                  }, ${shortDate(exchangeAction.refund_recorded_at)}`
+                : (exchangeAction.refund_owed_cents ?? 0) > 0
+                ? ` · Refund owed to customer: $${(
+                    (exchangeAction.refund_owed_cents ?? 0) / 100
+                  ).toFixed(2)}`
+                : ""}
+            </p>
+          ) : exchangeAction.status === "COMPLETED" &&
+            exchangeAction.original_received_on ? (
+            <p className="mt-0.5 text-xs text-slate-500">
+              Original mattress received on{" "}
+              {shortDate(exchangeAction.original_received_on)}
+            </p>
+          ) : null)}
       </div>
       <div className="flex shrink-0 items-center gap-1">
         <HeaderMenu items={menuItems} />

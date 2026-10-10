@@ -200,7 +200,7 @@ export default function ExchangeMilestoneCard({
       {owed > 0 && !refundRecorded && (
         <p className="mt-1.5 text-xs font-medium text-amber-800">
           Refund owed to customer: {fmt(owed)}. Issue it in your payment
-          system. PillowTop will record it in a later update.
+          system, then click Record refund.
         </p>
       )}
       {refundRecorded && (
@@ -311,7 +311,7 @@ export default function ExchangeMilestoneCard({
             <h3 className="text-sm font-semibold text-slate-900">
               Cancel exchange
             </h3>
-            {action.child_has_succeeded_payment ? (
+            {action.cancel_block_code === "payment_on_record" ? (
               <>
                 <p className="mt-2 text-sm text-slate-700">
                   {PAID_CUSTOMER_MESSAGE}
@@ -341,13 +341,15 @@ export default function ExchangeMilestoneCard({
               </>
             ) : (
               <>
-                <p className="mt-2 text-sm text-slate-700">
-                  Cancel this exchange? This puts the original mattress back
-                  on the customer&apos;s sleep trial and cancels the
-                  replacement order. The approved exception used for this
-                  exchange is used up and will NOT come back. If the
-                  customer wants another exchange, a new exception is
-                  needed.
+                <p className="mt-2 text-sm font-semibold text-slate-900">
+                  Cancel this exchange?
+                </p>
+                <p className="mt-1 text-sm text-slate-700">
+                  This puts the original mattress back on the customer&apos;s
+                  sleep trial and cancels the replacement order. The
+                  approved exception used for this exchange is used up and
+                  will NOT come back. If the customer wants another
+                  exchange, a new exception is needed.
                 </p>
                 <label className="mt-3 block text-xs font-medium text-slate-700">
                   Why is it being cancelled? (required)
