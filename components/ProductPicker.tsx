@@ -9,6 +9,10 @@ export type ProductSelection = {
   productSummary: string;
   price: number | null;
   salePrice: number | null;
+  /** The catalog row when a product was picked — absent for custom items.
+   *  Callers that need product flags (e.g. trial eligibility) read them
+   *  here instead of re-fetching. */
+  product?: Product;
 };
 
 type ProductPickerProps = {
@@ -21,6 +25,10 @@ type ProductPickerProps = {
    *  a custom description can't be priced or reserved. */
   allowCustom?: boolean;
   placeholder?: string;
+  /** Names the location the stock count is read at (e.g. "Stock at
+   *  Downtown Warehouse: 3") — without it the bare number hides which
+   *  location it refers to. */
+  stockLabel?: string;
 };
 
 function priceDisplay(product: Product): { onSale: boolean; unitPrice: number } {
@@ -31,7 +39,7 @@ function priceDisplay(product: Product): { onSale: boolean; unitPrice: number } 
   return { onSale, unitPrice };
 }
 
-export default function ProductPicker({ storeId, onSelect, filter, allowCustom = true, placeholder }: ProductPickerProps) {
+export default function ProductPicker({ storeId, onSelect, filter, allowCustom = true, placeholder, stockLabel }: ProductPickerProps) {
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [results, setResults] = useState<Product[]>([]);
@@ -93,6 +101,7 @@ export default function ProductPicker({ storeId, onSelect, filter, allowCustom =
       productSummary: product.item_name,
       price: product.price ?? null,
       salePrice: onSale ? product.sale_price : null,
+      product,
     });
   }
 
@@ -184,7 +193,8 @@ export default function ProductPicker({ storeId, onSelect, filter, allowCustom =
               </div>
               {storeId && (
                 <p className="mt-1 text-xs text-slate-500">
-                  Stock: {stockMap[product.id]?.ats ?? 0}
+                  {stockLabel ? `Stock at ${stockLabel}` : "Stock"}:{" "}
+                  {stockMap[product.id]?.ats ?? 0}
                 </p>
               )}
             </li>

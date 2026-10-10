@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   quoteSleepTrialAction,
@@ -19,9 +19,11 @@ import {
   formatMoney,
   type SleepTrialEvaluation,
 } from "@/lib/journeys/sleepTrial";
-import type {
-  JourneyWithDetails,
-  Employee,
+import {
+  fetchStores,
+  type JourneyWithDetails,
+  type Employee,
+  type Store,
 } from "@/lib/journeys/queries";
 import type { Product } from "@/lib/inventory/queries";
 import Modal from "@/components/Modal";
@@ -89,7 +91,8 @@ export default function ExchangeBuilderModal({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [storeId, setStoreId] = useState<string>(journey.store_id);
-  const [catEligible, setCatEligible] = useState<Record<string, boolean>>({});
+  const [stores, setStores] = useState<Store[]>([]);
+  const [catEligible, setCatEligible] = useState<Record<string, boolean> | null>(null);
   const committedRef = useRef(false);
   // A draft created by this builder session is discarded on close; a draft
   // that existed before (someone else's or an older one of mine) is left
@@ -105,15 +108,17 @@ export default function ExchangeBuilderModal({
   const hasDeliveryAddress =
     (journey.customer?.street_address ?? "").trim() !== "";
 
-  // Sourcing location for stock display: the session's active store, which
-  // is also where commit places the child journey (falls back to the
-  // original journey's store).
+  // Stock display + trial eligibility both read catalog/store reference
+  // data once on mount. The stock location is the session's active store
+  // (also where commit places the child; falls back to the original
+  // journey's store) resolved through the fulfillment rule.
   useEffect(() => {
     const supabase = createClient();
     supabase.auth.getSession().then(({ data: { session } }) => {
       const active = session?.user?.user_metadata?.active_store_id;
       if (active) setStoreId(active);
     });
+    fetchStores().then(setStores);
     supabase
       .from("product_categories")
       .select("id, sleep_trial_eligible")
@@ -126,14 +131,31 @@ export default function ExchangeBuilderModal({
       });
   }, []);
 
-  // Mattresses only: the same predicate stv_bind_trial_items uses to decide
-  // what earns a trial — product-level sleep_trial_eligible wins; NULL
-  // inherits the category flag; default false. Accessories never qualify.
-  const mattressFilter = useCallback(
-    (p: Product) =>
-      p.sleep_trial_eligible ?? catEligible[p.category_id ?? ""] ?? false,
-    [catEligible]
-  );
+  // Stock is shown at the line's sourcing location, same rule as
+  // resolveLineItemLocation: pickup reads the store, delivery reads the
+  // store's assigned warehouse (falling back to the store). The number is
+  // labeled with that location's name so it can't be misread.
+  const activeStore = stores.find((s) => s.id === storeId) ?? null;
+  const sourcingId =
+    fulfillment === "pickup"
+      ? storeId
+      : activeStore?.assigned_warehouse_id ?? storeId;
+  const sourcingName =
+    stores.find((s) => s.id === sourcingId)?.name ?? null;
+
+  // Any catalog product may be the replacement; the trial-eligibility
+  // predicate is only informational now. Product flag wins, NULL inherits
+  // the category flag, default false — the same rule
+  // stv_bind_trial_items uses. null = not yet decidable (flags loading).
+  const earnsTrial = (p: Product | undefined): boolean | null => {
+    if (!p) return null;
+    if (p.sleep_trial_eligible !== null && p.sleep_trial_eligible !== undefined) {
+      return p.sleep_trial_eligible;
+    }
+    if (catEligible === null) return null;
+    return catEligible[p.category_id ?? ""] ?? false;
+  };
+  const selectedEarnsTrial = earnsTrial(selection?.product);
 
   async function loadQuote(productId: string | null) {
     const q = await quoteSleepTrialAction(trialItemId, "EXCHANGE", productId);
@@ -162,11 +184,20 @@ export default function ExchangeBuilderModal({
       setOtherFeesInput(centsToDollars(a.other_fees_cents));
       setTaxInput(centsToDollars(a.tax_cents));
       if (a.replacement_product_id) {
+        // The draft stores only the product id — pull the row back for the
+        // trial-eligibility check (products_public is the safe read path).
+        const supabase = createClient();
+        const { data: prod } = await supabase
+          .from("products_public")
+          .select("*")
+          .eq("id", a.replacement_product_id)
+          .maybeSingle();
         setSelection({
           productId: a.replacement_product_id,
           productSummary: a.replacement_product_name ?? "Replacement",
           price: (a.replacement_price_cents ?? 0) / 100,
           salePrice: null,
+          product: (prod as Product) ?? undefined,
         });
         setPriceInput(centsToDollars(a.replacement_price_cents));
         await loadQuote(a.replacement_product_id);
@@ -483,10 +514,10 @@ export default function ExchangeBuilderModal({
             {step === "replacement" && (
               <div className="mt-3">
                 <ProductPicker
-                  storeId={storeId}
-                  filter={mattressFilter}
+                  storeId={sourcingId}
+                  stockLabel={sourcingName ?? undefined}
                   allowCustom={false}
-                  placeholder="Search mattresses"
+                  placeholder="Search products"
                   onSelect={selectReplacement}
                 />
                 {selection?.productId && (
@@ -497,6 +528,11 @@ export default function ExchangeBuilderModal({
                     </span>
                     {" — "}
                     {formatMoney(replacementCents)}
+                  </p>
+                )}
+                {selectedEarnsTrial === false && (
+                  <p className="mt-1 text-xs text-slate-500">
+                    This product does not earn a sleep trial.
                   </p>
                 )}
                 {rule !== null && (
@@ -603,6 +639,12 @@ export default function ExchangeBuilderModal({
                       $0 — no payment needed
                     </p>
                   )}
+                  {(taxCents ?? 0) > 0 && (
+                    <p className="mt-1 text-xs text-slate-500">
+                      Tax of {formatMoney(taxCents)} is collected separately; it
+                      is not part of the amount above.
+                    </p>
+                  )}
                   {ruleBlocks && (
                     <p className="mt-1 text-xs text-amber-700">
                       Commit is blocked: the replacement would get a new trial
@@ -675,6 +717,17 @@ export default function ExchangeBuilderModal({
                     <span className="capitalize">{fulfillment}</span>
                   </p>
                 </div>
+                {(taxCents ?? 0) > 0 && (
+                  <p className="text-xs text-slate-500">
+                    Tax of {formatMoney(taxCents)} is collected separately; it
+                    is not part of the amount above.
+                  </p>
+                )}
+                {selectedEarnsTrial === false && (
+                  <p className="text-xs text-slate-500">
+                    This product does not earn a sleep trial.
+                  </p>
+                )}
                 <p className="text-xs text-slate-600">
                   This ends the current sleep trial on this mattress. You can
                   cancel only until the old mattress is received.
