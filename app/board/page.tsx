@@ -346,6 +346,10 @@ export default function BoardPage() {
           window.alert("Journey has no price set");
           return;
         }
+        if (journey.price <= 0) {
+          window.alert("No payment is due on this journey.");
+          return;
+        }
 
         const totalPaid = await fetchTotalPaid(journey.id);
         const remaining = journey.price - totalPaid;
@@ -655,7 +659,14 @@ export default function BoardPage() {
                   </td>
                   <td className="px-4 py-2">{j.customer?.phone ?? "—"}</td>
                   <td className="px-4 py-2">{j.product_summary ?? "—"}</td>
-                  <td className="px-4 py-2">{j.current_state}</td>
+                  <td className="px-4 py-2">
+                    {j.current_state}
+                    {j.sale_kind === "EXCHANGE" && (
+                      <span className="ml-1 rounded-full bg-indigo-100 px-1.5 py-px text-[10px] font-medium text-indigo-700">
+                        Exchange
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-2">{j.store?.name ?? "—"}</td>
                   <td className="px-4 py-2">{j.employee?.name ?? "—"}</td>
                   <td className="px-4 py-2">{j.cancelled_at ? "Yes" : "No"}</td>
@@ -1157,6 +1168,13 @@ function JourneyCard({
       {journey.product_summary && (
         <p className="truncate text-[10px] leading-tight text-slate-600">
           {journey.product_summary}
+        </p>
+      )}
+      {journey.sale_kind === "EXCHANGE" && (
+        <p>
+          <span className="inline-block rounded-full bg-indigo-100 px-1.5 py-px text-[10px] font-medium text-indigo-700">
+            Exchange
+          </span>
         </p>
       )}
       {journey.employee && (

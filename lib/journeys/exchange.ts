@@ -205,3 +205,110 @@ export async function completeSleepTrialAction(
   });
   if (error) throw new Error(error.message);
 }
+
+// ---------------------------------------------------------------------------
+// EB-3a (migration 089): read RPCs for the Exchange Builder UI.
+// ---------------------------------------------------------------------------
+
+export type ExchangeActionRead = {
+  action_id: string;
+  status: "DRAFT" | "COMMITTED" | "COMPLETED" | "CANCELLED";
+  action: SleepTrialActionKind;
+  trial_item_id: string;
+  journey_id: string;
+  child_journey_id: string | null;
+  replacement_product_id: string | null;
+  replacement_product_name: string | null;
+  replacement_price_cents: number | null;
+  original_credit_cents: number | null;
+  exchange_fee_cents: number | null;
+  other_fees_cents: number | null;
+  tax_cents: number | null;
+  net_cents: number | null;
+  refund_owed_cents: number | null;
+  fulfillment_method: FulfillmentMethod | null;
+  created_by: string | null;
+  created_by_name: string | null;
+  created_at: string;
+  committed_at: string | null;
+};
+
+/** One action row, with names resolved. Visibility-checked like the quote
+ *  RPC — raises "Not authorized for this journey" for other companies. */
+export async function getExchangeAction(
+  actionId: string
+): Promise<ExchangeActionRead> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("get_exchange_action", {
+    p_action_id: actionId,
+  });
+  if (error) throw new Error(error.message);
+  return data as ExchangeActionRead;
+}
+
+export type JourneyExchangeAction = {
+  action_id: string;
+  status: "DRAFT" | "COMMITTED";
+  action: SleepTrialActionKind;
+  trial_item_id: string;
+  journey_id: string;
+  child_journey_id: string | null;
+  replacement_product_id: string | null;
+  replacement_product_name: string | null;
+  created_by: string | null;
+  created_by_name: string | null;
+  created_at: string;
+  committed_at: string | null;
+};
+
+export type ExchangeParentLink = {
+  parent_journey_id: string;
+  parent_customer_name: string | null;
+  original_mattress_name: string | null;
+  action_id: string | null;
+  action_status: string | null;
+};
+
+export type JourneyExchangeInfo = {
+  /** The open (DRAFT) or COMMITTED action for each trial item on the
+   *  journey — history (CANCELLED/COMPLETED) is not returned. */
+  actions: JourneyExchangeAction[];
+  /** Set only when this journey is itself an exchange child. */
+  parent: ExchangeParentLink | null;
+};
+
+/** All live exchange actions on a journey plus the parent link when the
+ *  journey is an exchange child. */
+export async function getJourneyExchangeActions(
+  journeyId: string
+): Promise<JourneyExchangeInfo> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("get_journey_exchange_actions", {
+    p_journey_id: journeyId,
+  });
+  if (error) throw new Error(error.message);
+  return data as JourneyExchangeInfo;
+}
+
+// ---------------------------------------------------------------------------
+// Dollars <-> cents. The database stores integer cents; inputs collect
+// dollars. One shared conversion pair so every builder field converts the
+// same way (hand-tested: "1200"->120000, "1,234.56"->123456,
+// "$9.999"->1000 (banker-free Math.round), ""->null, "abc"->null,
+// "-5"->null).
+// ---------------------------------------------------------------------------
+
+/** Parses a dollars input ("1200", "$1,234.56") to integer cents. Returns
+ *  null for blank, non-numeric, or negative input. */
+export function dollarsToCents(input: string): number | null {
+  const s = input.trim().replace(/^\$/, "").replace(/,/g, "");
+  if (s === "") return null;
+  const n = Number(s);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.round(n * 100);
+}
+
+/** Integer cents -> "1234.56" for editable inputs (no $ sign). */
+export function centsToDollars(cents: number | null | undefined): string {
+  return ((cents ?? 0) / 100).toFixed(2);
+}

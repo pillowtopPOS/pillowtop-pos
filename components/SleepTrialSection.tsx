@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   evaluateSleepTrialItems,
   fetchTrialStartCorrections,
@@ -66,7 +67,12 @@ import type {
 } from "@/lib/journeys/queries";
 import { activityShortDate } from "@/lib/journeys/activityLabels";
 import { localTodayISO } from "@/lib/dates";
+import {
+  getJourneyExchangeActions,
+  type JourneyExchangeInfo,
+} from "@/lib/journeys/exchange";
 import Modal from "@/components/Modal";
+import ExchangeBuilderModal from "@/components/ExchangeBuilderModal";
 
 // Some EXCEPTION_TYPE_LABELS already end in "exception" (e.g. "Return
 // exception") — appending the word again would print "Return exception
@@ -131,7 +137,8 @@ const ACTION_PRIORITY = [
 // disabled with a "Coming soon" tooltip so the bar is honest about
 // what exists today.
 const COMING_SOON_ACTIONS = new Set([
-  "START_EXCHANGE",
+  // START_EXCHANGE and VIEW_EXCHANGE are backed (EB-3a). START_RETURN and
+  // VIEW_RETURN stay disabled — returns are a later phase.
   "START_RETURN",
   // REQUEST_PROTECTOR_EXCEPTION stays unbacked: PROTECTOR_OVERRIDE is
   // deliberately rejected by request_trial_item_exception (074) — the
@@ -139,7 +146,6 @@ const COMING_SOON_ACTIONS = new Set([
   // request has no path yet.
   "REQUEST_PROTECTOR_EXCEPTION",
   "SCHEDULE_FOLLOW_UP",
-  "VIEW_EXCHANGE",
   "VIEW_RETURN",
   "VIEW_HISTORY",
 ]);
@@ -222,7 +228,13 @@ export default function SleepTrialSection({
   const [showNote, setShowNote] = useState(false);
   const [showAllTrials, setShowAllTrials] = useState(false);
   const [showExceptionHistory, setShowExceptionHistory] = useState(false);
+  // EB-3a: live (DRAFT/COMMITTED) exchange actions per trial item, from
+  // get_journey_exchange_actions — sleep_trial_actions is not
+  // client-readable directly.
+  const [exchangeInfo, setExchangeInfo] = useState<JourneyExchangeInfo | null>(null);
+  const [builderEval, setBuilderEval] = useState<SleepTrialEvaluation | null>(null);
   const exceptionRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
 
   // The evaluator is the single source of trial truth (ST-4). Heroes render
   // most-urgent-first (spec 19.1); "+N more" expands the rest.
@@ -233,7 +245,7 @@ export default function SleepTrialSection({
   const load = async () => {
     const evalMap = await evaluateSleepTrialItems([journey.id]);
     setEvals(evalMap.get(journey.id) ?? []);
-    const [c, ex, corr, ct, iex, appr, pk] = await Promise.all([
+    const [c, ex, corr, ct, iex, appr, pk, xinfo] = await Promise.all([
       fetchSleepConcerns(journey.id),
       fetchSleepTrialExceptions(journey.id),
       fetchTrialStartCorrections(journey.id),
@@ -241,6 +253,7 @@ export default function SleepTrialSection({
       fetchTrialItemExceptions(journey.id),
       fetchExceptionApprovers(journey.id),
       fetchMySleepTrialPermissions(currentEmployee?.role),
+      getJourneyExchangeActions(journey.id).catch(() => null),
     ]);
     setConcerns(c);
     setExceptions(ex);
@@ -249,6 +262,7 @@ export default function SleepTrialSection({
     setItemExceptions(iex);
     setApprovers(appr);
     setPermKeys(pk);
+    setExchangeInfo(xinfo);
     setIssues(await fetchSleepConcernIssues(c.map((x) => x.id)));
     // Entries load upfront (one fetch per concern) so the collapsed
     // card summary and the expanded history share the same data.
@@ -338,6 +352,25 @@ export default function SleepTrialSection({
   // backing reach here — unbacked entries render disabled (Coming soon).
   function handleAction(e: SleepTrialEvaluation, action: string) {
     switch (action) {
+      case "START_EXCHANGE":
+        // The builder itself decides create-vs-continue: an open DRAFT on
+        // this item (from exchangeInfo) renders the resume screen instead
+        // of failing on create_exchange_draft.
+        setBuilderEval(e);
+        break;
+      case "VIEW_EXCHANGE": {
+        // Item is EXCHANGE_IN_PROGRESS — jump to the replacement journey.
+        // A paired item also emits VIEW_EXCHANGE; its action lives on the
+        // sibling, so fall back to any committed action's child link.
+        const childId =
+          exchangeInfo?.actions.find(
+            (a) => a.trial_item_id === e.trial_item_id && a.child_journey_id
+          )?.child_journey_id ??
+          exchangeInfo?.actions.find((a) => a.child_journey_id)
+            ?.child_journey_id;
+        if (childId) router.push(`/board?journey=${childId}`);
+        break;
+      }
       case "ADD_SLEEP_CONCERN":
         setShowConcernForm(true);
         break;
@@ -760,6 +793,30 @@ export default function SleepTrialSection({
           }}
         />
       )}
+
+      {builderEval && (
+        <ExchangeBuilderModal
+          journey={journey}
+          evaluation={builderEval}
+          existingAction={
+            exchangeInfo?.actions.find(
+              (a) =>
+                a.trial_item_id === builderEval.trial_item_id &&
+                a.status === "DRAFT"
+            ) ?? null
+          }
+          currentEmployee={currentEmployee}
+          canCompleteExchange={permKeys.has("sleep_trial.complete_exchange")}
+          onClose={() => setBuilderEval(null)}
+          onChanged={refresh}
+          onCommitted={(childId) => {
+            setBuilderEval(null);
+            // Board's ?journey= param opens the workspace for the child —
+            // the salesperson lands on the replacement sale.
+            router.push(`/board?journey=${childId}`);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -942,7 +999,10 @@ function TrialHeroCard({
         <div className="min-w-0">
           <p
             className={`text-xs font-medium ${
-              tone === "red"
+              e.item?.status === "EXCHANGE_IN_PROGRESS" ||
+              e.item?.status === "RETURN_IN_PROGRESS"
+                ? "text-teal-700"
+                : tone === "red"
                 ? "text-red-700"
                 : tone === "amber"
                 ? "text-amber-700"
@@ -951,7 +1011,11 @@ function TrialHeroCard({
                 : "text-slate-600"
             }`}
           >
-            {isMinNightWait
+            {e.item?.status === "EXCHANGE_IN_PROGRESS"
+              ? "Exchange in progress"
+              : e.item?.status === "RETURN_IN_PROGRESS"
+              ? "Return in progress"
+              : isMinNightWait
               ? `Not yet ${actionNoun} eligible`
               : isEligible
               ? eligibleViaException

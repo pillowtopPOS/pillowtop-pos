@@ -579,6 +579,9 @@ export async function fetchMySleepTrialPermissions(
       "sleep_trial.approve_exceptions",
       "sleep_trial.approve_own_exceptions",
       "sleep_trial.override_protector",
+      "sleep_trial.start_exchange",
+      "sleep_trial.start_return",
+      "sleep_trial.complete_exchange",
     ]);
   }
   const supabase = createClient();

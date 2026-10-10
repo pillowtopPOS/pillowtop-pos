@@ -14,6 +14,13 @@ export type ProductSelection = {
 type ProductPickerProps = {
   storeId?: string;
   onSelect: (selection: ProductSelection) => void;
+  /** Optional client-side filter applied to search results (e.g. the
+   *  Exchange Builder's mattresses-only rule). */
+  filter?: (product: Product) => boolean;
+  /** Defaults to true. The exchange builder requires a catalog product —
+   *  a custom description can't be priced or reserved. */
+  allowCustom?: boolean;
+  placeholder?: string;
 };
 
 function priceDisplay(product: Product): { onSale: boolean; unitPrice: number } {
@@ -24,7 +31,7 @@ function priceDisplay(product: Product): { onSale: boolean; unitPrice: number } 
   return { onSale, unitPrice };
 }
 
-export default function ProductPicker({ storeId, onSelect }: ProductPickerProps) {
+export default function ProductPicker({ storeId, onSelect, filter, allowCustom = true, placeholder }: ProductPickerProps) {
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [results, setResults] = useState<Product[]>([]);
@@ -51,8 +58,9 @@ export default function ProductPicker({ storeId, onSelect }: ProductPickerProps)
     }
 
     setLoading(true);
-    searchProducts(debouncedQuery).then(async (products) => {
+    searchProducts(debouncedQuery).then(async (found) => {
       if (ignore) return;
+      const products = filter ? found.filter(filter) : found;
       setResults(products);
 
       if (storeId && products.length > 0) {
@@ -72,7 +80,7 @@ export default function ProductPicker({ storeId, onSelect }: ProductPickerProps)
     return () => {
       ignore = true;
     };
-  }, [debouncedQuery, storeId]);
+  }, [debouncedQuery, storeId, filter]);
 
   function selectProduct(product: Product) {
     const { onSale, unitPrice } = priceDisplay(product);
@@ -147,7 +155,7 @@ export default function ProductPicker({ storeId, onSelect }: ProductPickerProps)
               setSelectedProduct(null);
             }
           }}
-          placeholder="e.g. Helix Midnight"
+          placeholder={placeholder ?? "e.g. Helix Midnight"}
           className="w-full rounded-md border border-slate-300 py-2 pl-9 pr-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
         />
       </div>
@@ -185,12 +193,16 @@ export default function ProductPicker({ storeId, onSelect }: ProductPickerProps)
       )}
 
       {!loading && debouncedQuery && results.length === 0 && !custom && (
-        <button
-          onClick={useCustom}
-          className="text-left text-sm text-brand-600 hover:text-brand-700"
-        >
-          Use &ldquo;{query}&rdquo; as a custom item
-        </button>
+        allowCustom ? (
+          <button
+            onClick={useCustom}
+            className="text-left text-sm text-brand-600 hover:text-brand-700"
+          >
+            Use &ldquo;{query}&rdquo; as a custom item
+          </button>
+        ) : (
+          <p className="text-xs text-slate-500">No matching mattresses.</p>
+        )
       )}
 
       {custom && (

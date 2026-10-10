@@ -1,9 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Check, MoreHorizontal, Trash2, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { resolveLineItemLocation } from "@/lib/journeys/fulfillment";
+import {
+  getJourneyExchangeActions,
+  type ExchangeParentLink,
+} from "@/lib/journeys/exchange";
 import { fetchProductStock } from "@/lib/inventory/queries";
 import {
   completeFollowUp,
@@ -187,10 +192,14 @@ function HeaderMenu({ items }: { items: MenuItem[] }) {
 
 function JourneyWorkspaceHeader({
   journey,
+  exchangeParent,
+  onOpenParent,
   onClose,
   menuItems,
 }: {
   journey: JourneyWithDetails;
+  exchangeParent: ExchangeParentLink | null;
+  onOpenParent: () => void;
   onClose: () => void;
   menuItems: MenuItem[];
 }) {
@@ -206,6 +215,11 @@ function JourneyWorkspaceHeader({
           <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
             {journey.current_state}
           </span>
+          {journey.sale_kind === "EXCHANGE" && (
+            <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
+              Exchange
+            </span>
+          )}
           {journey.cancelled_at && (
             <span className="rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-700">
               Cancelled
@@ -216,6 +230,19 @@ function JourneyWorkspaceHeader({
           {journey.store?.name ?? "—"}
           {journey.employee ? ` · Owner: ${journey.employee.name}` : ""}
         </p>
+        {exchangeParent && (
+          <p className="mt-0.5 text-xs text-slate-500">
+            Exchange of{" "}
+            {exchangeParent.original_mattress_name ?? "the original mattress"}
+            ,{" "}
+            <button
+              onClick={onOpenParent}
+              className="font-medium text-brand-600 hover:underline"
+            >
+              Journey
+            </button>
+          </p>
+        )}
       </div>
       <div className="flex shrink-0 items-center gap-1">
         <HeaderMenu items={menuItems} />
@@ -254,6 +281,7 @@ function JourneyStateSummaryBar({
   stateDetail,
   attentionItems,
   transitions,
+  exchangeAwaitingPayment,
   onAction,
 }: {
   journey: JourneyWithDetails;
@@ -261,6 +289,9 @@ function JourneyStateSummaryBar({
   stateDetail: string | null;
   attentionItems: AttentionItem[];
   transitions: { label: string; event: JourneyEventType }[];
+  // EB-3a: an exchange child sitting in Quoted with a positive balance is
+  // waiting on money, not a workflow step (spec 16).
+  exchangeAwaitingPayment: boolean;
   onAction: (j: JourneyWithDetails, e: JourneyEventType) => void;
 }) {
   const today = new Date();
@@ -283,7 +314,9 @@ function JourneyStateSummaryBar({
         )}
       </SummaryCell>
       <SummaryCell label="Next Action">
-        {nextFollowUp ? (
+        {exchangeAwaitingPayment ? (
+          <span>Waiting for the customer&apos;s payment</span>
+        ) : nextFollowUp ? (
           followUpOverdue ? (
             <span className="text-red-700">
               Follow-up overdue ({shortDate(nextFollowUp.due_at)})
@@ -413,7 +446,9 @@ export default function JourneyWorkspace({
   onCancel: (j: JourneyWithDetails) => void;
   onRefresh: () => void;
 }) {
+  const router = useRouter();
   const transitions = STATE_TRANSITIONS[journey.current_state];
+  const isExchangeChild = journey.sale_kind === "EXCHANGE";
 
   const paid = events
     .filter(
@@ -425,6 +460,19 @@ export default function JourneyWorkspace({
     .reduce((sum, e) => sum + (typeof e.event_data?.amount === "number" ? e.event_data.amount : 0), 0);
 
   const balance = journey.price !== null && journey.price !== undefined ? journey.price - paid : null;
+
+  // An exchange child in Quoted with money still owed: Next Action reads
+  // "Waiting for the customer's payment" and Record Payment is primary.
+  const exchangeAwaitingPayment =
+    isExchangeChild &&
+    journey.current_state === "Quoted" &&
+    (journey.price ?? 0) > 0 &&
+    paid < (journey.price ?? 0);
+
+  // A $0 journey (e.g. an even-or-credit exchange that flipped straight to
+  // Sold, or an exchange child priced at zero) must never offer Record
+  // Payment — the payment would write a bad record.
+  const paymentAllowed = (journey.price ?? 0) > 0;
 
   const nextFollowUp = followUps
     .filter((f) => !f.completed_at)
@@ -594,6 +642,20 @@ export default function JourneyWorkspace({
     }
   }
 
+  // Exchange child: who/what it was exchanged from. Read through the
+  // security-definer RPC (089) — sleep_trial_actions isn't client-readable.
+  const [exchangeParent, setExchangeParent] =
+    useState<ExchangeParentLink | null>(null);
+  useEffect(() => {
+    if (!isExchangeChild) {
+      setExchangeParent(null);
+      return;
+    }
+    getJourneyExchangeActions(journey.id)
+      .then((info) => setExchangeParent(info.parent))
+      .catch(() => setExchangeParent(null));
+  }, [journey.id, isExchangeChild]);
+
   useEffect(() => {
     setLineItemsLoading(true);
     fetchJourneyLineItems(journey.id).then((items) => {
@@ -717,8 +779,11 @@ export default function JourneyWorkspace({
 
   // Once delivered, the order is historical fact — line items can't be
   // edited in place; the correct path is the Start Exchange flow.
+  // An exchange child's flagged lines are RLS-locked for their whole life
+  // (088) — changes happen through the exchange, never direct edits.
   const orderLocked =
     Boolean(journey.delivered_at) ||
+    isExchangeChild ||
     ["Sleep Trial", "Completed"].includes(journey.current_state);
 
   async function markFollowUpComplete(id: string) {
@@ -827,6 +892,12 @@ export default function JourneyWorkspace({
         <div className="sticky top-0 z-10 border-b border-slate-200 bg-white px-6 pt-4 pb-3">
           <JourneyWorkspaceHeader
             journey={journey}
+            exchangeParent={exchangeParent}
+            onOpenParent={() => {
+              if (exchangeParent) {
+                router.push(`/board?journey=${exchangeParent.parent_journey_id}`);
+              }
+            }}
             onClose={onClose}
             menuItems={menuItems}
           />
@@ -836,6 +907,7 @@ export default function JourneyWorkspace({
             stateDetail={stateDetail}
             attentionItems={attentionItems}
             transitions={transitions}
+            exchangeAwaitingPayment={exchangeAwaitingPayment}
             onAction={onAction}
           />
         </div>
@@ -882,7 +954,11 @@ export default function JourneyWorkspace({
 
             <div className="mt-6">
               <div className="flex flex-wrap gap-2">
-                {transitions.map((t) => (
+                {transitions
+                  .filter(
+                    (t) => t.event !== "payment_completed" || paymentAllowed
+                  )
+                  .map((t) => (
                   <button
                     key={t.event}
                     onClick={() => onAction(journey, t.event)}
@@ -1114,7 +1190,9 @@ export default function JourneyWorkspace({
                 <span>
                   {orderLocked && lineItems.length > 0 && (
                     <span className="text-xs text-slate-500">
-                      Delivered — use Start Exchange to change items.
+                      {isExchangeChild
+                        ? "Exchange lines can't be edited — change or cancel the exchange instead."
+                        : "Delivered — use Start Exchange to change items."}
                     </span>
                   )}
                 </span>

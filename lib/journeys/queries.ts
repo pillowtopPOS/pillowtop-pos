@@ -17,6 +17,11 @@ export type JourneyWithDetails = {
   updated_at: string;
   store_id: string;
   assigned_employee_id: string | null;
+  // Exchange Builder (087): 'EXCHANGE' marks a replacement journey;
+  // parent_journey_id points back to the original sale.
+  sale_kind: "STANDARD" | "EXCHANGE";
+  parent_journey_id: string | null;
+  exchange_action_id: string | null;
   customer: {
     id: string;
     first_name: string;
@@ -42,7 +47,7 @@ export type JourneyWithDetails = {
   } | null;
 };
 
-const JOURNEY_DETAIL_SELECT = `id, current_state, product_summary, price, cancelled_at, fulfillment_type, delivered_at, inventory_ready_notified_at, trial_length_nights, minimum_adjustment_nights, created_at, updated_at, store_id, assigned_employee_id,
+const JOURNEY_DETAIL_SELECT = `id, current_state, product_summary, price, cancelled_at, fulfillment_type, delivered_at, inventory_ready_notified_at, trial_length_nights, minimum_adjustment_nights, created_at, updated_at, store_id, assigned_employee_id, sale_kind, parent_journey_id, exchange_action_id,
       customer:customers!customer_id ( id, first_name, last_name, phone, email, street_address, street_address_line_2, city, state, zip_code ),
       employee:employees!assigned_employee_id ( id, name ),
       store:stores!store_id ( id, name, trial_length_nights, minimum_adjustment_nights, trial_ending_warning_days )`;
@@ -115,6 +120,9 @@ export type JourneyLineItem = {
   pair_group_id?: string | null;
   sold_condition?: string | null;
   trial_ineligible_reason?: string | null;
+  // Set on lines written by an exchange commit (088): replacement, fee,
+  // other fees and the negative credit line. RLS-locked client-side.
+  exchange_action_id?: string | null;
   created_at: string;
   updated_at: string;
 };
