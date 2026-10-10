@@ -6,6 +6,7 @@ import { Check, MoreHorizontal, Trash2, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { resolveLineItemLocation } from "@/lib/journeys/fulfillment";
 import {
+  getExchangeAction,
   getJourneyExchangeActions,
   type ExchangeParentLink,
 } from "@/lib/journeys/exchange";
@@ -642,19 +643,29 @@ export default function JourneyWorkspace({
     }
   }
 
-  // Exchange child: who/what it was exchanged from. Read through the
-  // security-definer RPC (089) — sleep_trial_actions isn't client-readable.
+  // Exchange child: who/what it was exchanged from, and any refund owed.
+  // Read through the security-definer RPCs (089) — sleep_trial_actions
+  // isn't client-readable.
   const [exchangeParent, setExchangeParent] =
     useState<ExchangeParentLink | null>(null);
+  const [exchangeRefundCents, setExchangeRefundCents] = useState(0);
   useEffect(() => {
     if (!isExchangeChild) {
       setExchangeParent(null);
+      setExchangeRefundCents(0);
       return;
     }
     getJourneyExchangeActions(journey.id)
       .then((info) => setExchangeParent(info.parent))
       .catch(() => setExchangeParent(null));
-  }, [journey.id, isExchangeChild]);
+    if (journey.exchange_action_id) {
+      getExchangeAction(journey.exchange_action_id)
+        .then((a) => setExchangeRefundCents(a.refund_owed_cents ?? 0))
+        .catch(() => setExchangeRefundCents(0));
+    } else {
+      setExchangeRefundCents(0);
+    }
+  }, [journey.id, journey.exchange_action_id, isExchangeChild]);
 
   useEffect(() => {
     setLineItemsLoading(true);
@@ -853,7 +864,7 @@ export default function JourneyWorkspace({
 
   // Secondary line under Current State — only where the spec defines one.
   const outstandingItems = lineItems.filter(
-    (i) => (lineAvailability[i.id] ?? 0) < i.quantity
+    (i) => i.product_id != null && (lineAvailability[i.id] ?? 0) < i.quantity
   ).length;
   const stateDetail =
     journey.current_state === "Sleep Trial" &&
@@ -1259,6 +1270,14 @@ export default function JourneyWorkspace({
                         </RailRow>
                       )}
                     </div>
+                    {exchangeRefundCents > 0 && (
+                      <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800">
+                        Refund owed to customer: $
+                        {(exchangeRefundCents / 100).toFixed(2)}. Issue it in
+                        your payment system. PillowTop will record it in a
+                        later update.
+                      </p>
+                    )}
                     {balance !== null &&
                       balance > 0 &&
                       transitions.find((t) => t.event === "payment_completed") && (

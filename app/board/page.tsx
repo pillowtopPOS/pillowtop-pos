@@ -31,6 +31,7 @@ import {
   fetchEmployees,
   fetchCurrentEmployee,
   fetchStores,
+  fetchLiveTrialItemStatuses,
   subscribeToJourneyChanges,
   recordJourneyEvent,
   recordPayment,
@@ -67,6 +68,29 @@ import {
   type StateTransition,
 } from "@/lib/journeys/state";
 
+// A journey whose every live trial item is mid-exchange/return is parked
+// on its replacement — it leaves the board lists until the action closes
+// or is cancelled. Display-only: the journey still opens by id.
+const IN_PROGRESS_TRIAL_STATUSES = new Set([
+  "EXCHANGE_IN_PROGRESS",
+  "RETURN_IN_PROGRESS",
+]);
+
+function hiddenByInProgressAction(
+  statusesByJourney: Map<string, string[]>
+): Set<string> {
+  const out = new Set<string>();
+  statusesByJourney.forEach((statuses, journeyId) => {
+    if (
+      statuses.length > 0 &&
+      statuses.every((s: string) => IN_PROGRESS_TRIAL_STATUSES.has(s))
+    ) {
+      out.add(journeyId);
+    }
+  });
+  return out;
+}
+
 export default function BoardPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -80,6 +104,9 @@ export default function BoardPage() {
     Map<string, SleepTrialEvaluation[]>
   >(new Map());
   const [unresolvedJourneyIds, setUnresolvedJourneyIds] = useState<Set<string>>(new Set());
+  // Journeys whose every live trial item is parked in an exchange/return
+  // stay off the board lists — they still open by id everywhere else.
+  const [hiddenJourneyIds, setHiddenJourneyIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
 
   const [view, setView] = useState<"board" | "table">("board");
@@ -167,14 +194,18 @@ export default function BoardPage() {
     ).then(setTrialEvals);
 
     const supabase = createClient();
-    const { data: unresolved } = await supabase
-      .from("journey_events")
-      .select("journey_id")
-      .in("event_type", ["deposit_received", "payment_completed"])
-      .eq("outcome", "UNKNOWN");
+    const [{ data: unresolved }, trialItemStatuses] = await Promise.all([
+      supabase
+        .from("journey_events")
+        .select("journey_id")
+        .in("event_type", ["deposit_received", "payment_completed"])
+        .eq("outcome", "UNKNOWN"),
+      fetchLiveTrialItemStatuses(data.map((j) => j.id)),
+    ]);
     setUnresolvedJourneyIds(
       new Set((unresolved ?? []).map((e: { journey_id: string }) => e.journey_id))
     );
+    setHiddenJourneyIds(hiddenByInProgressAction(trialItemStatuses));
 
     setLoading(false);
   };
@@ -240,6 +271,11 @@ export default function BoardPage() {
     } else {
       setSelectedJourney(null);
     }
+    // Panel actions (committing/cancelling an exchange) change trial-item
+    // statuses, so the board-hide set is refreshed alongside the journey.
+    fetchLiveTrialItemStatuses(
+      Array.from(new Set([...journeys.map((j) => j.id), journeyId]))
+    ).then((m) => setHiddenJourneyIds(hiddenByInProgressAction(m)));
   }
 
   useEffect(() => {
@@ -250,8 +286,10 @@ export default function BoardPage() {
   }, [searchParams]);
 
   const boardJourneys = useMemo(() => {
-    return journeys.filter((j) => !j.cancelled_at);
-  }, [journeys]);
+    return journeys.filter(
+      (j) => !j.cancelled_at && !hiddenJourneyIds.has(j.id)
+    );
+  }, [journeys, hiddenJourneyIds]);
 
   const columns = useMemo(() => {
     return BOARD_STATES.map((state) => ({
@@ -646,7 +684,9 @@ export default function BoardPage() {
               </tr>
             </thead>
             <tbody>
-              {journeys.map((j) => (
+              {journeys
+                .filter((j) => !hiddenJourneyIds.has(j.id))
+                .map((j) => (
                 <tr
                   key={j.id}
                   className="border-b border-slate-100 hover:bg-slate-50"

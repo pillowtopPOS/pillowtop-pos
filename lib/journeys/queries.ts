@@ -653,6 +653,32 @@ export async function fetchCurrentEmployee(): Promise<Employee | null> {
   return (data as unknown as Employee) ?? null;
 }
 
+/** Live (not CLOSED/VOIDED) sleep-trial item statuses per journey id.
+ *  Used by the board to hide journeys whose whole trial is parked in an
+ *  exchange/return — display only, nothing else reads this. */
+export async function fetchLiveTrialItemStatuses(
+  journeyIds: string[]
+): Promise<Map<string, string[]>> {
+  const map = new Map<string, string[]>();
+  if (journeyIds.length === 0) return map;
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("sleep_trial_items")
+    .select("journey_id,status")
+    .in("journey_id", journeyIds)
+    .not("status", "in", '("CLOSED","VOIDED")');
+  if (error) {
+    console.error("fetchLiveTrialItemStatuses error", error);
+    return map;
+  }
+  for (const row of (data ?? []) as { journey_id: string; status: string }[]) {
+    const list = map.get(row.journey_id) ?? [];
+    list.push(row.status);
+    map.set(row.journey_id, list);
+  }
+  return map;
+}
+
 export function subscribeToJourneyChanges(callback: () => void) {
   const supabase = createClient();
 

@@ -68,6 +68,7 @@ import type {
 import { activityShortDate } from "@/lib/journeys/activityLabels";
 import { localTodayISO } from "@/lib/dates";
 import {
+  getExchangeAction,
   getJourneyExchangeActions,
   type JourneyExchangeInfo,
 } from "@/lib/journeys/exchange";
@@ -232,6 +233,9 @@ export default function SleepTrialSection({
   // get_journey_exchange_actions — sleep_trial_actions is not
   // client-readable directly.
   const [exchangeInfo, setExchangeInfo] = useState<JourneyExchangeInfo | null>(null);
+  // Refund owed per trial item (committed actions only) — read through
+  // get_exchange_action, not recomputed here.
+  const [refundByItem, setRefundByItem] = useState<Record<string, number>>({});
   const [builderEval, setBuilderEval] = useState<SleepTrialEvaluation | null>(null);
   const exceptionRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
@@ -263,6 +267,17 @@ export default function SleepTrialSection({
     setApprovers(appr);
     setPermKeys(pk);
     setExchangeInfo(xinfo);
+    const refundPairs = await Promise.all(
+      (xinfo?.actions ?? [])
+        .filter((a) => a.status === "COMMITTED")
+        .map(async (a) => {
+          const full = await getExchangeAction(a.action_id).catch(() => null);
+          return [a.trial_item_id, full?.refund_owed_cents ?? 0] as const;
+        })
+    );
+    setRefundByItem(
+      Object.fromEntries(refundPairs.filter(([, cents]) => cents > 0))
+    );
     setIssues(await fetchSleepConcernIssues(c.map((x) => x.id)));
     // Entries load upfront (one fetch per concern) so the collapsed
     // card summary and the expanded history share the same data.
@@ -444,6 +459,9 @@ export default function SleepTrialSection({
             )}
             canCorrectStart={isManager}
             onCorrectStart={() => setCorrectionEval(orderedEvals[0])}
+            refundOwedCents={
+              refundByItem[orderedEvals[0].trial_item_id] ?? 0
+            }
           />
           {orderedEvals.length > 1 &&
             (showAllTrials ? (
@@ -461,6 +479,7 @@ export default function SleepTrialSection({
                     )}
                     canCorrectStart={isManager}
                     onCorrectStart={() => setCorrectionEval(e)}
+                    refundOwedCents={refundByItem[e.trial_item_id] ?? 0}
                   />
                 </div>
               ))
@@ -836,6 +855,7 @@ function TrialHeroCard({
   corrections,
   canCorrectStart,
   onCorrectStart,
+  refundOwedCents = 0,
 }: {
   evaluation: SleepTrialEvaluation;
   onAction: (action: string) => void;
@@ -843,6 +863,7 @@ function TrialHeroCard({
   corrections: TrialStartCorrection[];
   canCorrectStart: boolean;
   onCorrectStart: () => void;
+  refundOwedCents?: number;
 }) {
   const status = e.headline?.status ?? "UNKNOWN";
   const actionKey = headlineAction(e);
@@ -1050,6 +1071,15 @@ function TrialHeroCard({
           {!isMinNightWait && !isEligible && e.headline?.explanation && (
             <p className="text-xs text-slate-600">{e.headline.explanation}</p>
           )}
+          {(e.item?.status === "EXCHANGE_IN_PROGRESS" ||
+            e.item?.status === "RETURN_IN_PROGRESS") &&
+            refundOwedCents > 0 && (
+              <p className="mt-1 text-xs font-medium text-amber-800">
+                Refund owed to customer: ${(refundOwedCents / 100).toFixed(2)}.
+                Issue it in your payment system. PillowTop will record it in a
+                later update.
+              </p>
+            )}
         </div>
       </div>
 
