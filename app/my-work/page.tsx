@@ -200,6 +200,65 @@ export default function MyWorkPage() {
               );
             }
 
+            if (
+              item.kind === "exchange_progress" ||
+              item.kind === "exchange_stalled"
+            ) {
+              const w = item.data;
+              const stalled = item.kind === "exchange_stalled";
+              return (
+                <div
+                  key={w.action_id}
+                  className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4 ${
+                    stalled
+                      ? "border-red-200 bg-red-50"
+                      : "border-teal-200 bg-teal-50"
+                  }`}
+                >
+                  <div>
+                    <p className="text-sm font-medium text-slate-900">
+                      {stalled
+                        ? `Exchange stalled ${w.days_committed} day${
+                            w.days_committed === 1 ? "" : "s"
+                          }: `
+                        : "Exchange in progress: "}
+                      {w.customer_name ?? "Unknown customer"}
+                      <span
+                        className={`ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-normal ${
+                          stalled ? "text-red-700" : "text-teal-700"
+                        }`}
+                      >
+                        Exchange
+                      </span>
+                    </p>
+                    {w.replacement_product_name && (
+                      <p className="mt-0.5 text-xs text-slate-600">
+                        Replacement: {w.replacement_product_name}
+                      </p>
+                    )}
+                    <ul className="mt-0.5 space-y-0.5">
+                      {w.open_milestones.map((m) => (
+                        <li
+                          key={m}
+                          className={`text-xs ${
+                            stalled ? "text-red-700" : "text-slate-500"
+                          }`}
+                        >
+                          {m}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <Link
+                    href={`/board?journey=${w.journey_id}`}
+                    className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    View Journey
+                  </Link>
+                </div>
+              );
+            }
+
             const o = item.data;
             return (
               <div

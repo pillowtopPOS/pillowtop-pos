@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/client";
 import type { SleepJourneyState } from "@/lib/constants";
 import type { JourneyEventType } from "./state";
+import type { OpenExchangeWork } from "./exchange";
 
 export type JourneyWithDetails = {
   id: string;
@@ -1175,7 +1176,9 @@ export type MyWorkItem =
   | { kind: "follow_up"; data: FollowUp & { journey: JourneyWithDetails | null } }
   | { kind: "opportunity"; data: Opportunity }
   | { kind: "approval"; data: PendingApproval }
-  | { kind: "ready_for_scheduling"; data: ReadyJourney };
+  | { kind: "ready_for_scheduling"; data: ReadyJourney }
+  | { kind: "exchange_progress"; data: OpenExchangeWork }
+  | { kind: "exchange_stalled"; data: OpenExchangeWork };
 
 export async function fetchMyWork(): Promise<MyWorkItem[]> {
   const supabase = createClient();
@@ -1185,6 +1188,7 @@ export async function fetchMyWork(): Promise<MyWorkItem[]> {
     { data: opportunities, error: oppError },
     { data: approvals, error: apprError },
     { data: ready, error: readyError },
+    { data: exchangeWork, error: exchangeError },
   ] =
     await Promise.all([
       supabase
@@ -1205,12 +1209,17 @@ export async function fetchMyWork(): Promise<MyWorkItem[]> {
       // (082). Derived like approvals — drops out when the journey is
       // scheduled or otherwise leaves the state.
       supabase.rpc("list_ready_journeys"),
+      // Open exchanges the caller should keep an eye on (091). Derived —
+      // drops out when the action is cancelled or completed.
+      supabase.rpc("list_open_exchange_work"),
     ]);
 
   if (followError) console.error("fetchMyWork follow_ups error", followError);
   if (oppError) console.error("fetchMyWork opportunities error", oppError);
   if (apprError) console.error("fetchMyWork approvals error", apprError);
   if (readyError) console.error("fetchMyWork ready journeys error", readyError);
+  if (exchangeError)
+    console.error("fetchMyWork open exchanges error", exchangeError);
 
   const journeyIds = ((followUps as unknown as FollowUp[]) ?? [])
     .map((f) => f.journey_id)
@@ -1251,6 +1260,15 @@ export async function fetchMyWork(): Promise<MyWorkItem[]> {
     items.push({ kind: "ready_for_scheduling", data: r });
   }
 
+  // One exchange never appears as both kinds — is_stalled is a server
+  // flag, so the split can't disagree with the RPC.
+  for (const w of (exchangeWork as unknown as OpenExchangeWork[]) ?? []) {
+    items.push({
+      kind: w.is_stalled ? "exchange_stalled" : "exchange_progress",
+      data: w,
+    });
+  }
+
   // Display order: inventory_shortage follow-ups first (oldest due first),
   // then ready journeys (oldest ready first), overdue follow-ups (oldest
   // due first), approvals (oldest request first), new opportunities
@@ -1261,13 +1279,14 @@ export async function fetchMyWork(): Promise<MyWorkItem[]> {
       ? -1
       : i.kind === "ready_for_scheduling"
         ? 0
-        : i.kind === "follow_up"
-          ? overdue(i.data.due_at)
-            ? 1
-            : 4
+        : i.kind === "exchange_stalled" ||
+          (i.kind === "follow_up" && overdue(i.data.due_at))
+          ? 1
           : i.kind === "approval"
             ? 2
-            : 3;
+            : i.kind === "follow_up"
+              ? 4
+              : 3;
   const sortKey = (i: MyWorkItem) =>
     i.kind === "ready_for_scheduling"
       ? i.data.ready_after_wait_at
@@ -1275,7 +1294,9 @@ export async function fetchMyWork(): Promise<MyWorkItem[]> {
         ? i.data.due_at
         : i.kind === "approval"
           ? i.data.requested_at
-          : i.data.created_at;
+          : i.kind === "exchange_progress" || i.kind === "exchange_stalled"
+            ? i.data.committed_at
+            : i.data.created_at;
   items.sort((a, b) => {
     const d = rank(a) - rank(b);
     if (d !== 0) return d;
@@ -1287,30 +1308,33 @@ export async function fetchMyWork(): Promise<MyWorkItem[]> {
   return items;
 }
 
-// Badge count for the My Work nav item — counts the same four sources as
+// Badge count for the My Work nav item — counts the same five sources as
 // fetchMyWork without hydrating journeys.
 export async function fetchMyWorkCount(): Promise<number> {
   const supabase = createClient();
 
-  const [followUps, opportunities, approvals, ready] = await Promise.all([
-    supabase
-      .from("follow_ups")
-      .select("id", { count: "exact", head: true })
-      .is("completed_at", null),
-    supabase
-      .from("opportunities")
-      .select("id", { count: "exact", head: true })
-      .eq("status", "new"),
-    supabase.rpc("list_pending_exception_approvals"),
-    supabase.rpc("list_ready_journeys"),
-  ]);
+  const [followUps, opportunities, approvals, ready, exchangeWork] =
+    await Promise.all([
+      supabase
+        .from("follow_ups")
+        .select("id", { count: "exact", head: true })
+        .is("completed_at", null),
+      supabase
+        .from("opportunities")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "new"),
+      supabase.rpc("list_pending_exception_approvals"),
+      supabase.rpc("list_ready_journeys"),
+      supabase.rpc("list_open_exchange_work"),
+    ]);
 
   const rpcLen = (d: unknown) => (Array.isArray(d) ? d.length : 0);
   return (
     (followUps.count ?? 0) +
     (opportunities.count ?? 0) +
     rpcLen(approvals.data) +
-    rpcLen(ready.data)
+    rpcLen(ready.data) +
+    rpcLen(exchangeWork.data)
   );
 }
 

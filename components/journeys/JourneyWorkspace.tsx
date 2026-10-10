@@ -8,6 +8,7 @@ import { resolveLineItemLocation } from "@/lib/journeys/fulfillment";
 import {
   getExchangeAction,
   getJourneyExchangeActions,
+  type ExchangeActionRead,
   type ExchangeParentLink,
 } from "@/lib/journeys/exchange";
 import { fetchProductStock } from "@/lib/inventory/queries";
@@ -93,7 +94,12 @@ function formatHistoryEntry(e: JourneyEvent) {
   };
 }
 
-type MenuItem = { label: string; danger?: boolean; onSelect: () => void };
+type MenuItem = {
+  label: string;
+  danger?: boolean;
+  disabled?: boolean;
+  onSelect: () => void;
+};
 
 // "..." overflow menu in the workspace header. Rarely used / destructive
 // actions live here so the default view stays calm.
@@ -173,12 +179,18 @@ function HeaderMenu({ items }: { items: MenuItem[] }) {
               <button
                 key={item.label}
                 role="menuitem"
+                disabled={item.disabled}
                 onClick={() => {
+                  if (item.disabled) return;
                   close();
                   item.onSelect();
                 }}
-                className={`block w-full px-3 py-2.5 text-left text-sm hover:bg-slate-50 focus-visible:outline-none focus-visible:bg-slate-100 ${
-                  item.danger ? "text-red-600" : "text-slate-700"
+                className={`block w-full px-3 py-2.5 text-left text-sm focus-visible:outline-none ${
+                  item.disabled
+                    ? "cursor-not-allowed text-slate-400"
+                    : `hover:bg-slate-50 focus-visible:bg-slate-100 ${
+                        item.danger ? "text-red-600" : "text-slate-700"
+                      }`
                 }`}
               >
                 {item.label}
@@ -194,12 +206,14 @@ function HeaderMenu({ items }: { items: MenuItem[] }) {
 function JourneyWorkspaceHeader({
   journey,
   exchangeParent,
+  exchangeAction,
   onOpenParent,
   onClose,
   menuItems,
 }: {
   journey: JourneyWithDetails;
   exchangeParent: ExchangeParentLink | null;
+  exchangeAction: ExchangeActionRead | null;
   onOpenParent: () => void;
   onClose: () => void;
   menuItems: MenuItem[];
@@ -242,6 +256,24 @@ function JourneyWorkspaceHeader({
             >
               Journey
             </button>
+          </p>
+        )}
+        {exchangeParent && exchangeAction && (
+          <p className="mt-0.5 text-xs text-slate-500">
+            {exchangeAction.original_received_on
+              ? `Original mattress received on ${shortDate(
+                  exchangeAction.original_received_on
+                )}`
+              : "Original mattress not yet received"}
+            {exchangeAction.refund_recorded_at != null
+              ? ` · Refund recorded: ${
+                  exchangeAction.refund_method ?? "—"
+                }, ${shortDate(exchangeAction.refund_recorded_at)}`
+              : (exchangeAction.refund_owed_cents ?? 0) > 0
+              ? ` · Refund owed to customer: $${(
+                  (exchangeAction.refund_owed_cents ?? 0) / 100
+                ).toFixed(2)}`
+              : ""}
           </p>
         )}
       </div>
@@ -648,11 +680,14 @@ export default function JourneyWorkspace({
   // isn't client-readable.
   const [exchangeParent, setExchangeParent] =
     useState<ExchangeParentLink | null>(null);
-  const [exchangeRefundCents, setExchangeRefundCents] = useState(0);
+  const [exchangeAction, setExchangeAction] =
+    useState<ExchangeActionRead | null>(null);
+  const [exchangeBlockNoticeOpen, setExchangeBlockNoticeOpen] =
+    useState(false);
   useEffect(() => {
     if (!isExchangeChild) {
       setExchangeParent(null);
-      setExchangeRefundCents(0);
+      setExchangeAction(null);
       return;
     }
     getJourneyExchangeActions(journey.id)
@@ -660,18 +695,29 @@ export default function JourneyWorkspace({
       .catch(() => setExchangeParent(null));
     if (journey.exchange_action_id) {
       getExchangeAction(journey.exchange_action_id)
-        .then((a) =>
-          setExchangeRefundCents(
-            a.status === "COMMITTED" && a.refund_recorded_at == null
-              ? a.refund_owed_cents ?? 0
-              : 0
-          )
-        )
-        .catch(() => setExchangeRefundCents(0));
+        .then(setExchangeAction)
+        .catch(() => setExchangeAction(null));
     } else {
-      setExchangeRefundCents(0);
+      setExchangeAction(null);
     }
   }, [journey.id, journey.exchange_action_id, isExchangeChild]);
+
+  // Refund banner on the child: only while a COMMITTED action has an
+  // owed, unrecorded refund.
+  const exchangeRefundCents =
+    exchangeAction?.status === "COMMITTED" &&
+    exchangeAction.refund_recorded_at == null
+      ? exchangeAction.refund_owed_cents ?? 0
+      : 0;
+
+  // The original journey while any of its trial items is parked on an
+  // open exchange/return (item status, not action status — the item is
+  // what the DB guards key on).
+  const hasLiveExchange = trialEvals.some(
+    (e) =>
+      e.item?.status === "EXCHANGE_IN_PROGRESS" ||
+      e.item?.status === "RETURN_IN_PROGRESS"
+  );
 
   useEffect(() => {
     setLineItemsLoading(true);
@@ -888,13 +934,30 @@ export default function JourneyWorkspace({
       ? [{ label: "Reassign", onSelect: () => openReassign("choose") }]
       : []),
     ...(journey.current_state !== "Completed" && !journey.cancelled_at
-      ? [
-          {
-            label: "Cancel Journey…",
-            danger: true,
-            onSelect: () => onCancel(journey),
-          },
-        ]
+      ? isExchangeChild
+        ? [
+            {
+              label:
+                "Cancel this from the exchange on the original journey",
+              disabled: true,
+              onSelect: () => {},
+            },
+          ]
+        : hasLiveExchange
+        ? [
+            {
+              label: "Cancel Journey…",
+              danger: true,
+              onSelect: () => setExchangeBlockNoticeOpen(true),
+            },
+          ]
+        : [
+            {
+              label: "Cancel Journey…",
+              danger: true,
+              onSelect: () => onCancel(journey),
+            },
+          ]
       : []),
   ];
 
@@ -910,6 +973,7 @@ export default function JourneyWorkspace({
           <JourneyWorkspaceHeader
             journey={journey}
             exchangeParent={exchangeParent}
+            exchangeAction={exchangeAction}
             onOpenParent={() => {
               if (exchangeParent) {
                 router.push(`/board?journey=${exchangeParent.parent_journey_id}`);
@@ -975,6 +1039,9 @@ export default function JourneyWorkspace({
                   .filter(
                     (t) => t.event !== "payment_completed" || paymentAllowed
                   )
+                  .filter(
+                    (t) => !(t.event === "trial_completed" && hasLiveExchange)
+                  )
                   .map((t) => (
                   <button
                     key={t.event}
@@ -984,6 +1051,14 @@ export default function JourneyWorkspace({
                     {t.label}
                   </button>
                 ))}
+                {hasLiveExchange &&
+                  transitions.some((t) => t.event === "trial_completed") && (
+                    <p className="w-full text-sm text-slate-600">
+                      Exchange in progress. The sleep trial cannot be
+                      completed until the exchange is cancelled or
+                      completed.
+                    </p>
+                  )}
               </div>
             </div>
 
@@ -1493,6 +1568,25 @@ export default function JourneyWorkspace({
                   <button onClick={saveAddress} disabled={addressSaving} className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50">{addressSaving ? "Saving…" : "Save"}</button>
                   <button onClick={() => setEditingAddress(false)} className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700">Cancel</button>
                 </div>
+              </div>
+            </div>
+          </Modal>
+        )}
+
+        {exchangeBlockNoticeOpen && (
+          <Modal onClose={() => setExchangeBlockNoticeOpen(false)}>
+            <div className="w-full max-w-sm rounded-lg bg-white p-5 shadow-xl">
+              <p className="text-sm text-slate-700">
+                This journey has an exchange in progress. Cancel the
+                exchange first.
+              </p>
+              <div className="mt-4 flex justify-end">
+                <button
+                  onClick={() => setExchangeBlockNoticeOpen(false)}
+                  className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  OK
+                </button>
               </div>
             </div>
           </Modal>

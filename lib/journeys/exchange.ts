@@ -210,6 +210,33 @@ export async function completeSleepTrialAction(
 // EB-3a (migration 089): read RPCs for the Exchange Builder UI.
 // ---------------------------------------------------------------------------
 
+export type ExchangeMilestone = {
+  done: boolean;
+  at: string | null;
+  by: string | null;
+};
+
+export type ExchangeMilestones = {
+  replacement_reserved: ExchangeMilestone;
+  replacement_delivered: ExchangeMilestone;
+  original_received: ExchangeMilestone;
+  money_settled: ExchangeMilestone;
+  completed: ExchangeMilestone;
+};
+
+export type VoidedRefundRecord = {
+  refund_method: string | null;
+  refund_amount_cents: number | null;
+  refund_reference: string | null;
+  recorded_by: string | null;
+  recorded_by_name: string | null;
+  recorded_at: string | null;
+  voided_by: string | null;
+  voided_by_name: string | null;
+  voided_at: string | null;
+  void_reason: string | null;
+};
+
 export type ExchangeActionRead = {
   action_id: string;
   status: "DRAFT" | "COMMITTED" | "COMPLETED" | "CANCELLED";
@@ -226,12 +253,40 @@ export type ExchangeActionRead = {
   tax_cents: number | null;
   net_cents: number | null;
   refund_owed_cents: number | null;
+  refund_method: string | null;
+  refund_amount_cents: number | null;
+  refund_reference: string | null;
   refund_recorded_at: string | null;
+  refund_recorded_by: string | null;
+  refund_recorded_by_name: string | null;
+  refund_history: VoidedRefundRecord[];
+  original_received_on: string | null;
+  replacement_delivered_on: string | null;
+  completed_at: string | null;
+  completed_by: string | null;
+  completed_by_name: string | null;
+  cancelled_at: string | null;
+  cancelled_by: string | null;
+  cancelled_by_name: string | null;
+  cancel_reason: string | null;
   fulfillment_method: FulfillmentMethod | null;
   created_by: string | null;
   created_by_name: string | null;
   created_at: string;
   committed_at: string | null;
+  committed_by: string | null;
+  committed_by_name: string | null;
+  child_price: number | null;
+  child_total_paid: number | null;
+  child_has_succeeded_payment: boolean;
+  milestones: ExchangeMilestones;
+  can_cancel: boolean;
+  cancel_block_code: string | null;
+  cancel_block_message: string | null;
+  can_record_refund: boolean;
+  can_void_refund: boolean;
+  can_complete: boolean;
+  complete_blockers: string[];
 };
 
 /** One action row, with names resolved. Visibility-checked like the quote
@@ -289,6 +344,49 @@ export async function getJourneyExchangeActions(
   });
   if (error) throw new Error(error.message);
   return data as JourneyExchangeInfo;
+}
+
+// ---------------------------------------------------------------------------
+// EB-3b (migration 091): refund void + derived My Work feed.
+// ---------------------------------------------------------------------------
+
+/** Voids a recorded refund (sleep_trial.void_refund holders only,
+ *  COMMITTED + a refund recorded + a non-empty reason). The voided record
+ *  is kept forever in refund_history; the active refund fields are
+ *  cleared so the exchange goes back to "refund owed" and both cancel and
+ *  a new record_exchange_refund are allowed again. */
+export async function voidExchangeRefund(
+  actionId: string,
+  reason: string
+): Promise<void> {
+  const supabase = createClient();
+  const { error } = await supabase.rpc("void_exchange_refund", {
+    p_action_id: actionId,
+    p_reason: reason,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export type OpenExchangeWork = {
+  action_id: string;
+  journey_id: string;
+  child_journey_id: string | null;
+  customer_name: string;
+  replacement_product_name: string | null;
+  committed_at: string;
+  days_committed: number;
+  open_milestones: string[];
+  is_stalled: boolean;
+};
+
+/** Derived My Work feed (091). One row per COMMITTED exchange the caller
+ *  should see: the starter, employees homed at the journey's store, or
+ *  sleep_trial.complete_exchange holders. */
+export async function listOpenExchangeWork(): Promise<OpenExchangeWork[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("list_open_exchange_work");
+  if (error) throw new Error(error.message);
+  return (data as OpenExchangeWork[] | null) ?? [];
 }
 
 // ---------------------------------------------------------------------------

@@ -70,10 +70,12 @@ import { localTodayISO } from "@/lib/dates";
 import {
   getExchangeAction,
   getJourneyExchangeActions,
+  type ExchangeActionRead,
   type JourneyExchangeInfo,
 } from "@/lib/journeys/exchange";
 import Modal from "@/components/Modal";
 import ExchangeBuilderModal from "@/components/ExchangeBuilderModal";
+import ExchangeMilestoneCard from "@/components/ExchangeMilestoneCard";
 
 // Some EXCEPTION_TYPE_LABELS already end in "exception" (e.g. "Return
 // exception") — appending the word again would print "Return exception
@@ -235,7 +237,9 @@ export default function SleepTrialSection({
   const [exchangeInfo, setExchangeInfo] = useState<JourneyExchangeInfo | null>(null);
   // Refund owed per trial item (committed actions only) — read through
   // get_exchange_action, not recomputed here.
-  const [refundByItem, setRefundByItem] = useState<Record<string, number>>({});
+  const [actionByItem, setActionByItem] = useState<
+    Record<string, ExchangeActionRead>
+  >({});
   const [builderEval, setBuilderEval] = useState<SleepTrialEvaluation | null>(null);
   const exceptionRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
@@ -267,20 +271,25 @@ export default function SleepTrialSection({
     setApprovers(appr);
     setPermKeys(pk);
     setExchangeInfo(xinfo);
-    const refundPairs = await Promise.all(
+    // Full action read per COMMITTED action (091's get_exchange_action
+    // carries the milestones, flags and refund data the milestone card
+    // renders; a pre-091 database returns the 089 shape and the card
+    // falls back to the plain refund line).
+    const actionPairs = await Promise.all(
       (xinfo?.actions ?? [])
         .filter((a) => a.status === "COMMITTED")
         .map(async (a) => {
           const full = await getExchangeAction(a.action_id).catch(() => null);
-          const owed =
-            full?.status === "COMMITTED" && full?.refund_recorded_at == null
-              ? full.refund_owed_cents ?? 0
-              : 0;
-          return [a.trial_item_id, owed] as const;
+          return [a.trial_item_id, full] as const;
         })
     );
-    setRefundByItem(
-      Object.fromEntries(refundPairs.filter(([, cents]) => cents > 0))
+    setActionByItem(
+      Object.fromEntries(
+        actionPairs.filter(
+          (pair): pair is readonly [string, ExchangeActionRead] =>
+            pair[1]?.status === "COMMITTED"
+        )
+      )
     );
     setIssues(await fetchSleepConcernIssues(c.map((x) => x.id)));
     // Entries load upfront (one fetch per concern) so the collapsed
@@ -463,9 +472,10 @@ export default function SleepTrialSection({
             )}
             canCorrectStart={isManager}
             onCorrectStart={() => setCorrectionEval(orderedEvals[0])}
-            refundOwedCents={
-              refundByItem[orderedEvals[0].trial_item_id] ?? 0
+            exchangeAction={
+              actionByItem[orderedEvals[0].trial_item_id] ?? null
             }
+            onExchangeChanged={refresh}
           />
           {orderedEvals.length > 1 &&
             (showAllTrials ? (
@@ -483,7 +493,8 @@ export default function SleepTrialSection({
                     )}
                     canCorrectStart={isManager}
                     onCorrectStart={() => setCorrectionEval(e)}
-                    refundOwedCents={refundByItem[e.trial_item_id] ?? 0}
+                    exchangeAction={actionByItem[e.trial_item_id] ?? null}
+                    onExchangeChanged={refresh}
                   />
                 </div>
               ))
@@ -859,7 +870,8 @@ function TrialHeroCard({
   corrections,
   canCorrectStart,
   onCorrectStart,
-  refundOwedCents = 0,
+  exchangeAction = null,
+  onExchangeChanged,
 }: {
   evaluation: SleepTrialEvaluation;
   onAction: (action: string) => void;
@@ -867,7 +879,8 @@ function TrialHeroCard({
   corrections: TrialStartCorrection[];
   canCorrectStart: boolean;
   onCorrectStart: () => void;
-  refundOwedCents?: number;
+  exchangeAction?: ExchangeActionRead | null;
+  onExchangeChanged?: () => void;
 }) {
   const status = e.headline?.status ?? "UNKNOWN";
   const actionKey = headlineAction(e);
@@ -1077,13 +1090,22 @@ function TrialHeroCard({
           )}
           {(e.item?.status === "EXCHANGE_IN_PROGRESS" ||
             e.item?.status === "RETURN_IN_PROGRESS") &&
-            refundOwedCents > 0 && (
+            (exchangeAction?.milestones ? (
+              <ExchangeMilestoneCard
+                action={exchangeAction}
+                onChanged={() => onExchangeChanged?.()}
+              />
+            ) : (exchangeAction?.refund_owed_cents ?? 0) > 0 &&
+              exchangeAction?.refund_recorded_at == null ? (
+              // Pre-091 fallback: get_exchange_action has no milestones
+              // yet, so only the plain refund line is knowable.
               <p className="mt-1 text-xs font-medium text-amber-800">
-                Refund owed to customer: ${(refundOwedCents / 100).toFixed(2)}.
+                Refund owed to customer: $
+                {((exchangeAction?.refund_owed_cents ?? 0) / 100).toFixed(2)}.
                 Issue it in your payment system. PillowTop will record it in a
                 later update.
               </p>
-            )}
+            ) : null)}
         </div>
       </div>
 

@@ -16,8 +16,28 @@ export async function processAutomaticTransitions() {
 
   if (trialError) throw new Error(trialError.message);
 
+  // A journey whose trial item is parked on an open exchange/return must
+  // not auto-complete — the trial clock is suspended for the item, so the
+  // journey stays in Sleep Trial until the action resolves. Set-based
+  // lookup (the parked set stays small); on failure we log and treat
+  // nothing as parked rather than silently completing exchanges.
+  const { data: parkedItems, error: parkedError } = await supabase
+    .from("sleep_trial_items")
+    .select("journey_id")
+    .in("status", ["EXCHANGE_IN_PROGRESS", "RETURN_IN_PROGRESS"]);
+  if (parkedError) {
+    console.error(
+      "processAutomaticTransitions: parked trial item lookup failed",
+      parkedError
+    );
+  }
+  const parkedJourneyIds = new Set(
+    (parkedItems ?? []).map((i: { journey_id: string }) => i.journey_id)
+  );
+
   for (const journey of trialJourneys ?? []) {
     if (!journey.delivered_at) continue;
+    if (parkedJourneyIds.has(journey.id)) continue;
 
     let nights = journey.trial_length_nights;
     if (nights == null) {

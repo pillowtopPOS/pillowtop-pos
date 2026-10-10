@@ -29,6 +29,10 @@ const INVENTORY_PERMISSIONS = [
     label: "Complete exchanges and returns",
   },
   {
+    key: "sleep_trial.void_refund",
+    label: "Void exchange refunds",
+  },
+  {
     key: "inventory.inspect_returns",
     label: "Inspect and disposition returned mattresses",
   },
@@ -45,6 +49,7 @@ type CompanySettings = {
   managers_can_view_physical_inventory: boolean;
   managers_can_manage_par_levels: boolean;
   restock_generation_mode: "automatic" | "manual";
+  exchange_stalled_days: number;
 };
 
 export default function CompanySettingsForm() {
@@ -58,11 +63,16 @@ export default function CompanySettingsForm() {
     managers_can_view_physical_inventory: false,
     managers_can_manage_par_levels: false,
     restock_generation_mode: "automatic",
+    exchange_stalled_days: 14,
   });
   const [loading, setLoading] = useState(true);
   // business_timezone arrives with migration 066; until it exists the
   // timezone field stays hidden instead of breaking the page.
   const [timezoneSupported, setTimezoneSupported] = useState(false);
+  // exchange_stalled_days arrives with migration 091; same hide-until-
+  // supported pattern as business_timezone.
+  const [stalledSupported, setStalledSupported] = useState(false);
+  const [stalledDraft, setStalledDraft] = useState("14");
   const [saving, setSaving] = useState<keyof CompanySettings | null>(null);
   const [error, setError] = useState<string | null>(null);
   // null while loading or when role_permission_grants doesn't exist yet
@@ -106,6 +116,7 @@ export default function CompanySettingsForm() {
           data.managers_can_view_physical_inventory ?? false,
         managers_can_manage_par_levels: data.managers_can_manage_par_levels ?? false,
         restock_generation_mode: data.restock_generation_mode ?? "automatic",
+        exchange_stalled_days: prev.exchange_stalled_days,
       }));
     }
 
@@ -122,6 +133,21 @@ export default function CompanySettingsForm() {
           ...prev,
           business_timezone: tzRow.business_timezone,
         }));
+      }
+    }
+
+    const { data: stalledRow, error: stalledError } = await (supabase as any)
+      .from("companies")
+      .select("exchange_stalled_days")
+      .eq("id", company)
+      .single();
+
+    if (!stalledError) {
+      setStalledSupported(true);
+      const days = stalledRow?.exchange_stalled_days;
+      if (typeof days === "number" && days > 0) {
+        setSettings((prev) => ({ ...prev, exchange_stalled_days: days }));
+        setStalledDraft(String(days));
       }
     }
 
@@ -195,7 +221,9 @@ export default function CompanySettingsForm() {
   const renderCheckbox = (
     key: Exclude<
       keyof CompanySettings,
-      "restock_generation_mode" | "business_timezone"
+      | "restock_generation_mode"
+      | "business_timezone"
+      | "exchange_stalled_days"
     >,
     id: string,
     label: string
@@ -323,6 +351,43 @@ export default function CompanySettingsForm() {
               {permError && (
                 <p className="mt-2 text-xs text-red-600">{permError}</p>
               )}
+            </div>
+          )}
+
+          {stalledSupported && (
+            <div className="border-t border-slate-200 pt-4">
+              <label
+                htmlFor="exchange-stalled-days"
+                className="block text-sm font-medium text-slate-700"
+              >
+                Exchange stalled after (days)
+              </label>
+              <input
+                id="exchange-stalled-days"
+                type="number"
+                min={1}
+                step={1}
+                value={stalledDraft}
+                disabled={saving === "exchange_stalled_days"}
+                onChange={(e) => setStalledDraft(e.target.value)}
+                onBlur={() => {
+                  const n = parseInt(stalledDraft, 10);
+                  if (
+                    !Number.isNaN(n) &&
+                    n > 0 &&
+                    n !== settings.exchange_stalled_days
+                  ) {
+                    handleSave("exchange_stalled_days", n);
+                  } else {
+                    setStalledDraft(String(settings.exchange_stalled_days));
+                  }
+                }}
+                className="mt-2 w-32 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                A committed exchange with unfinished milestones shows as
+                &quot;Exchange stalled&quot; in My Work after this many days.
+              </p>
             </div>
           )}
 
