@@ -695,6 +695,11 @@ export default function JourneyWorkspace({
     useState<ExchangeActionRead | null>(null);
   const [exchangeBlockNoticeOpen, setExchangeBlockNoticeOpen] =
     useState(false);
+  const [pendingAddOn, setPendingAddOn] = useState<{
+    selection: ProductSelection;
+    unitPrice: number;
+    warnings: string[];
+  } | null>(null);
   useEffect(() => {
     if (!isExchangeChild) {
       setExchangeParent(null);
@@ -815,10 +820,16 @@ export default function JourneyWorkspace({
           Math.round(unitPrice * 100) - creditLeftCents
         );
         if (owesCents > 0) {
+          // The mattress hold is only released when the child was fully
+          // covered before this add (Sold at $0 or fully paid). An already
+          // unpaid child has no hold to lose.
+          const holdInPlace = paid >= (journey.price ?? 0);
           warnings.push(
-            `This is more than the credit left. The customer will owe $${(
-              owesCents / 100
-            ).toFixed(2)}, and the mattress hold is released until they pay.`
+            holdInPlace
+              ? `This is more than the credit left. The customer will owe $${(
+                  owesCents / 100
+                ).toFixed(2)}, and the mattress hold is released until they pay.`
+              : `The customer will owe $${(owesCents / 100).toFixed(2)} more.`
           );
         }
         if (selection.productId) {
@@ -836,14 +847,20 @@ export default function JourneyWorkspace({
             // Stock lookup failed — don't block the add on a display query.
           }
         }
-        if (
-          warnings.length > 0 &&
-          !window.confirm(warnings.join("\n\n") + "\n\nAdd it anyway?")
-        ) {
+        if (warnings.length > 0) {
+          setPendingAddOn({ selection, unitPrice, warnings });
           return;
         }
       }
 
+      await doAddLineItem(selection, unitPrice);
+    } catch (e: any) {
+      window.alert(e.message ?? "Failed to add item");
+    }
+  }
+
+  async function doAddLineItem(selection: ProductSelection, unitPrice: number) {
+    try {
       await createJourneyLineItem({
         journey_id: journey.id,
         product_id: selection.productId,
@@ -1438,13 +1455,18 @@ export default function JourneyWorkspace({
                     {isExchangeChild &&
                       journey.price !== null &&
                       journey.price !== undefined &&
-                      paid > journey.price && (
+                      Math.round(paid * 100) >
+                        Math.round(journey.price * 100) && (
                         <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800">
                           The customer has paid $
-                          {(paid - journey.price).toFixed(2)} more than the
-                          order total. Refund them in your payment system.
-                          Marking a payment Refunded is not available in the
-                          app yet.
+                          {(
+                            (Math.round(paid * 100) -
+                              Math.round(journey.price * 100)) /
+                            100
+                          ).toFixed(2)}{" "}
+                          more than the order total. Refund them in your
+                          payment system. Marking a payment Refunded is not
+                          available in the app yet.
                         </p>
                       )}
                     {balance !== null &&
@@ -1674,6 +1696,44 @@ export default function JourneyWorkspace({
                   className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
                 >
                   OK
+                </button>
+              </div>
+            </div>
+          </Modal>
+        )}
+
+        {pendingAddOn && (
+          <Modal onClose={() => setPendingAddOn(null)}>
+            <div className="w-full max-w-sm rounded-lg bg-white p-5 shadow-xl">
+              <h2 className="mb-2 text-sm font-semibold text-slate-900">
+                Add {pendingAddOn.selection.productSummary}?
+              </h2>
+              <div className="space-y-2">
+                {pendingAddOn.warnings.map((w) => (
+                  <p
+                    key={w}
+                    className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800"
+                  >
+                    {w}
+                  </p>
+                ))}
+              </div>
+              <div className="mt-4 flex gap-2">
+                <button
+                  onClick={() => {
+                    const p = pendingAddOn;
+                    setPendingAddOn(null);
+                    void doAddLineItem(p.selection, p.unitPrice);
+                  }}
+                  className="flex-1 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700"
+                >
+                  Add it anyway
+                </button>
+                <button
+                  onClick={() => setPendingAddOn(null)}
+                  className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
                 </button>
               </div>
             </div>
