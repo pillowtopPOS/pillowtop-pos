@@ -804,6 +804,46 @@ export default function JourneyWorkspace({
   async function addLineItem(selection: ProductSelection) {
     try {
       const unitPrice = selection.salePrice ?? selection.price ?? 0;
+
+      // EB-2c add-on warnings on an open exchange child — inform, never
+      // block. The refund_owed figure IS the unconsumed credit left.
+      if (exchangeChildOpen && exchangeAction) {
+        const warnings: string[] = [];
+        const creditLeftCents = exchangeAction.refund_owed_cents ?? 0;
+        const owesCents = Math.max(
+          0,
+          Math.round(unitPrice * 100) - creditLeftCents
+        );
+        if (owesCents > 0) {
+          warnings.push(
+            `This is more than the credit left. The customer will owe $${(
+              owesCents / 100
+            ).toFixed(2)}, and the mattress hold is released until they pay.`
+          );
+        }
+        if (selection.productId) {
+          try {
+            const stock = await fetchProductStock(
+              [selection.productId],
+              inventoryStoreId
+            );
+            if ((stock[selection.productId]?.ats ?? 0) <= 0) {
+              warnings.push(
+                "This item is not in stock. It will hold the delivery until stock arrives."
+              );
+            }
+          } catch {
+            // Stock lookup failed — don't block the add on a display query.
+          }
+        }
+        if (
+          warnings.length > 0 &&
+          !window.confirm(warnings.join("\n\n") + "\n\nAdd it anyway?")
+        ) {
+          return;
+        }
+      }
+
       await createJourneyLineItem({
         journey_id: journey.id,
         product_id: selection.productId,
@@ -855,9 +895,16 @@ export default function JourneyWorkspace({
   // edited in place; the correct path is the Start Exchange flow.
   // An exchange child's flagged lines are RLS-locked for their whole life
   // (088) — changes happen through the exchange, never direct edits.
+  // EB-2c: an exchange child's ORDINARY (non-flagged) lines are editable
+  // while the exchange is open — COMMITTED and no refund recorded. The
+  // flagged exchange lines themselves stay read-only in every state.
+  const exchangeChildOpen =
+    isExchangeChild &&
+    exchangeAction?.status === "COMMITTED" &&
+    exchangeAction.refund_recorded_at == null;
   const orderLocked =
     Boolean(journey.delivered_at) ||
-    isExchangeChild ||
+    (isExchangeChild && !exchangeChildOpen) ||
     ["Sleep Trial", "Completed"].includes(journey.current_state);
 
   async function markFollowUpComplete(id: string) {
@@ -1194,7 +1241,14 @@ export default function JourneyWorkspace({
                 <div className="divide-y divide-slate-100">
                   {lineItems.map((item) => (
                     <div key={item.id} className="py-1.5">
-                      <div className="leading-snug text-slate-900">{item.item_name}</div>
+                      <div className="leading-snug text-slate-900">
+                        {item.item_name}
+                        {item.exchange_line_role && (
+                          <span className="ml-1.5 text-xs font-normal text-slate-400">
+                            · Part of the exchange
+                          </span>
+                        )}
+                      </div>
                       {!orderLocked &&
                         item.product_id &&
                         (lineAvailability[item.id] ?? 0) < item.quantity && (
@@ -1218,7 +1272,14 @@ export default function JourneyWorkspace({
                       className="rounded-md border border-slate-200 bg-slate-50 p-2 text-xs"
                     >
                       <div className="leading-snug text-slate-900">{item.item_name}</div>
-                      {item.product_id && <div className="mt-0.5 text-slate-500">Availability: {lineAvailability[item.id] ?? "Loading…"}</div>}
+                      {item.exchange_line_role && (
+                        <div className="mt-0.5 text-slate-500">
+                          Part of the exchange — change or cancel the exchange instead.
+                        </div>
+                      )}
+                      {!item.exchange_line_role && item.product_id && <div className="mt-0.5 text-slate-500">Availability: {lineAvailability[item.id] ?? "Loading…"}</div>}
+                      {!item.exchange_line_role && (
+                        <>
                       <div className="mt-1.5 flex items-center gap-2">
                         <input
                           type="number"
@@ -1279,6 +1340,8 @@ export default function JourneyWorkspace({
                           )}
                         </div>
                       )}
+                        </>
+                      )}
                     </div>
                   ))}
                   <ProductPicker storeId={inventoryStoreId} onSelect={addLineItem} />
@@ -1294,7 +1357,9 @@ export default function JourneyWorkspace({
                   {orderLocked && lineItems.length > 0 && (
                     <span className="text-xs text-slate-500">
                       {isExchangeChild
-                        ? "Exchange lines can't be edited — change or cancel the exchange instead."
+                        ? exchangeAction?.refund_recorded_at
+                          ? "A refund was already recorded. Void it first if the order needs to change."
+                          : "This exchange is closed — its order lines can't be changed."
                         : "Delivered — use Start Exchange to change items."}
                     </span>
                   )}
@@ -1370,6 +1435,18 @@ export default function JourneyWorkspace({
                         later update.
                       </p>
                     )}
+                    {isExchangeChild &&
+                      journey.price !== null &&
+                      journey.price !== undefined &&
+                      paid > journey.price && (
+                        <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800">
+                          The customer has paid $
+                          {(paid - journey.price).toFixed(2)} more than the
+                          order total. Refund them in your payment system.
+                          Marking a payment Refunded is not available in the
+                          app yet.
+                        </p>
+                      )}
                     {balance !== null &&
                       balance > 0 &&
                       transitions.find((t) => t.event === "payment_completed") && (

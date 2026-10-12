@@ -279,6 +279,12 @@ export type ExchangeActionRead = {
   child_price: number | null;
   child_total_paid: number | null;
   child_has_succeeded_payment: boolean;
+  /** 093: positive when the customer has paid more than the child price
+   *  (e.g. an add-on was removed after payment). 0 otherwise, and absent on
+   *  pre-093 payloads — callers should use ?? 0. */
+  child_overpaid_cents?: number;
+  /** 093: sum of the child's ordinary (non-exchange-flagged) add-on lines. */
+  add_ons_total_cents?: number;
   milestones: ExchangeMilestones;
   can_cancel: boolean;
   cancel_block_code: string | null;

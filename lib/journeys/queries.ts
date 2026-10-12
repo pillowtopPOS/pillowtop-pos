@@ -124,6 +124,9 @@ export type JourneyLineItem = {
   // Set on lines written by an exchange commit (088): replacement, fee,
   // other fees and the negative credit line. RLS-locked client-side.
   exchange_action_id?: string | null;
+  // 093: 'replacement' | 'exchange_fee' | 'other_fees' | 'credit' on the
+  // flagged lines; null on ordinary lines (including exchange add-ons).
+  exchange_line_role?: string | null;
   created_at: string;
   updated_at: string;
 };
