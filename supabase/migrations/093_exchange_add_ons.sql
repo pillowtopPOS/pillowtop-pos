@@ -714,6 +714,7 @@ declare
   v_cause text;
   v_verb text;
   v_money_detail text;
+  v_credit_name text;
 begin
   v_journey_id := coalesce(new.journey_id, old.journey_id);
 
@@ -761,12 +762,39 @@ begin
         -- this trigger again for the flagged credit row; the guard above
         -- returns before the prologue, so the inner pass is a normal
         -- price/balance/inventory evaluation on the post-resize lines.
-        update public.journey_line_items
-        set unit_price = -v_credit_cents / 100.0,
-            updated_at = now()
-        where journey_id = v_journey_id
-          and exchange_line_role = 'credit'
-          and unit_price is distinct from (-v_credit_cents / 100.0);
+        -- If commit inserted no credit line (positive total was $0 — a free
+        -- or promotional replacement), the credit must be CREATED here:
+        -- without it the customer would be charged the add-on in full while
+        -- refund_owed_cents shrank as if the credit had absorbed it.
+        if exists (
+          select 1 from public.journey_line_items
+          where journey_id = v_journey_id
+            and exchange_line_role = 'credit'
+        ) then
+          update public.journey_line_items
+          set unit_price = -v_credit_cents / 100.0,
+              updated_at = now()
+          where journey_id = v_journey_id
+            and exchange_line_role = 'credit'
+            and unit_price is distinct from (-v_credit_cents / 100.0);
+        elsif v_credit_cents > 0 then
+          select sti.product_name_snapshot into v_credit_name
+          from public.sleep_trial_items sti
+          where sti.id = v_ex_action.trial_item_id;
+          -- Flagged like the commit-time line: the row is exchange-locked
+          -- and its INSERT re-enters this trigger with the flag set, so the
+          -- prologue cannot recurse.
+          insert into public.journey_line_items (
+            journey_id, item_name, quantity, unit_price,
+            exchange_action_id, exchange_line_role
+          ) values (
+            v_journey_id,
+            'Exchange credit — ' || coalesce(v_credit_name, 'returned mattress'),
+            1,
+            -v_credit_cents / 100.0,
+            v_ex_action.id,
+            'credit');
+        end if;
 
         v_net_cents := v_pos_cents
                        - coalesce(v_ex_action.original_credit_cents, 0);
@@ -1197,7 +1225,7 @@ begin
       'money_settled', jsonb_build_object(
         'done', v_money_done,
         'at', v_money_at,
-        'by', v_money_by_name)),
+        'by', v_money_by_name),
       'completed', jsonb_build_object(
         'done', v_action.completed_at is not null,
         'at', v_action.completed_at,
