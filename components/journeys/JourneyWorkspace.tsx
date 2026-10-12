@@ -1243,7 +1243,7 @@ export default function JourneyWorkspace({
                     <div key={item.id} className="py-1.5">
                       <div className="leading-snug text-slate-900">
                         {item.item_name}
-                        {item.exchange_line_role && (
+                        {(item.exchange_line_role || item.exchange_action_id) && (
                           <span className="ml-1.5 text-xs font-normal text-slate-400">
                             · Part of the exchange
                           </span>
@@ -1272,13 +1272,13 @@ export default function JourneyWorkspace({
                       className="rounded-md border border-slate-200 bg-slate-50 p-2 text-xs"
                     >
                       <div className="leading-snug text-slate-900">{item.item_name}</div>
-                      {item.exchange_line_role && (
+                      {(item.exchange_line_role || item.exchange_action_id) && (
                         <div className="mt-0.5 text-slate-500">
                           Part of the exchange — change or cancel the exchange instead.
                         </div>
                       )}
-                      {!item.exchange_line_role && item.product_id && <div className="mt-0.5 text-slate-500">Availability: {lineAvailability[item.id] ?? "Loading…"}</div>}
-                      {!item.exchange_line_role && (
+                      {!(item.exchange_line_role || item.exchange_action_id) && item.product_id && <div className="mt-0.5 text-slate-500">Availability: {lineAvailability[item.id] ?? "Loading…"}</div>}
+                      {!(item.exchange_line_role || item.exchange_action_id) && (
                         <>
                       <div className="mt-1.5 flex items-center gap-2">
                         <input
