@@ -719,6 +719,7 @@ export default function BoardPage() {
 
       {selectedJourney && (
         <JourneyWorkspace
+          key={selectedJourney.id}
           journey={selectedJourney}
           events={events}
           followUps={followUps}

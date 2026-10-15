@@ -1138,6 +1138,7 @@ export default function JourneyWorkspace({
             </div>
 
             <JourneyActivity
+              key={journey.id}
               journey={journey}
               events={events}
               followUps={followUps}
@@ -1296,7 +1297,6 @@ export default function JourneyWorkspace({
                       )}
                       {!(item.exchange_line_role || item.exchange_action_id) && item.product_id && <div className="mt-0.5 text-slate-500">Availability: {lineAvailability[item.id] ?? "Loading…"}</div>}
                       {!(item.exchange_line_role || item.exchange_action_id) && (
-                        <>
                       <div className="mt-1.5 flex items-center gap-2">
                         <input
                           type="number"
@@ -1330,7 +1330,9 @@ export default function JourneyWorkspace({
                           <Trash2 className="h-3 w-3" />
                         </button>
                       </div>
-                      {canReassign && (
+                      )}
+                      {!(item.exchange_line_role || item.exchange_action_id) &&
+                        canReassign && (
                         <div className="mt-1.5 space-y-1">
                           <select
                             value={item.fulfillment_type_override ?? "inherit"}
@@ -1356,8 +1358,6 @@ export default function JourneyWorkspace({
                             </select>
                           )}
                         </div>
-                      )}
-                        </>
                       )}
                     </div>
                   ))}
