@@ -727,13 +727,16 @@ export default function JourneyWorkspace({
     }
     getJourneyExchangeActions(journey.id)
       .then((info) => setExchangeParent(info.parent))
-      .catch(() => setExchangeParent(null));
+      .catch(() => {
+        // Keep the last good read — a transient failure must not blank
+        // the "Exchange of …" header line.
+      });
     if (journey.exchange_action_id) {
       getExchangeAction(journey.exchange_action_id)
         .then(setExchangeAction)
-        .catch(() => setExchangeAction(null));
-    } else {
-      setExchangeAction(null);
+        .catch(() => {
+          // Keep the last good read — same reason as above.
+        });
     }
     // journey.updated_at: every server-side write to this journey — line
     // changes via sync_journey_price, Schedule Delivery, Mark Delivered —
