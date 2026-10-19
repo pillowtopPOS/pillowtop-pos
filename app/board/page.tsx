@@ -721,11 +721,18 @@ export default function BoardPage() {
         <JourneyWorkspace
           key={selectedJourney.id}
           journey={selectedJourney}
-          events={events}
-          followUps={followUps}
+          // events/followUps/reassignments are written by several call
+          // sites whose fetches can resolve AFTER the selection changes —
+          // a late .then(setEvents) from the previous journey otherwise
+          // overwrites this journey's feed and never corrects. Filtering
+          // by journey_id at render makes a stale write a no-op.
+          events={events.filter((e) => e.journey_id === selectedJourney.id)}
+          followUps={followUps.filter((f) => f.journey_id === selectedJourney.id)}
           employees={employees}
           stores={stores}
-          reassignments={reassignments}
+          reassignments={reassignments.filter(
+            (r) => r.journey_id === selectedJourney.id
+          )}
           canReassign={canReassignJourneys(currentEmployee?.role)}
           canReconcile={
             currentEmployee?.role === "owner" ||
