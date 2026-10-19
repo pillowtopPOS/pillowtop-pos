@@ -491,7 +491,12 @@ export default function JourneyWorkspace({
   onRefresh: () => void;
 }) {
   const router = useRouter();
-  const transitions = STATE_TRANSITIONS[journey.current_state];
+  // A3: journey_cancelled leaves current_state at its last value (020),
+  // so a cancelled child would still offer its old forward buttons.
+  // cancelled_at is the truth — no transitions on a cancelled journey.
+  const transitions = journey.cancelled_at
+    ? []
+    : STATE_TRANSITIONS[journey.current_state];
   const isExchangeChild = journey.sale_kind === "EXCHANGE";
 
   const paid = events
@@ -559,7 +564,21 @@ export default function JourneyWorkspace({
 
   async function handlePanelRefresh() {
     await onRefresh();
+    // A1: the exchange action's money figures change on every line
+    // edit — refetch alongside the journey data or the refund banner,
+    // header line and overpaid banner go stale until reload.
+    await refreshExchangeRead();
     setActivityRefreshKey((k) => k + 1);
+  }
+
+  async function refreshExchangeRead() {
+    if (!isExchangeChild || !journey.exchange_action_id) return;
+    try {
+      setExchangeAction(await getExchangeAction(journey.exchange_action_id));
+    } catch {
+      // Keep the last good read — a transient fetch failure must not
+      // blank the refund banner.
+    }
   }
 
   const inventoryStoreId = useMemo(
@@ -716,7 +735,10 @@ export default function JourneyWorkspace({
     } else {
       setExchangeAction(null);
     }
-  }, [journey.id, journey.exchange_action_id, isExchangeChild]);
+    // journey.updated_at: every server-side write to this journey — line
+    // changes via sync_journey_price, Schedule Delivery, Mark Delivered —
+    // bumps it, so the action read stays fresh on prop updates too.
+  }, [journey.id, journey.exchange_action_id, journey.updated_at, isExchangeChild]);
 
   // Refund banner on the child: only while a COMMITTED action has an
   // owed, unrecorded refund.
@@ -815,21 +837,29 @@ export default function JourneyWorkspace({
       if (exchangeChildOpen && exchangeAction) {
         const warnings: string[] = [];
         const creditLeftCents = exchangeAction.refund_owed_cents ?? 0;
-        const owesCents = Math.max(
+        // A2: what the customer will owe AFTER this add — the part of the
+        // add-on the credit can't absorb becomes new price; anything
+        // already paid counts against it. Whole cents only.
+        const addOnCents = Math.round(unitPrice * 100);
+        const uncoveredAddOnCents = Math.max(
           0,
-          Math.round(unitPrice * 100) - creditLeftCents
+          addOnCents - creditLeftCents
         );
-        if (owesCents > 0) {
+        const newPriceCents =
+          Math.round((journey.price ?? 0) * 100) + uncoveredAddOnCents;
+        const paidCents = Math.round(paid * 100);
+        const owedCents = Math.max(0, newPriceCents - paidCents);
+        if (owedCents > 0) {
           // The mattress hold is only released when the child was fully
           // covered before this add (Sold at $0 or fully paid). An already
           // unpaid child has no hold to lose.
-          const holdInPlace = paid >= (journey.price ?? 0);
+          const holdInPlace = paidCents >= Math.round((journey.price ?? 0) * 100);
           warnings.push(
-            holdInPlace
+            holdInPlace && uncoveredAddOnCents > 0
               ? `This is more than the credit left. The customer will owe $${(
-                  owesCents / 100
+                  owedCents / 100
                 ).toFixed(2)}, and the mattress hold is released until they pay.`
-              : `The customer will owe $${(owesCents / 100).toFixed(2)} more.`
+              : `The customer will owe $${(owedCents / 100).toFixed(2)}.`
           );
         }
         if (selection.productId) {
@@ -921,6 +951,7 @@ export default function JourneyWorkspace({
     exchangeAction.refund_recorded_at == null;
   const orderLocked =
     Boolean(journey.delivered_at) ||
+    Boolean(journey.cancelled_at) ||
     (isExchangeChild && !exchangeChildOpen) ||
     ["Sleep Trial", "Completed"].includes(journey.current_state);
 
@@ -1005,7 +1036,7 @@ export default function JourneyWorkspace({
 
   // Rarely used / destructive actions live in the header "..." menu.
   const menuItems: MenuItem[] = [
-    ...(canReassign
+    ...(canReassign && !journey.cancelled_at
       ? [{ label: "Reassign", onSelect: () => openReassign("choose") }]
       : []),
     ...(journey.current_state !== "Completed" && !journey.cancelled_at
@@ -1109,6 +1140,13 @@ export default function JourneyWorkspace({
             )}
 
             <div className="mt-6">
+              {journey.cancelled_at && (
+                <p className="mb-3 text-sm text-slate-500">
+                  {isExchangeChild
+                    ? "This exchange was cancelled."
+                    : "This journey was cancelled."}
+                </p>
+              )}
               <div className="flex flex-wrap gap-2">
                 {transitions
                   .filter(
@@ -1532,7 +1570,7 @@ export default function JourneyWorkspace({
               <RailRow label="Store">{journey.store?.name ?? "—"}</RailRow>
               <RailRow label="Assigned">{journey.employee?.name ?? "—"}</RailRow>
 
-              {canReassign && reassignMode === null && (
+              {canReassign && !journey.cancelled_at && reassignMode === null && (
                 <button
                   onClick={() => setReassignMode("choose")}
                   className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
