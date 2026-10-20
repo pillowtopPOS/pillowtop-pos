@@ -1513,6 +1513,24 @@ export default function JourneyWorkspace({
                           payment system, then record the refund here.
                         </p>
                       )}
+                    {/* Inform, don't block: a cancelled journey with money
+                        still on it owes the customer a refund. Suppressed
+                        when an existing banner already says so (exchange
+                        refund owed, or paid over the order total). */}
+                    {journey.cancelled_at &&
+                      paid > 0 &&
+                      exchangeRefundCents <= 0 &&
+                      !(
+                        journey.price !== null &&
+                        journey.price !== undefined &&
+                        Math.round(paid * 100) > Math.round(journey.price * 100)
+                      ) && (
+                        <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800">
+                          The customer paid ${paid.toFixed(2)} on this
+                          cancelled order. Refund them in your payment
+                          system, then record the refund here.
+                        </p>
+                      )}
                     {balance !== null &&
                       balance > 0 &&
                       transitions.find((t) => t.event === "payment_completed") && (

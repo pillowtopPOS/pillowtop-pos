@@ -572,11 +572,27 @@ export default function BoardPage() {
 
   async function submitCancel() {
     if (!cancelJourneyState || !cancelReason.trim()) return;
+    // Already cancelled (stale panel prop): closing is a no-op, never a
+    // second journey_cancelled insert.
+    if (cancelJourneyState.cancelled_at) {
+      setCancelJourneyState(null);
+      setCancelReason("");
+      return;
+    }
     setBoardBusy(true);
     try {
       await cancelJourney(cancelJourneyState.id, cancelReason);
+      const journeyId = cancelJourneyState.id;
       setCancelJourneyState(null);
       setCancelReason("");
+      // cancelJourney is a raw event insert — nothing in props/state
+      // reflects it, so the open panel kept offering Cancel. Refetch the
+      // journey, the board list, and the feed so the cancelled state
+      // shows immediately.
+      await Promise.all([
+        handleReassigned(journeyId),
+        fetchJourneyEvents(journeyId).then(setEvents),
+      ]);
     } catch (e: any) {
       window.alert(e.message ?? "Failed to cancel journey");
     } finally {
@@ -701,7 +717,7 @@ export default function BoardPage() {
                   <td className="px-4 py-2">{j.customer?.phone ?? "—"}</td>
                   <td className="px-4 py-2">{j.product_summary ?? "—"}</td>
                   <td className="px-4 py-2">
-                    {j.current_state}
+                    {j.cancelled_at ? "Cancelled" : j.current_state}
                     {j.sale_kind === "EXCHANGE" && (
                       <span className="ml-1 rounded-full bg-indigo-100 px-1.5 py-px text-[10px] font-medium text-indigo-700">
                         Exchange
@@ -1046,12 +1062,25 @@ export default function BoardPage() {
               className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               rows={3}
             />
+            {(() => {
+              const paidOnJourney = computeNetPaid(
+                events.filter((e) => e.journey_id === cancelJourneyState.id)
+              );
+              return paidOnJourney > 0 ? (
+                <p className="mt-3 text-xs font-medium text-amber-700">
+                  The customer has paid ${paidOnJourney.toFixed(2)}.
+                  Cancelling does not refund them: record the refund in
+                  Journey Activity after you cancel.
+                </p>
+              ) : null;
+            })()}
             <div className="mt-4 flex gap-2">
               <button
                 onClick={submitCancel}
-                className="flex-1 rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700"
+                disabled={boardBusy}
+                className="flex-1 rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
               >
-                Cancel Journey
+                {boardBusy ? "Cancelling…" : "Cancel Journey"}
               </button>
               <button
                 onClick={() => setCancelJourneyState(null)}
