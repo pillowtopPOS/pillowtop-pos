@@ -1,8 +1,11 @@
 -- ============================================================================
 -- refunds-b2 — verify migration 098 in the Supabase SQL editor
 --
--- Run each labeled block ONE AT A TIME (the editor shows only the last
--- statement's result). All fixture ids are fixed UUIDs prefixed cc000000.
+-- Run each labeled block ONE AT A TIME — the SQL editor shows only the
+-- LAST statement's result, and statements after the first select in a
+-- block produce no visible output, so every check ends in one combined
+-- select you can read directly. All fixture ids are fixed UUIDs prefixed
+-- cc000000.
 --
 -- Fixture design:
 --   Journey C — $49 stocked line (product A, 10 on hand) + $147 payment +
@@ -189,12 +192,14 @@ where jir.journey_id = 'cc000000-0000-4000-8000-000000000010';
 select set_config('request.jwt.claim.sub', (
   select e.auth_user_id::text
   from public.employees e
-  join public.stores st on st.company_id = e.company_id
-  join public.sleep_journeys sj on sj.store_id = st.id
+  join public.stores es on es.id = e.home_store_id
+  join public.stores js on js.company_id = es.company_id
+  join public.sleep_journeys sj on sj.store_id = js.id
   where sj.id = 'cc000000-0000-4000-8000-000000000010'
-    and e.role in ('owner','admin','manager')
+    and e.role::text in ('owner','admin','manager')
     and e.is_active = true
-  order by case e.role when 'owner' then 0 when 'admin' then 1 else 2 end
+    and e.auth_user_id is not null
+  order by case e.role::text when 'owner' then 0 when 'admin' then 1 else 2 end
   limit 1), true);
 
 select public.record_payment_refund(
@@ -219,12 +224,14 @@ select public.total_paid('cc000000-0000-4000-8000-000000000010') as total_paid;
 select set_config('request.jwt.claim.sub', (
   select e.auth_user_id::text
   from public.employees e
-  join public.stores st on st.company_id = e.company_id
-  join public.sleep_journeys sj on sj.store_id = st.id
+  join public.stores es on es.id = e.home_store_id
+  join public.stores js on js.company_id = es.company_id
+  join public.sleep_journeys sj on sj.store_id = js.id
   where sj.id = 'cc000000-0000-4000-8000-000000000010'
-    and e.role in ('owner','admin','manager')
+    and e.role::text in ('owner','admin','manager')
     and e.is_active = true
-  order by case e.role when 'owner' then 0 when 'admin' then 1 else 2 end
+    and e.auth_user_id is not null
+  order by case e.role::text when 'owner' then 0 when 'admin' then 1 else 2 end
   limit 1), true);
 
 select public.record_payment_refund(
@@ -247,12 +254,14 @@ order by a.occurred_at;
 select set_config('request.jwt.claim.sub', (
   select e.auth_user_id::text
   from public.employees e
-  join public.stores st on st.company_id = e.company_id
-  join public.sleep_journeys sj on sj.store_id = st.id
+  join public.stores es on es.id = e.home_store_id
+  join public.stores js on js.company_id = es.company_id
+  join public.sleep_journeys sj on sj.store_id = js.id
   where sj.id = 'cc000000-0000-4000-8000-000000000010'
-    and e.role in ('owner','admin','manager')
+    and e.role::text in ('owner','admin','manager')
     and e.is_active = true
-  order by case e.role when 'owner' then 0 when 'admin' then 1 else 2 end
+    and e.auth_user_id is not null
+  order by case e.role::text when 'owner' then 0 when 'admin' then 1 else 2 end
   limit 1), true);
 
 select public.void_payment_refund(
@@ -293,12 +302,14 @@ select public.total_paid('cc000000-0000-4000-8000-000000000010') as total_paid;
 select set_config('request.jwt.claim.sub', (
   select e.auth_user_id::text
   from public.employees e
-  join public.stores st on st.company_id = e.company_id
-  join public.sleep_journeys sj on sj.store_id = st.id
+  join public.stores es on es.id = e.home_store_id
+  join public.stores js on js.company_id = es.company_id
+  join public.sleep_journeys sj on sj.store_id = js.id
   where sj.id = 'cc000000-0000-4000-8000-000000000010'
-    and e.role in ('owner','admin','manager')
+    and e.role::text in ('owner','admin','manager')
     and e.is_active = true
-  order by case e.role when 'owner' then 0 when 'admin' then 1 else 2 end
+    and e.auth_user_id is not null
+  order by case e.role::text when 'owner' then 0 when 'admin' then 1 else 2 end
   limit 1), true);
 
 select public.record_payment_refund(
@@ -388,12 +399,14 @@ where jir.journey_id = 'cc000000-0000-4000-8000-000000000010';
 select set_config('request.jwt.claim.sub', (
   select e.auth_user_id::text
   from public.employees e
-  join public.stores st on st.company_id = e.company_id
-  join public.sleep_journeys sj on sj.store_id = st.id
+  join public.stores es on es.id = e.home_store_id
+  join public.stores js on js.company_id = es.company_id
+  join public.sleep_journeys sj on sj.store_id = js.id
   where sj.id = 'cc000000-0000-4000-8000-000000000010'
-    and e.role in ('owner','admin','manager')
+    and e.role::text in ('owner','admin','manager')
     and e.is_active = true
-  order by case e.role when 'owner' then 0 when 'admin' then 1 else 2 end
+    and e.auth_user_id is not null
+  order by case e.role::text when 'owner' then 0 when 'admin' then 1 else 2 end
   limit 1), true);
 
 select public.record_payment_refund(
@@ -436,12 +449,14 @@ order by a.occurred_at;
 select set_config('request.jwt.claim.sub', (
   select e.auth_user_id::text
   from public.employees e
-  join public.stores st on st.company_id = e.company_id
-  join public.sleep_journeys sj on sj.store_id = st.id
+  join public.stores es on es.id = e.home_store_id
+  join public.stores js on js.company_id = es.company_id
+  join public.sleep_journeys sj on sj.store_id = js.id
   where sj.id = 'cc000000-0000-4000-8000-000000000011'
-    and e.role in ('owner','admin','manager')
+    and e.role::text in ('owner','admin','manager')
     and e.is_active = true
-  order by case e.role when 'owner' then 0 when 'admin' then 1 else 2 end
+    and e.auth_user_id is not null
+  order by case e.role::text when 'owner' then 0 when 'admin' then 1 else 2 end
   limit 1), true);
 
 select public.record_payment_refund(
@@ -493,12 +508,14 @@ order by a.occurred_at;
 select set_config('request.jwt.claim.sub', (
   select e.auth_user_id::text
   from public.employees e
-  join public.stores st on st.company_id = e.company_id
-  join public.sleep_journeys sj on sj.store_id = st.id
+  join public.stores es on es.id = e.home_store_id
+  join public.stores js on js.company_id = es.company_id
+  join public.sleep_journeys sj on sj.store_id = js.id
   where sj.id = 'cc000000-0000-4000-8000-000000000011'
-    and e.role in ('owner','admin','manager')
+    and e.role::text in ('owner','admin','manager')
     and e.is_active = true
-  order by case e.role when 'owner' then 0 when 'admin' then 1 else 2 end
+    and e.auth_user_id is not null
+  order by case e.role::text when 'owner' then 0 when 'admin' then 1 else 2 end
   limit 1), true);
 
 select public.record_payment_refund(
@@ -559,8 +576,9 @@ order by a.occurred_at;
 -- Journey E paid $30 of $30 (reserved, ready). Bumping the line to qty 3
 -- makes it underpaid ($90 vs $30) — the default p_release_inventory=true
 -- path must still supersede.
--- EXPECTED: requirement 'cancelled', product-B committed back to 0,
--- journey 'Quoted', a line_items_changed_balance_due event logged.
+-- EXPECTED: requirement 'superseded' (the supersede path's status value,
+-- not 'cancelled'), product-B committed back to 0, journey 'Quoted', a
+-- line_items_changed_balance_due event logged.
 
 update public.journey_line_items
 set quantity = 3
@@ -588,12 +606,14 @@ order by je.created_at desc limit 1;
 select set_config('request.jwt.claim.sub', (
   select e.auth_user_id::text
   from public.employees e
-  join public.stores st on st.company_id = e.company_id
-  join public.sleep_journeys sj on sj.store_id = st.id
+  join public.stores es on es.id = e.home_store_id
+  join public.stores js on js.company_id = es.company_id
+  join public.sleep_journeys sj on sj.store_id = js.id
   where sj.id = 'cc000000-0000-4000-8000-000000000011'
-    and e.role in ('owner','admin','manager')
+    and e.role::text in ('owner','admin','manager')
     and e.is_active = true
-  order by case e.role when 'owner' then 0 when 'admin' then 1 else 2 end
+    and e.auth_user_id is not null
+  order by case e.role::text when 'owner' then 0 when 'admin' then 1 else 2 end
   limit 1), true);
 
 select public.reconcile_payment_event(
@@ -609,12 +629,14 @@ select public.reconcile_payment_event(
 select set_config('request.jwt.claim.sub', (
   select e.auth_user_id::text
   from public.employees e
-  join public.stores st on st.company_id = e.company_id
-  join public.sleep_journeys sj on sj.store_id = st.id
+  join public.stores es on es.id = e.home_store_id
+  join public.stores js on js.company_id = es.company_id
+  join public.sleep_journeys sj on sj.store_id = js.id
   where sj.id = 'cc000000-0000-4000-8000-000000000011'
-    and e.role in ('owner','admin','manager')
+    and e.role::text in ('owner','admin','manager')
     and e.is_active = true
-  order by case e.role when 'owner' then 0 when 'admin' then 1 else 2 end
+    and e.auth_user_id is not null
+  order by case e.role::text when 'owner' then 0 when 'admin' then 1 else 2 end
   limit 1), true);
 
 select public.reconcile_payment_event(
@@ -645,10 +667,8 @@ delete from public.journey_inventory_requirements
 where journey_id in ('cc000000-0000-4000-8000-000000000010',
                      'cc000000-0000-4000-8000-000000000011',
                      'cc000000-0000-4000-8000-000000000012');
-delete from public.journey_events
-where journey_id in ('cc000000-0000-4000-8000-000000000010',
-                     'cc000000-0000-4000-8000-000000000011',
-                     'cc000000-0000-4000-8000-000000000012');
+-- written_sales.triggering_payment_id references journey_events WITHOUT
+-- cascade, so adjustments and sales must go before journey_events.
 delete from public.written_sale_adjustments
 where order_id in ('cc000000-0000-4000-8000-000000000010',
                    'cc000000-0000-4000-8000-000000000011',
@@ -657,6 +677,10 @@ delete from public.written_sales
 where order_id in ('cc000000-0000-4000-8000-000000000010',
                    'cc000000-0000-4000-8000-000000000011',
                    'cc000000-0000-4000-8000-000000000012');
+delete from public.journey_events
+where journey_id in ('cc000000-0000-4000-8000-000000000010',
+                     'cc000000-0000-4000-8000-000000000011',
+                     'cc000000-0000-4000-8000-000000000012');
 delete from public.inventory_positions
 where variant_id in ('cc000000-0000-4000-8000-000000000002',
                      'cc000000-0000-4000-8000-000000000003');
