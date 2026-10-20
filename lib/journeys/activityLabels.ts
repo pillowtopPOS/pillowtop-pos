@@ -59,6 +59,12 @@ export function activityEventTitle(e: JourneyEvent): string {
     return paymentTitle(e);
   }
   switch (e.event_type) {
+    case "payment_refunded":
+      return e.outcome === "VOIDED"
+        ? `Refund voided: ${money(data.amount)}`
+        : `Refund recorded: ${money(data.amount)}${
+            data.method ? ` (${String(data.method)})` : ""
+          }`;
     case "journey_updated_to_sold":
       return "Sale committed";
     case "line_items_changed_balance_due":
@@ -106,6 +112,8 @@ export function activityEventDetail(e: JourneyEvent): string | undefined {
       // Method text is stored verbatim (e.g. "Simulated card — timeout"
       // is the literal test method name) — shown as the quiet line.
       return data.payment_method ? String(data.payment_method) : undefined;
+    case "payment_refunded":
+      return data.reason ? String(data.reason) : undefined;
     case "delivery_completed":
       return data.delivered_at
         ? `Delivered ${activityShortDate(String(data.delivered_at))}`

@@ -38,7 +38,7 @@ const REFUND_METHODS: { value: ExchangeRefundMethod; label: string }[] = [
 ];
 
 const PAID_CUSTOMER_MESSAGE =
-  "The replacement already has a payment on record. A manager needs to mark that payment as Refunded first, then come back and cancel the exchange. Make sure the money has actually gone back to the customer first, because PillowTop only records it.";
+  "The replacement already has a payment on record. Record a refund for the payment first (Journey Activity, Payments), then come back and cancel the exchange. Make sure the money has actually gone back to the customer first, because PillowTop only records it.";
 
 function fmt(cents: number | null | undefined): string {
   return `$${((cents ?? 0) / 100).toFixed(2)}`;

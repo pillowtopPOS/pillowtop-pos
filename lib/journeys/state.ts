@@ -26,6 +26,20 @@ export type StateTransition = {
   requiredFields?: RequiredField[];
 };
 
+// Payment + refund method pickers share this list so a refund can be
+// recorded the same way the payment came in.
+export const PAYMENT_METHOD_OPTIONS = [
+  "Credit card",
+  "Debit card",
+  "Cash",
+  "Check",
+  "Financing",
+  "Other",
+  "Simulated card — success",
+  "Simulated card — timeout",
+  "Simulated card — failure",
+];
+
 export const STATE_TRANSITIONS: Record<SleepJourneyState, StateTransition[]> = {
   "Active Opportunity": [],
   Quoted: [
@@ -39,17 +53,7 @@ export const STATE_TRANSITIONS: Record<SleepJourneyState, StateTransition[]> = {
           name: "payment_method",
           label: "Payment method",
           type: "select",
-          options: [
-            "Credit card",
-            "Debit card",
-            "Cash",
-            "Check",
-            "Financing",
-            "Other",
-            "Simulated card — success",
-            "Simulated card — timeout",
-            "Simulated card — failure",
-          ],
+          options: PAYMENT_METHOD_OPTIONS,
         },
       ],
     },

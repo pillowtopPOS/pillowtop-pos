@@ -39,7 +39,11 @@ import {
 import {
   FOLLOW_UP_METHOD_LABELS,
   FOLLOW_UP_TYPE_LABELS,
+  recordPaymentRefund,
+  voidPaymentRefund,
 } from "@/lib/journeys/queries";
+import { refundableCentsOnPayment } from "@/lib/journeys/paid";
+import { PAYMENT_METHOD_OPTIONS } from "@/lib/journeys/state";
 import Modal from "@/components/Modal";
 import type {
   Employee,
@@ -83,6 +87,7 @@ function eventCategory(e: JourneyEvent): FeedFilter {
   switch (e.event_type) {
     case "deposit_received":
     case "payment_completed":
+    case "payment_refunded":
       return "payments";
     case "delivery_scheduled":
     case "delivery_completed":
@@ -200,6 +205,17 @@ export default function JourneyActivity({
     reason: string;
   } | null>(null);
   const [errorSaving, setErrorSaving] = useState(false);
+  const [refundTarget, setRefundTarget] = useState<JourneyEvent | null>(null);
+  const [refundAmount, setRefundAmount] = useState("");
+  const [refundMethod, setRefundMethod] = useState(PAYMENT_METHOD_OPTIONS[0]);
+  const [refundReason, setRefundReason] = useState("");
+  const [refundReference, setRefundReference] = useState("");
+  const [refundSaving, setRefundSaving] = useState(false);
+  const [refundError, setRefundError] = useState<string | null>(null);
+  const [voidTarget, setVoidTarget] = useState<JourneyEvent | null>(null);
+  const [voidReason, setVoidReason] = useState("");
+  const [voidSaving, setVoidSaving] = useState(false);
+  const [voidError, setVoidError] = useState<string | null>(null);
 
   const customerId = journey.customer?.id ?? null;
 
@@ -340,6 +356,64 @@ export default function JourneyActivity({
     }
   }
 
+  function openRefund(e: JourneyEvent) {
+    setRefundTarget(e);
+    setRefundAmount((refundableCentsOnPayment(e, events) / 100).toFixed(2));
+    setRefundMethod(PAYMENT_METHOD_OPTIONS[0]);
+    setRefundReason("");
+    setRefundReference("");
+    setRefundError(null);
+  }
+
+  async function submitRefund() {
+    if (!refundTarget) return;
+    const amount = parseFloat(refundAmount);
+    if (!(amount > 0)) {
+      setRefundError("Enter an amount above $0.");
+      return;
+    }
+    if (!refundReason.trim()) {
+      setRefundError("A reason is required to record a refund.");
+      return;
+    }
+    setRefundSaving(true);
+    setRefundError(null);
+    try {
+      await recordPaymentRefund(
+        refundTarget.id,
+        amount,
+        refundMethod,
+        refundReason.trim(),
+        refundReference.trim() || undefined
+      );
+      setRefundTarget(null);
+      refresh();
+    } catch (e: any) {
+      setRefundError(e.message ?? "Failed to record the refund");
+    } finally {
+      setRefundSaving(false);
+    }
+  }
+
+  async function submitVoidRefund() {
+    if (!voidTarget) return;
+    if (!voidReason.trim()) {
+      setVoidError("A reason is required to void a refund.");
+      return;
+    }
+    setVoidSaving(true);
+    setVoidError(null);
+    try {
+      await voidPaymentRefund(voidTarget.id, voidReason.trim());
+      setVoidTarget(null);
+      refresh();
+    } catch (e: any) {
+      setVoidError(e.message ?? "Failed to void the refund");
+    } finally {
+      setVoidSaving(false);
+    }
+  }
+
   const quickTopics = quickTopicsForState(journey.current_state);
 
   return (
@@ -414,7 +488,14 @@ export default function JourneyActivity({
             const detail = activityEventDetail(e);
             const isPayment =
               e.event_type === "deposit_received" ||
-              e.event_type === "payment_completed";
+              e.event_type === "payment_completed" ||
+              e.event_type === "payment_refunded";
+            const refundableCents =
+              (e.event_type === "deposit_received" ||
+                e.event_type === "payment_completed") &&
+              e.outcome === "SUCCEEDED"
+                ? refundableCentsOnPayment(e, events)
+                : 0;
             return (
               <div key={`e-${e.id}`} className="px-1 py-1">
                 <p
@@ -431,6 +512,28 @@ export default function JourneyActivity({
                   {activityEventAuthor(e.triggered_by, employees)} ·{" "}
                   {new Date(e.created_at).toLocaleString()}
                 </p>
+                {canModerate && refundableCents > 0 && (
+                  <button
+                    onClick={() => openRefund(e)}
+                    className="mt-1 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
+                  >
+                    Record refund
+                  </button>
+                )}
+                {canModerate &&
+                  e.event_type === "payment_refunded" &&
+                  e.outcome === "SUCCEEDED" && (
+                    <button
+                      onClick={() => {
+                        setVoidTarget(e);
+                        setVoidReason("");
+                        setVoidError(null);
+                      }}
+                      className="mt-1 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
+                    >
+                      Void refund
+                    </button>
+                  )}
               </div>
             );
           }
@@ -737,6 +840,127 @@ export default function JourneyActivity({
               </button>
               <button
                 onClick={() => setErrorReason(null)}
+                className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {refundTarget && (
+        <Modal
+          onClose={() => setRefundTarget(null)}
+          saving={refundSaving}
+          dirty={refundReason.trim() !== "" || refundReference.trim() !== ""}
+        >
+          <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+            <h2 className="mb-2 text-lg font-semibold text-slate-900">
+              Record refund
+            </h2>
+            <p className="mb-3 text-sm text-slate-600">
+              This records a refund you already made in your payment system.
+              PillowTop does not move money.
+            </p>
+            <label className="mb-3 block text-sm font-medium text-slate-700">
+              Refund amount
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={refundAmount}
+                onChange={(e) => setRefundAmount(e.target.value)}
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              />
+            </label>
+            <label className="mb-3 block text-sm font-medium text-slate-700">
+              Refund method
+              <select
+                value={refundMethod}
+                onChange={(e) => setRefundMethod(e.target.value)}
+                className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+              >
+                {PAYMENT_METHOD_OPTIONS.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="mb-3 block text-sm font-medium text-slate-700">
+              Reason
+              <input
+                value={refundReason}
+                onChange={(e) => setRefundReason(e.target.value)}
+                placeholder="Why is this refund being made?"
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              />
+            </label>
+            <label className="block text-sm font-medium text-slate-700">
+              Reference (optional)
+              <input
+                value={refundReference}
+                onChange={(e) => setRefundReference(e.target.value)}
+                placeholder="Processor refund id, receipt, etc."
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              />
+            </label>
+            {refundError && (
+              <p className="mt-3 text-sm text-red-600">{refundError}</p>
+            )}
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={submitRefund}
+                disabled={refundSaving}
+                className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+              >
+                {refundSaving ? "Recording…" : "Record refund"}
+              </button>
+              <button
+                onClick={() => setRefundTarget(null)}
+                className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {voidTarget && (
+        <Modal
+          onClose={() => setVoidTarget(null)}
+          saving={voidSaving}
+          dirty={voidReason.trim() !== ""}
+        >
+          <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+            <h2 className="mb-2 text-lg font-semibold text-slate-900">
+              Void refund
+            </h2>
+            <p className="mb-3 text-sm text-slate-600">
+              The refund stays in history as voided and the payment counts
+              again. A reason is required.
+            </p>
+            <input
+              value={voidReason}
+              onChange={(e) => setVoidReason(e.target.value)}
+              placeholder="Why is this refund being voided?"
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            />
+            {voidError && (
+              <p className="mt-3 text-sm text-red-600">{voidError}</p>
+            )}
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={submitVoidRefund}
+                disabled={voidSaving}
+                className="flex-1 rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {voidSaving ? "Voiding…" : "Void refund"}
+              </button>
+              <button
+                onClick={() => setVoidTarget(null)}
                 className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
                 Cancel

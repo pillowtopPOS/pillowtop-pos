@@ -1130,6 +1130,66 @@ export async function reconcilePayment(
   return data as string;
 }
 
+export async function recordPaymentRefund(
+  paymentEventId: string,
+  amount: number,
+  method: string,
+  reason: string,
+  reference?: string
+): Promise<string> {
+  const supabase = createClient();
+
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.refreshSession();
+
+  if (sessionError || !session?.user) {
+    throw new Error("Not authenticated");
+  }
+
+  const { data, error } = await supabase.rpc("record_payment_refund", {
+    p_payment_id: paymentEventId,
+    p_amount: amount,
+    p_method: method,
+    p_reason: reason,
+    p_reference: reference ?? null,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as string;
+}
+
+export async function voidPaymentRefund(
+  refundEventId: string,
+  reason: string
+): Promise<string> {
+  const supabase = createClient();
+
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.refreshSession();
+
+  if (sessionError || !session?.user) {
+    throw new Error("Not authenticated");
+  }
+
+  const { data, error } = await supabase.rpc("void_payment_refund", {
+    p_refund_event_id: refundEventId,
+    p_reason: reason,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data as string;
+}
+
 export async function fetchOpportunities(storeId?: string): Promise<Opportunity[]> {
   const supabase = createClient();
   let query = supabase

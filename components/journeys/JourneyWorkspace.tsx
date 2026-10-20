@@ -42,6 +42,7 @@ import {
   STATE_TRANSITIONS,
   type JourneyEventType,
 } from "@/lib/journeys/state";
+import { computeNetPaid } from "@/lib/journeys/paid";
 import {
   mostUrgentEvaluation,
   type SleepTrialEvaluation,
@@ -499,14 +500,7 @@ export default function JourneyWorkspace({
     : STATE_TRANSITIONS[journey.current_state];
   const isExchangeChild = journey.sale_kind === "EXCHANGE";
 
-  const paid = events
-    .filter(
-      (e) =>
-        (e.event_type === "deposit_received" ||
-          e.event_type === "payment_completed") &&
-        e.outcome === "SUCCEEDED"
-    )
-    .reduce((sum, e) => sum + (typeof e.event_data?.amount === "number" ? e.event_data.amount : 0), 0);
+  const paid = computeNetPaid(events);
 
   const balance = journey.price !== null && journey.price !== undefined ? journey.price - paid : null;
 
@@ -1493,8 +1487,7 @@ export default function JourneyWorkspace({
                         later update.
                       </p>
                     )}
-                    {isExchangeChild &&
-                      journey.price !== null &&
+                    {journey.price !== null &&
                       journey.price !== undefined &&
                       Math.round(paid * 100) >
                         Math.round(journey.price * 100) && (
@@ -1506,8 +1499,7 @@ export default function JourneyWorkspace({
                             100
                           ).toFixed(2)}{" "}
                           more than the order total. Refund them in your
-                          payment system. Marking a payment Refunded is not
-                          available in the app yet.
+                          payment system, then record the refund here.
                         </p>
                       )}
                     {balance !== null &&

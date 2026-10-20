@@ -58,6 +58,7 @@ import {
   type SleepTrialEvaluation,
 } from "@/lib/journeys/sleepTrial";
 import { localDateISO, localTodayISO } from "@/lib/dates";
+import { computeNetPaid } from "@/lib/journeys/paid";
 import Modal from "@/components/Modal";
 import FinancingCalculator from "@/components/FinancingCalculator";
 import JourneyWorkspace from "@/components/journeys/JourneyWorkspace";
@@ -775,19 +776,7 @@ export default function BoardPage() {
             {pendingTransition.journey.price !== null && pendingTransition.journey.price !== undefined && (
               <div className="mb-4 rounded-md bg-slate-50 p-3 text-sm">
                 {(() => {
-                  const paid = events
-                    .filter(
-                      (e) =>
-                        (e.event_type === "deposit_received" ||
-                          e.event_type === "payment_completed") &&
-                        e.outcome === "SUCCEEDED"
-                    )
-                    .reduce(
-                      (sum, e) =>
-                        sum +
-                        (typeof e.event_data?.amount === "number" ? e.event_data.amount : 0),
-                      0
-                    );
+                  const paid = computeNetPaid(events);
                   const balance = pendingTransition.journey.price - paid;
                   return (
                     <p className="font-medium text-slate-700">
