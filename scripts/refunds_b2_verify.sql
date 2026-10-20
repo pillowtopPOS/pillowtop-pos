@@ -5,27 +5,27 @@
 -- statement's result). All fixture ids are fixed UUIDs prefixed cc000000.
 --
 -- Fixture design:
---   Journey C — $49 stocked line (REFUND-TEST product, 10 on hand) + $147
---     payment + a written_sales row. Used for the adjustment, reservation-
---     kept-on-refund, and cancel-releases tests.
---   Journey D — $49 catalog-less line + $50 payment. Used for the
---     reconcile-FAILED-after-refund guard.
---   Journey E — $30 stocked line (second product) + $30 payment. Used to
---     prove line edits still supersede reservations (p_release_inventory
---     stays default true for non-refund callers).
+--   Journey C — $49 stocked line (product A, 10 on hand) + $147 payment +
+--     a written_sales row. Used for the adjustment, clamp, reservation-
+--     kept, re-pay, cancel-releases, and refund-after-cancel tests.
+--   Journey D — $49 catalog-less line + $100 payment + a written_sales
+--     row. Used for the partial-clamp and reconcile guards.
+--   Journey E — $30 stocked line (product B) + $30 payment. Used to prove
+--     line edits still supersede reservations (default release path).
 -- Payment events are inserted directly (bypass record_payment_event), so
--- the written_sales row for journey C is inserted by hand too.
+-- the written_sales rows are inserted by hand too.
 --
 -- Blocks marked EXPECT ERROR are supposed to raise; a success means a bug.
 -- Impersonation uses set_config('request.jwt.claim.sub', ...) so the
 -- security-definer RPCs see an employee. No delivered journeys are created
--- (the delivered guard would block teardown), so block 9 removes everything.
+-- (the delivered guard would block teardown), so block 13 removes
+-- everything.
 -- ============================================================================
 
 
 -- ─── BLOCK 0 — SETUP ─────────────────────────────────────────────────────
--- EXPECTED (final select): all fixture rows present — journeys C/D/E,
--- payment ids, one written sale (committed 49), requirement on C ready.
+-- EXPECTED (final select): journeys C/D/E with prices 49/49/30 and
+-- total_paid 147/100/30.
 
 insert into public.customers (id, first_name, last_name, phone, email)
 values ('cc000000-0000-4000-8000-000000000001', 'REFUND-B2', 'Customer',
@@ -94,7 +94,7 @@ join public.stores s on s.id = sj.store_id
 where sj.id = 'cc000000-0000-4000-8000-000000000010'
 on conflict (id) do nothing;
 
--- Journey D: $49 catalog-less line + $50 payment (reconcile-guard test).
+-- Journey D: $49 catalog-less line + $100 payment + written sale.
 insert into public.sleep_journeys (id, customer_id, store_id, fulfillment_type)
 select 'cc000000-0000-4000-8000-000000000011',
        'cc000000-0000-4000-8000-000000000001', s.id, 'pickup'
@@ -113,7 +113,20 @@ insert into public.journey_events
 values ('cc000000-0000-4000-8000-000000000021',
         'cc000000-0000-4000-8000-000000000011',
         'payment_completed', 'SUCCEEDED',
-        jsonb_build_object('amount', 50, 'method', 'CARD'), 'system')
+        jsonb_build_object('amount', 100, 'method', 'CARD'), 'system')
+on conflict (id) do nothing;
+
+insert into public.written_sales
+  (id, tenant_id, order_id, selling_store_id,
+   salesperson_attribution_reference, qualifying_order_amount,
+   triggering_payment_id)
+select 'cc000000-0000-4000-8000-000000000041', s.company_id,
+       'cc000000-0000-4000-8000-000000000011', sj.store_id,
+       'refund-b2-verify', 49,
+       'cc000000-0000-4000-8000-000000000021'
+from public.sleep_journeys sj
+join public.stores s on s.id = sj.store_id
+where sj.id = 'cc000000-0000-4000-8000-000000000011'
 on conflict (id) do nothing;
 
 -- Journey E: $30 stocked line (product B) + $30 payment (line-edit test).
@@ -160,8 +173,8 @@ select ws.qualifying_order_amount,
 from public.written_sales ws
 where ws.order_id = 'cc000000-0000-4000-8000-000000000010';
 
-select jir.quantity_required, jir.quantity_reserved, jir.status,
-       ip.committed_quantity, ip.on_hand_quantity
+select jir.id as requirement_id, jir.quantity_required,
+       jir.quantity_reserved, jir.status, ip.committed_quantity
 from public.journey_inventory_requirements jir
 join public.inventory_positions ip
   on ip.variant_id = jir.variant_id and ip.location_id = jir.location_id
@@ -269,11 +282,13 @@ order by je.created_at;
 select public.total_paid('cc000000-0000-4000-8000-000000000010') as total_paid;
 
 
--- ─── BLOCK 5 — REFUND UNDER THE PRICE: reservation is KEPT ───────────────
+-- ─── BLOCK 5 — REFUND UNDER THE PRICE: clamped + reservation KEPT ────────
 -- $120 more refunded: net paid 7 < price 49 -> journey flips to Quoted,
--- but the ready reservation must NOT release (098 rule).
--- EXPECTED: current_state 'Quoted'; requirement still status 'ready',
--- reserved 1; product-A committed_quantity still 1.
+-- the committed clamp kicks in (adjustment is -29, not -120, so committed
+-- lands exactly on 0), and the ready reservation must NOT release.
+-- EXPECTED: adjustment 'refund' -29 (29 -> 0); current_state 'Quoted';
+-- requirement still 'ready'/reserved 1 — note the requirement_id, block 6
+-- must show the SAME row; product-A committed_quantity still 1.
 
 select set_config('request.jwt.claim.sub', (
   select e.auth_user_id::text
@@ -291,12 +306,19 @@ select public.record_payment_refund(
   120, 'Card', 'Refund below paid-in-full', null
 ) as refund_event_id;
 
+select a.adjustment_type, a.adjustment_amount,
+       a.previous_qualifying_committed_amount, a.new_qualifying_committed_amount
+from public.written_sale_adjustments a
+join public.written_sales ws on ws.id = a.written_sale_id
+where ws.order_id = 'cc000000-0000-4000-8000-000000000010'
+order by a.occurred_at desc limit 1;
+
 select public.total_paid('cc000000-0000-4000-8000-000000000010') as total_paid,
        sj.current_state
 from public.sleep_journeys sj
 where sj.id = 'cc000000-0000-4000-8000-000000000010';
 
-select jir.quantity_required, jir.quantity_reserved, jir.status,
+select jir.id as requirement_id, jir.quantity_reserved, jir.status,
        ip.committed_quantity
 from public.journey_inventory_requirements jir
 join public.inventory_positions ip
@@ -305,11 +327,39 @@ join public.inventory_positions ip
 where jir.journey_id = 'cc000000-0000-4000-8000-000000000010';
 
 
--- ─── BLOCK 6 — CANCEL STILL RELEASES ─────────────────────────────────────
+-- ─── BLOCK 6 — RE-PAY BACK TO PRICE: same reservation, Ready to Schedule ─
+-- A $42 payment brings net paid back to 49.
+-- EXPECTED: current_state 'Ready to Schedule'; the SAME requirement_id as
+-- block 5, still 'ready'/reserved 1; committed still 1.
+
+insert into public.journey_events
+  (id, journey_id, event_type, outcome, event_data, triggered_by)
+values ('cc000000-0000-4000-8000-000000000023',
+        'cc000000-0000-4000-8000-000000000010',
+        'payment_completed', 'SUCCEEDED',
+        jsonb_build_object('amount', 42, 'method', 'CARD'), 'system')
+on conflict (id) do nothing;
+
+select public.total_paid('cc000000-0000-4000-8000-000000000010') as total_paid,
+       sj.current_state
+from public.sleep_journeys sj
+where sj.id = 'cc000000-0000-4000-8000-000000000010';
+
+select jir.id as requirement_id, jir.quantity_reserved, jir.status,
+       ip.committed_quantity
+from public.journey_inventory_requirements jir
+join public.inventory_positions ip
+  on ip.variant_id = jir.variant_id and ip.location_id = jir.location_id
+ and ip.disposition = 'Prime' and ip.sublocation_id is null
+where jir.journey_id = 'cc000000-0000-4000-8000-000000000010';
+
+
+-- ─── BLOCK 7 — CANCEL STILL RELEASES ─────────────────────────────────────
 -- Cancelling journey C (the standard journey_cancelled event path) must
 -- release the reservation the refund refused to release.
 -- EXPECTED: requirement 'cancelled', product-A committed back to 0,
--- journey cancelled_at set.
+-- journey cancelled_at set; a 'cancellation' adjustment row (0 -> 0,
+-- committed was already 0).
 
 insert into public.journey_events
   (journey_id, event_type, outcome, event_data, triggered_by)
@@ -327,11 +377,61 @@ join public.sleep_journeys sj on sj.id = jir.journey_id
 where jir.journey_id = 'cc000000-0000-4000-8000-000000000010';
 
 
--- ─── BLOCK 7 — RECONCILE GUARD: FAILED refused while a refund exists ──────
--- Journey D: record a $10 refund, then try to mark the payment FAILED.
--- The refund call should succeed; the reconcile must ERROR.
--- EXPECT ERROR on the last statement:
---   'Void the refunds on this payment first.'
+-- ─── BLOCK 8 — REFUND AFTER CANCEL: no adjustment, no reversal ───────────
+-- The written sale is already cancelled to committed 0. Recording a $7
+-- refund (the remaining refundable amount on the payment) must NOT write
+-- an adjustment, and voiding it must NOT write a reversal.
+-- EXPECTED: refund event id returns; the adjustment list is UNCHANGED
+-- from after block 7 (no new 'refund' row after the 'cancellation' row);
+-- after the void, still no new rows — committed stays 0.
+
+select set_config('request.jwt.claim.sub', (
+  select e.auth_user_id::text
+  from public.employees e
+  join public.stores st on st.company_id = e.company_id
+  join public.sleep_journeys sj on sj.store_id = st.id
+  where sj.id = 'cc000000-0000-4000-8000-000000000010'
+    and e.role in ('owner','admin','manager')
+    and e.is_active = true
+  order by case e.role when 'owner' then 0 when 'admin' then 1 else 2 end
+  limit 1), true);
+
+select public.record_payment_refund(
+  'cc000000-0000-4000-8000-000000000020',
+  7, 'Card', 'Refund after cancel', null
+) as refund_event_id;
+
+select a.adjustment_type, a.adjustment_amount,
+       a.new_qualifying_committed_amount
+from public.written_sale_adjustments a
+join public.written_sales ws on ws.id = a.written_sale_id
+where ws.order_id = 'cc000000-0000-4000-8000-000000000010'
+order by a.occurred_at;
+
+select public.void_payment_refund(
+  (select je.id from public.journey_events je
+    where je.journey_id = 'cc000000-0000-4000-8000-000000000010'
+      and je.event_type = 'payment_refunded'
+      and je.outcome = 'SUCCEEDED'
+      and (je.event_data->>'amount')::numeric = 7
+    order by je.created_at desc limit 1),
+  'Checking the reversal path'
+) as voided_id;
+
+select a.adjustment_type, a.adjustment_amount,
+       a.new_qualifying_committed_amount
+from public.written_sale_adjustments a
+join public.written_sales ws on ws.id = a.written_sale_id
+where ws.order_id = 'cc000000-0000-4000-8000-000000000010'
+order by a.occurred_at;
+
+
+-- ─── BLOCK 9 — PARTIAL CLAMP on journey D: -29 not -40 ───────────────────
+-- Journey D committed is 49. Refund $20 -> committed 29. Then refund $40:
+-- the adjustment clamps to -29 (committed 0), not -40. Voiding the $40
+-- refund reverses exactly +29 (committed back to 29), never the raw $40.
+-- EXPECTED: rows 'refund' -20 (49->29), 'refund' -29 (29->0),
+-- 'refund_reversal' +29 (0->29).
 
 select set_config('request.jwt.claim.sub', (
   select e.auth_user_id::text
@@ -346,19 +446,43 @@ select set_config('request.jwt.claim.sub', (
 
 select public.record_payment_refund(
   'cc000000-0000-4000-8000-000000000021',
-  10, 'Card', 'Sets up the reconcile guard', null
+  20, 'Card', 'First refund on D', null
 ) as refund_event_id;
 
-select public.reconcile_payment_event(
+select public.record_payment_refund(
   'cc000000-0000-4000-8000-000000000021',
-  'FAILED', 'manual', 'system', 'chargeback attempt'
-);
+  40, 'Card', 'Refund larger than remaining committed', null
+) as refund_event_id;
+
+select a.adjustment_type, a.adjustment_amount,
+       a.previous_qualifying_committed_amount, a.new_qualifying_committed_amount
+from public.written_sale_adjustments a
+join public.written_sales ws on ws.id = a.written_sale_id
+where ws.order_id = 'cc000000-0000-4000-8000-000000000011'
+order by a.occurred_at;
+
+select public.void_payment_refund(
+  (select je.id from public.journey_events je
+    where je.journey_id = 'cc000000-0000-4000-8000-000000000011'
+      and je.event_type = 'payment_refunded'
+      and je.outcome = 'SUCCEEDED'
+      and (je.event_data->>'amount')::numeric = 40
+    order by je.created_at desc limit 1),
+  'Reversing the clamped refund'
+) as voided_id;
+
+select a.adjustment_type, a.adjustment_amount,
+       a.previous_qualifying_committed_amount, a.new_qualifying_committed_amount
+from public.written_sale_adjustments a
+join public.written_sales ws on ws.id = a.written_sale_id
+where ws.order_id = 'cc000000-0000-4000-8000-000000000011'
+order by a.occurred_at;
 
 
--- ─── BLOCK 8 — LINE EDITS STILL SUPERSEDE (unchanged behavior) ───────────
+-- ─── BLOCK 10 — LINE EDITS STILL SUPERSEDE (unchanged behavior) ──────────
 -- Journey E paid $30 of $30 (reserved, ready). Bumping the line to qty 3
--- makes it underpaid ($90 price vs $30 paid) — the default
--- p_release_inventory=true path must still supersede.
+-- makes it underpaid ($90 vs $30) — the default p_release_inventory=true
+-- path must still supersede.
 -- EXPECTED: requirement 'cancelled', product-B committed back to 0,
 -- journey 'Quoted', a line_items_changed_balance_due event logged.
 
@@ -381,9 +505,51 @@ where je.journey_id = 'cc000000-0000-4000-8000-000000000012'
 order by je.created_at desc limit 1;
 
 
--- ─── BLOCK 9 — TEARDOWN: remove all REFUND-B2 fixtures ───────────────────
+-- ─── BLOCK 11 — RECONCILE GUARD: FAILED refused while a refund exists ────
+-- Journey D still has a SUCCEEDED $20 refund on its payment.
+-- EXPECT ERROR: 'Void the refunds on this payment first.'
+
+select set_config('request.jwt.claim.sub', (
+  select e.auth_user_id::text
+  from public.employees e
+  join public.stores st on st.company_id = e.company_id
+  join public.sleep_journeys sj on sj.store_id = st.id
+  where sj.id = 'cc000000-0000-4000-8000-000000000011'
+    and e.role in ('owner','admin','manager')
+    and e.is_active = true
+  order by case e.role when 'owner' then 0 when 'admin' then 1 else 2 end
+  limit 1), true);
+
+select public.reconcile_payment_event(
+  'cc000000-0000-4000-8000-000000000021',
+  'FAILED', 'manual', 'system', 'chargeback attempt'
+);
+
+
+-- ─── BLOCK 12 — RECONCILE GUARD: VOIDED refused too ──────────────────────
+-- The guard covers every non-SUCCEEDED outcome, not just FAILED.
+-- EXPECT ERROR: 'Void the refunds on this payment first.'
+
+select set_config('request.jwt.claim.sub', (
+  select e.auth_user_id::text
+  from public.employees e
+  join public.stores st on st.company_id = e.company_id
+  join public.sleep_journeys sj on sj.store_id = st.id
+  where sj.id = 'cc000000-0000-4000-8000-000000000011'
+    and e.role in ('owner','admin','manager')
+    and e.is_active = true
+  order by case e.role when 'owner' then 0 when 'admin' then 1 else 2 end
+  limit 1), true);
+
+select public.reconcile_payment_event(
+  'cc000000-0000-4000-8000-000000000021',
+  'VOIDED', 'manual', 'system', 'entered in error'
+);
+
+
+-- ─── BLOCK 13 — TEARDOWN: remove all REFUND-B2 fixtures ──────────────────
 -- Journeys D and E were never cancelled — cancel events release any
--- lingering requirements first (journey C was cancelled in block 6).
+-- lingering requirements first (journey C was cancelled in block 7).
 -- EXPECTED: remaining = 0.
 
 insert into public.journey_events

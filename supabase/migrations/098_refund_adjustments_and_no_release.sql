@@ -20,9 +20,12 @@
 --      still happen — only the supersede (and its paired stale-ready-flag
 --      clear) are gated.
 --
--- Also: reconcile_payment_event now refuses to flip a payment to FAILED
--- while SUCCEEDED refunds point at it — voided-first ordering keeps
--- net paid from going negative.
+-- Also: reconcile_payment_event now refuses to move a payment to any
+-- non-SUCCEEDED outcome while SUCCEEDED refunds point at it —
+-- voided-first ordering keeps net paid from going negative. Refund
+-- adjustments are clamped to the remaining committed amount (a sale
+-- already cancelled to zero commits stays at zero), and voided refunds
+-- reverse exactly the clamped amount that was applied.
 --
 -- reevaluate_journey_balance changes arity, so the old 1-arg function is
 -- dropped first (the default parameter keeps every existing 1-arg call
@@ -146,6 +149,7 @@ declare
   v_sale_id uuid;
   v_sale_tenant uuid;
   v_prev_committed numeric;
+  v_adjust numeric;
 begin
   -- Lock the payment row first: the refund cap must be checked against a
   -- stable row, and this serializes two refunds against the same payment.
@@ -228,17 +232,22 @@ begin
   ) adj on adj.written_sale_id = ws.id
   where ws.order_id = v_payment.journey_id;
 
+  -- Clamp to what is still committed: after a cancellation the committed
+  -- amount is already 0 and a later refund must not push it negative.
   if v_sale_id is not null then
-    insert into public.written_sale_adjustments (
-      written_sale_id, tenant_id, order_id, adjustment_amount,
-      previous_qualifying_committed_amount,
-      new_qualifying_committed_amount,
-      adjustment_type, adjustment_reason, actor_id, correlation_id
-    ) values (
-      v_sale_id, v_sale_tenant, v_payment.journey_id, -p_amount,
-      v_prev_committed, v_prev_committed - p_amount,
-      'refund', btrim(p_reason), auth.uid()::text, v_new_id
-    );
+    v_adjust := least(p_amount, greatest(v_prev_committed, 0));
+    if v_adjust > 0 then
+      insert into public.written_sale_adjustments (
+        written_sale_id, tenant_id, order_id, adjustment_amount,
+        previous_qualifying_committed_amount,
+        new_qualifying_committed_amount,
+        adjustment_type, adjustment_reason, actor_id, correlation_id
+      ) values (
+        v_sale_id, v_sale_tenant, v_payment.journey_id, -v_adjust,
+        v_prev_committed, v_prev_committed - v_adjust,
+        'refund', btrim(p_reason), auth.uid()::text, v_new_id
+      );
+    end if;
   end if;
 
   -- Net paid dropped: re-run the balance and inventory evaluations. The
@@ -270,7 +279,7 @@ as $$
 declare
   v_refund public.journey_events%rowtype;
   v_log_id uuid;
-  v_refund_amount numeric;
+  v_reversal_amount numeric;
   v_sale_id uuid;
   v_sale_tenant uuid;
   v_prev_committed numeric;
@@ -319,9 +328,17 @@ begin
     v_refund.event_type, 'manual', auth.uid()::text, btrim(p_reason)
   ) returning id into v_log_id;
 
-  -- Reversal adjustment: committed amount goes back up by the refunded
-  -- dollars. correlation_id points at the refund event being reversed.
-  v_refund_amount := coalesce((v_refund.event_data->>'amount')::numeric, 0);
+  -- Reversal adjustment: put back exactly what this refund's 'refund'
+  -- adjustment took out (clamped refunds reverse the clamped amount, not
+  -- the raw refund amount; a refund that wrote no adjustment reverses
+  -- nothing). correlation_id points at the refund event being reversed.
+  select -coalesce(sum(a.adjustment_amount), 0)
+    into v_reversal_amount
+  from public.written_sale_adjustments a
+  join public.written_sales ws on ws.id = a.written_sale_id
+  where ws.order_id = v_refund.journey_id
+    and a.adjustment_type = 'refund'
+    and a.correlation_id = p_refund_event_id;
 
   select ws.id, ws.tenant_id,
          ws.qualifying_order_amount + coalesce(adj.total, 0)
@@ -334,15 +351,15 @@ begin
   ) adj on adj.written_sale_id = ws.id
   where ws.order_id = v_refund.journey_id;
 
-  if v_sale_id is not null and v_refund_amount > 0 then
+  if v_sale_id is not null and v_reversal_amount > 0 then
     insert into public.written_sale_adjustments (
       written_sale_id, tenant_id, order_id, adjustment_amount,
       previous_qualifying_committed_amount,
       new_qualifying_committed_amount,
       adjustment_type, adjustment_reason, actor_id, correlation_id
     ) values (
-      v_sale_id, v_sale_tenant, v_refund.journey_id, v_refund_amount,
-      v_prev_committed, v_prev_committed + v_refund_amount,
+      v_sale_id, v_sale_tenant, v_refund.journey_id, v_reversal_amount,
+      v_prev_committed, v_prev_committed + v_reversal_amount,
       'refund_reversal', btrim(p_reason), auth.uid()::text, p_refund_event_id
     );
   end if;
@@ -403,10 +420,11 @@ begin
     return p_event_id;
   end if;
 
-  -- Refunds recorded against this payment must be voided before it can be
-  -- marked FAILED — otherwise they keep subtracting in total_paid and net
-  -- paid goes negative.
-  if v_new = 'FAILED' and exists (
+  -- Refunds recorded against this payment must be voided before its
+  -- outcome can move to anything but SUCCEEDED — otherwise they keep
+  -- subtracting in total_paid while the payment no longer counts, and
+  -- net paid goes negative.
+  if v_new <> 'SUCCEEDED' and exists (
     select 1 from public.journey_events je
     where je.journey_id = v_journey_id
       and je.event_type = 'payment_refunded'
