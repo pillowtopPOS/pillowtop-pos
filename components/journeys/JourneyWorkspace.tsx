@@ -359,7 +359,9 @@ function JourneyStateSummaryBar({
         )}
       </SummaryCell>
       <SummaryCell label="Next Action">
-        {exchangeAwaitingPayment ? (
+        {journey.cancelled_at ? (
+          <span className="font-normal text-slate-400">No action needed</span>
+        ) : exchangeAwaitingPayment ? (
           <span>Waiting for the customer&apos;s payment</span>
         ) : nextFollowUp ? (
           followUpOverdue ? (
@@ -502,12 +504,19 @@ export default function JourneyWorkspace({
 
   const paid = computeNetPaid(events);
 
-  const balance = journey.price !== null && journey.price !== undefined ? journey.price - paid : null;
+  // cancelled_at nulls the balance — a cancelled journey shows what was
+  // agreed/paid (and any credit due back) but never an amount still owed.
+  const balance = journey.cancelled_at
+    ? null
+    : journey.price !== null && journey.price !== undefined
+      ? journey.price - paid
+      : null;
 
   // An exchange child in Quoted with money still owed: Next Action reads
   // "Waiting for the customer's payment" and Record Payment is primary.
   const exchangeAwaitingPayment =
     isExchangeChild &&
+    !journey.cancelled_at &&
     journey.current_state === "Quoted" &&
     (journey.price ?? 0) > 0 &&
     paid < (journey.price ?? 0);
@@ -1441,7 +1450,9 @@ export default function JourneyWorkspace({
                           : "text-slate-900"
                       }`}
                     >
-                      {paymentUnknown
+                      {journey.cancelled_at
+                        ? "Cancelled"
+                        : paymentUnknown
                         ? "Payment outcome unknown"
                         : journey.price === null || journey.price === undefined
                         ? "No price set"

@@ -12,9 +12,11 @@ import {
   ChevronRight,
   Store as StoreIcon,
   Settings as SettingsIcon,
+  LogOut,
 } from "lucide-react";
 import CelebrationBanner from "@/components/CelebrationBanner";
-import { createClient } from "@/lib/supabase/client";
+import Modal from "@/components/Modal";
+import { createClient, signOut } from "@/lib/supabase/client";
 import { isStoreConfirmedToday, storeSelectUrl } from "@/lib/journeys/storeConfirm";
 import {
   fetchCurrentEmployee,
@@ -24,7 +26,7 @@ import {
   type Store,
 } from "@/lib/journeys/queries";
 
-const HIDDEN_PATHS = ["/", "/login", "/store-select"];
+const HIDDEN_PATHS = ["/", "/login", "/logout", "/store-select"];
 
 const NAV = [
   { href: "/board", label: "Board", icon: LayoutGrid },
@@ -45,6 +47,8 @@ export default function Sidebar({
   const [stores, setStores] = useState<Store[]>([]);
   const [workCount, setWorkCount] = useState(0);
   const [activeStoreId, setActiveStoreId] = useState<string | null>(null);
+  const [confirmingSignOut, setConfirmingSignOut] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [loading, setLoading] = useState(true);
 
   if (pathname == null) {
@@ -161,6 +165,14 @@ export default function Sidebar({
   const activeStore = stores.find((s) => s.id === activeStoreId);
   const isAdmin = employee?.role === "owner" || employee?.role === "admin";
 
+  // Full navigation (not router.push) so every in-memory cache — employee,
+  // store list, mounted page state — is dropped with the session.
+  async function handleSignOut() {
+    setSigningOut(true);
+    await signOut();
+    window.location.href = "/login";
+  }
+
   return (
     <div className="flex h-screen overflow-hidden">
       <aside
@@ -219,13 +231,22 @@ export default function Sidebar({
 
         <div className="border-t border-slate-200 p-3">
           {collapsed ? (
-            <Link
-              href="/store-select"
-              className="flex justify-center rounded p-1 text-slate-500 hover:bg-slate-100"
-              aria-label="Change store"
-            >
-              <StoreIcon className="h-5 w-5" />
-            </Link>
+            <div className="flex flex-col items-center gap-1">
+              <Link
+                href="/store-select"
+                className="flex justify-center rounded p-1 text-slate-500 hover:bg-slate-100"
+                aria-label="Change store"
+              >
+                <StoreIcon className="h-5 w-5" />
+              </Link>
+              <button
+                onClick={() => setConfirmingSignOut(true)}
+                className="flex justify-center rounded p-1 text-slate-500 hover:bg-slate-100"
+                aria-label="Sign out"
+              >
+                <LogOut className="h-5 w-5" />
+              </button>
+            </div>
           ) : (
             <div className="space-y-1.5">
               <p className="text-xs font-medium uppercase text-slate-400">
@@ -239,12 +260,20 @@ export default function Sidebar({
                   Logged in as: {employee.name}
                 </p>
               )}
-              <Link
-                href="/store-select"
-                className="text-xs text-brand-600 hover:text-brand-700"
-              >
-                Change
-              </Link>
+              <div className="flex items-center gap-3">
+                <Link
+                  href="/store-select"
+                  className="text-xs text-brand-600 hover:text-brand-700"
+                >
+                  Change
+                </Link>
+                <button
+                  onClick={() => setConfirmingSignOut(true)}
+                  className="text-xs text-slate-500 hover:text-slate-700"
+                >
+                  Sign out
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -254,6 +283,37 @@ export default function Sidebar({
         <CelebrationBanner />
         {children}
       </div>
+
+      {confirmingSignOut && (
+        <Modal
+          onClose={() => setConfirmingSignOut(false)}
+          saving={signingOut}
+        >
+          <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+            <h2 className="mb-2 text-lg font-semibold text-slate-900">
+              Sign out?
+            </h2>
+            <p className="mb-3 text-sm text-slate-600">
+              You&apos;ll need to sign back in to keep working.
+            </p>
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={handleSignOut}
+                disabled={signingOut}
+                className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+              >
+                {signingOut ? "Signing out…" : "Sign out"}
+              </button>
+              <button
+                onClick={() => setConfirmingSignOut(false)}
+                className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

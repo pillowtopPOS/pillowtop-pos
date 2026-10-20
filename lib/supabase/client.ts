@@ -48,3 +48,25 @@ export function createClient() {
     }
   );
 }
+
+/**
+ * Ends the Supabase session and clears per-user state. The active-store
+ * claim lives in user_metadata and survives sign-out, so it is cleared
+ * first while the session is still valid — a same-day re-login would
+ * otherwise silently restore it. In-memory state (cached employee, etc.)
+ * is dropped by the full navigation callers perform after this resolves.
+ */
+export async function signOut() {
+  const supabase = createClient();
+  // Sign out even if the claim clear fails — a stale claim is a minor
+  // nuisance, a stuck session is not.
+  await supabase.auth
+    .updateUser({
+      data: {
+        active_store_id: null,
+        active_store_confirmed_at: null,
+      },
+    })
+    .catch(() => {});
+  await supabase.auth.signOut();
+}

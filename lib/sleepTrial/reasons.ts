@@ -41,6 +41,14 @@ export const SLEEP_TRIAL_REASONS: Record<string, SleepTrialReason> = {
     label: "Warranty",
     template: "This trial ended — the mattress was replaced under warranty.",
   },
+  TRIAL_CLOSED_NO_REPLACEMENT_TRIAL: {
+    label: "Trial ended",
+    template: "This trial ended — no replacement trial was started.",
+  },
+  TRIAL_CLOSED_VOIDED: {
+    label: "Voided",
+    template: "This trial was voided — the line was removed or the order cancelled.",
+  },
   ACTION_IN_PROGRESS: {
     label: "In progress",
     template: "An exchange or return is already in progress for this mattress.",
@@ -142,13 +150,21 @@ export const SLEEP_TRIAL_REASONS: Record<string, SleepTrialReason> = {
   },
 };
 
+// A code the map doesn't know must never reach the screen raw — "code"
+// is SNAKE_CASE and flashes as such on the board card. Humanize instead:
+// "TRIAL_CLOSED_VOIDED" -> "Trial closed voided".
+function humanizeCode(code: string): string {
+  const words = code.toLowerCase().replace(/_/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 /** Render a reason code's template with evaluator-supplied params. */
 export function explainSleepTrialReason(
   code: string | null | undefined,
   params: SleepTrialReasonParams = {}
 ): string {
   const entry = code ? SLEEP_TRIAL_REASONS[code] : undefined;
-  const template = entry?.template ?? code ?? "Unknown";
+  const template = entry?.template ?? (code ? humanizeCode(code) : "Unknown");
   return template.replace(/\{(\w+)\}/g, (_, k) =>
     params[k] != null ? String(params[k]) : ""
   );
@@ -157,6 +173,7 @@ export function explainSleepTrialReason(
 /** Short label for a reason code (chips, checklist lines). */
 export function sleepTrialReasonLabel(code: string | null | undefined): string {
   return (
-    (code && SLEEP_TRIAL_REASONS[code]?.label) ?? code ?? "Unknown"
+    (code && SLEEP_TRIAL_REASONS[code]?.label) ??
+    (code ? humanizeCode(code) : "Unknown")
   );
 }
