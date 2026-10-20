@@ -18,7 +18,7 @@
 -- Blocks marked EXPECT ERROR are supposed to raise; a success means a bug.
 -- Impersonation uses set_config('request.jwt.claim.sub', ...) so the
 -- security-definer RPCs see an employee. No delivered journeys are created
--- (the delivered guard would block teardown), so block 13 removes
+-- (the delivered guard would block teardown), so block 14 removes
 -- everything.
 -- ============================================================================
 
@@ -479,7 +479,83 @@ where ws.order_id = 'cc000000-0000-4000-8000-000000000011'
 order by a.occurred_at;
 
 
--- ─── BLOCK 10 — LINE EDITS STILL SUPERSEDE (unchanged behavior) ──────────
+-- ─── BLOCK 10 — VOID AFTER CANCEL: no reversal row ───────────────────────
+-- Journey D committed is 29 with one live $20 refund. Record another $20
+-- refund (adjustment -20, committed 9), cancel the journey (the
+-- 'cancellation' adjustment zeroes committed), then void that refund: the
+-- reversal must be SKIPPED on a cancelled journey — committed stays 0.
+-- EXPECTED: rows 'refund' -20 (29 -> 9) then 'cancellation' (9 -> 0); the
+-- post-void select shows the refund row VOIDED with
+-- reversal_rows_for_this_refund = 0 (block 9's older +29 reversal is
+-- counted under its own refund's correlation_id and stays put). The final
+-- full list ends at the 'cancellation' row — committed stays 0.
+
+select set_config('request.jwt.claim.sub', (
+  select e.auth_user_id::text
+  from public.employees e
+  join public.stores st on st.company_id = e.company_id
+  join public.sleep_journeys sj on sj.store_id = st.id
+  where sj.id = 'cc000000-0000-4000-8000-000000000011'
+    and e.role in ('owner','admin','manager')
+    and e.is_active = true
+  order by case e.role when 'owner' then 0 when 'admin' then 1 else 2 end
+  limit 1), true);
+
+select public.record_payment_refund(
+  'cc000000-0000-4000-8000-000000000021',
+  20, 'Card', 'Refund before the cancel', null
+) as refund_event_id;
+
+select a.adjustment_type, a.adjustment_amount,
+       a.previous_qualifying_committed_amount, a.new_qualifying_committed_amount
+from public.written_sale_adjustments a
+join public.written_sales ws on ws.id = a.written_sale_id
+where ws.order_id = 'cc000000-0000-4000-8000-000000000011'
+order by a.occurred_at desc limit 1;
+
+insert into public.journey_events
+  (journey_id, event_type, outcome, event_data, triggered_by)
+values ('cc000000-0000-4000-8000-000000000011',
+        'journey_cancelled', 'SUCCEEDED',
+        jsonb_build_object('reason', 'refund-b2 verify'), 'system');
+
+select a.adjustment_type, a.adjustment_amount,
+       a.previous_qualifying_committed_amount, a.new_qualifying_committed_amount
+from public.written_sale_adjustments a
+join public.written_sales ws on ws.id = a.written_sale_id
+where ws.order_id = 'cc000000-0000-4000-8000-000000000011'
+order by a.occurred_at desc limit 1;
+
+select public.void_payment_refund(
+  (select je.id from public.journey_events je
+    where je.journey_id = 'cc000000-0000-4000-8000-000000000011'
+      and je.event_type = 'payment_refunded'
+      and je.outcome = 'SUCCEEDED'
+      and (je.event_data->>'amount')::numeric = 20
+    order by je.created_at desc limit 1),
+  'Voiding a refund on a cancelled journey'
+) as voided_id;
+
+select je.outcome,
+       (select count(*) from public.written_sale_adjustments a
+         join public.written_sales ws on ws.id = a.written_sale_id
+         where ws.order_id = 'cc000000-0000-4000-8000-000000000011'
+           and a.adjustment_type = 'refund_reversal'
+           and a.correlation_id = je.id) as reversal_rows_for_this_refund
+from public.journey_events je
+where je.journey_id = 'cc000000-0000-4000-8000-000000000011'
+  and je.event_type = 'payment_refunded'
+order by je.created_at desc limit 1;
+
+select a.adjustment_type, a.adjustment_amount,
+       a.new_qualifying_committed_amount
+from public.written_sale_adjustments a
+join public.written_sales ws on ws.id = a.written_sale_id
+where ws.order_id = 'cc000000-0000-4000-8000-000000000011'
+order by a.occurred_at;
+
+
+-- ─── BLOCK 11 — LINE EDITS STILL SUPERSEDE (unchanged behavior) ──────────
 -- Journey E paid $30 of $30 (reserved, ready). Bumping the line to qty 3
 -- makes it underpaid ($90 vs $30) — the default p_release_inventory=true
 -- path must still supersede.
@@ -505,7 +581,7 @@ where je.journey_id = 'cc000000-0000-4000-8000-000000000012'
 order by je.created_at desc limit 1;
 
 
--- ─── BLOCK 11 — RECONCILE GUARD: FAILED refused while a refund exists ────
+-- ─── BLOCK 12 — RECONCILE GUARD: FAILED refused while a refund exists ────
 -- Journey D still has a SUCCEEDED $20 refund on its payment.
 -- EXPECT ERROR: 'Void the refunds on this payment first.'
 
@@ -526,7 +602,7 @@ select public.reconcile_payment_event(
 );
 
 
--- ─── BLOCK 12 — RECONCILE GUARD: VOIDED refused too ──────────────────────
+-- ─── BLOCK 13 — RECONCILE GUARD: VOIDED refused too ──────────────────────
 -- The guard covers every non-SUCCEEDED outcome, not just FAILED.
 -- EXPECT ERROR: 'Void the refunds on this payment first.'
 
@@ -547,7 +623,7 @@ select public.reconcile_payment_event(
 );
 
 
--- ─── BLOCK 13 — TEARDOWN: remove all REFUND-B2 fixtures ──────────────────
+-- ─── BLOCK 14 — TEARDOWN: remove all REFUND-B2 fixtures ──────────────────
 -- Journeys D and E were never cancelled — cancel events release any
 -- lingering requirements first (journey C was cancelled in block 7).
 -- EXPECTED: remaining = 0.

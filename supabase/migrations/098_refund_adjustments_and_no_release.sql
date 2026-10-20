@@ -351,7 +351,15 @@ begin
   ) adj on adj.written_sale_id = ws.id
   where ws.order_id = v_refund.journey_id;
 
-  if v_sale_id is not null and v_reversal_amount > 0 then
+  -- A cancelled journey's committed amount is already zeroed by the
+  -- 'cancellation' adjustment — voiding a refund must not add money back.
+  -- The void itself, the audit row, and the re-evaluations still happen.
+  if v_sale_id is not null and v_reversal_amount > 0
+     and not exists (
+       select 1 from public.sleep_journeys sj
+       where sj.id = v_refund.journey_id
+         and sj.cancelled_at is not null
+     ) then
     insert into public.written_sale_adjustments (
       written_sale_id, tenant_id, order_id, adjustment_amount,
       previous_qualifying_committed_amount,
