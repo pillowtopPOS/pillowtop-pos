@@ -68,5 +68,7 @@ export async function signOut() {
       },
     })
     .catch(() => {});
-  await supabase.auth.signOut();
+  // scope 'local' ends only this device's session — the default 'global'
+  // would also kill the same user's sessions on other terminals.
+  await supabase.auth.signOut({ scope: "local" });
 }
