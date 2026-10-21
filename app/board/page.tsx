@@ -316,9 +316,15 @@ export default function BoardPage() {
 
   const boardJourneys = useMemo(() => {
     return journeys.filter(
-      (j) => !j.cancelled_at && !hiddenJourneyIds.has(j.id)
+      // The open panel's journey stays mounted until the panel closes —
+      // unmounting its card mid-commit (a dnd-kit ref-detach inside the
+      // same render as the panel's cancelled-state flip) crashed React's
+      // reconciler with removeChild-not-a-child.
+      (j) =>
+        (!j.cancelled_at && !hiddenJourneyIds.has(j.id)) ||
+        j.id === selectedJourney?.id
     );
-  }, [journeys, hiddenJourneyIds]);
+  }, [journeys, hiddenJourneyIds, selectedJourney?.id]);
 
   const columns = useMemo(() => {
     return BOARD_STATES.map((state) => ({
@@ -622,20 +628,22 @@ export default function BoardPage() {
       cancelInFlight.current = false;
       return;
     }
-    // The insert succeeded. Refetch runs separately below so a refresh
-    // hiccup can't surface "Failed to cancel" for a cancelled journey.
+    // The insert succeeded. Refresh the journey/feed BEFORE closing the
+    // modal — the panel's cancelled-state flip and this modal's unmount
+    // then commit as separate renders. A refresh hiccup is logged, never
+    // surfaced as a failed cancel.
+    try {
+      await Promise.all([
+        handleReassigned(journeyId),
+        fetchJourneyEvents(journeyId).then(setEvents),
+      ]);
+    } catch (e) {
+      console.error("post-cancel refresh failed", e);
+    }
     setCancelJourneyState(null);
     setCancelReason("");
     setBoardBusy(false);
     cancelInFlight.current = false;
-    // cancelJourney is a raw event insert — nothing in props/state
-    // reflects it, so the open panel kept offering Cancel. Refetch the
-    // journey, the board list, and the feed so the cancelled state
-    // shows immediately.
-    Promise.all([
-      handleReassigned(journeyId),
-      fetchJourneyEvents(journeyId).then(setEvents),
-    ]).catch((e) => console.error("post-cancel refresh failed", e));
   }
 
   return (
@@ -740,7 +748,11 @@ export default function BoardPage() {
             </thead>
             <tbody>
               {journeys
-                .filter((j) => !hiddenJourneyIds.has(j.id))
+                .filter(
+                  (j) =>
+                    !hiddenJourneyIds.has(j.id) ||
+                    j.id === selectedJourney?.id
+                )
                 .map((j) => (
                 <tr
                   key={j.id}

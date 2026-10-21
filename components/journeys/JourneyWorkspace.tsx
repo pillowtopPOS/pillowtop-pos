@@ -1417,7 +1417,9 @@ export default function JourneyWorkspace({
                 <span>
                   {orderLocked && lineItems.length > 0 && (
                     <span className="text-xs text-slate-500">
-                      {isExchangeChild
+                      {journey.cancelled_at
+                        ? "This journey was cancelled."
+                        : isExchangeChild
                         ? exchangeAction?.refund_recorded_at
                           ? "A refund was already recorded. Void it first if the order needs to change."
                           : "This exchange is closed — its order lines can't be changed."
