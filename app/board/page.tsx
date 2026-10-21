@@ -145,7 +145,10 @@ export default function BoardPage() {
     credit: number;
   } | null>(null);
   const [cancelReason, setCancelReason] = useState("");
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [cancelNetPaid, setCancelNetPaid] = useState<number | null>(null);
   const [cancelJourneyState, setCancelJourneyState] = useState<JourneyWithDetails | null>(null);
+  const cancelInFlight = useRef(false);
   const [boardBusy, setBoardBusy] = useState(false);
   const [showCalculator, setShowCalculator] = useState(false);
 
@@ -248,6 +251,31 @@ export default function BoardPage() {
       setReassignments([]);
     }
   }, [selectedJourney]);
+
+  // The cancel modal's paid warning reads this journey's events fetched
+  // at open time — not the open panel's feed, which can be mid-flight or
+  // for a different journey. A failed fetch hides the warning rather
+  // than showing a wrong number; a payment recorded moments earlier is
+  // included because the fetch is fresh.
+  useEffect(() => {
+    if (!cancelJourneyState) {
+      setCancelNetPaid(null);
+      return;
+    }
+    setCancelError(null);
+    const journeyId = cancelJourneyState.id;
+    let alive = true;
+    fetchJourneyEvents(journeyId)
+      .then((evs) => {
+        if (alive) setCancelNetPaid(computeNetPaid(evs));
+      })
+      .catch(() => {
+        if (alive) setCancelNetPaid(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [cancelJourneyState]);
 
   async function handleReassigned(journeyId: string) {
     const [fresh, history, evalMap] = await Promise.all([
@@ -579,25 +607,35 @@ export default function BoardPage() {
       setCancelReason("");
       return;
     }
+    // Ref guard: boardBusy lags a render behind the click, so a fast
+    // double-click can still reach here twice.
+    if (cancelInFlight.current) return;
+    cancelInFlight.current = true;
     setBoardBusy(true);
+    setCancelError(null);
+    const journeyId = cancelJourneyState.id;
     try {
-      await cancelJourney(cancelJourneyState.id, cancelReason);
-      const journeyId = cancelJourneyState.id;
-      setCancelJourneyState(null);
-      setCancelReason("");
-      // cancelJourney is a raw event insert — nothing in props/state
-      // reflects it, so the open panel kept offering Cancel. Refetch the
-      // journey, the board list, and the feed so the cancelled state
-      // shows immediately.
-      await Promise.all([
-        handleReassigned(journeyId),
-        fetchJourneyEvents(journeyId).then(setEvents),
-      ]);
+      await cancelJourney(journeyId, cancelReason);
     } catch (e: any) {
-      window.alert(e.message ?? "Failed to cancel journey");
-    } finally {
+      setCancelError(e.message ?? "Failed to cancel journey");
       setBoardBusy(false);
+      cancelInFlight.current = false;
+      return;
     }
+    // The insert succeeded. Refetch runs separately below so a refresh
+    // hiccup can't surface "Failed to cancel" for a cancelled journey.
+    setCancelJourneyState(null);
+    setCancelReason("");
+    setBoardBusy(false);
+    cancelInFlight.current = false;
+    // cancelJourney is a raw event insert — nothing in props/state
+    // reflects it, so the open panel kept offering Cancel. Refetch the
+    // journey, the board list, and the feed so the cancelled state
+    // shows immediately.
+    Promise.all([
+      handleReassigned(journeyId),
+      fetchJourneyEvents(journeyId).then(setEvents),
+    ]).catch((e) => console.error("post-cancel refresh failed", e));
   }
 
   return (
@@ -1062,18 +1100,16 @@ export default function BoardPage() {
               className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               rows={3}
             />
-            {(() => {
-              const paidOnJourney = computeNetPaid(
-                events.filter((e) => e.journey_id === cancelJourneyState.id)
-              );
-              return paidOnJourney > 0 ? (
-                <p className="mt-3 text-xs font-medium text-amber-700">
-                  The customer has paid ${paidOnJourney.toFixed(2)}.
-                  Cancelling does not refund them: record the refund in
-                  Journey Activity after you cancel.
-                </p>
-              ) : null;
-            })()}
+            {cancelNetPaid !== null && cancelNetPaid > 0 && (
+              <p className="mt-3 text-xs font-medium text-amber-700">
+                The customer has paid ${cancelNetPaid.toFixed(2)}.
+                Cancelling does not refund them: record the refund in
+                Journey Activity after you cancel.
+              </p>
+            )}
+            {cancelError && (
+              <p className="mt-3 text-sm text-red-600">{cancelError}</p>
+            )}
             <div className="mt-4 flex gap-2">
               <button
                 onClick={submitCancel}
