@@ -359,17 +359,19 @@ function JourneyStateSummaryBar({
         )}
       </SummaryCell>
       <SummaryCell label="Next Action">
+        {/* Keyed branches: span↔button swaps at one JSX position made React
+            remove a bare node mid-commit — keys force whole-subtree swaps. */}
         {journey.cancelled_at ? (
-          <span className="font-normal text-slate-400">No action needed</span>
+          <span key="na-none" className="font-normal text-slate-400">No action needed</span>
         ) : exchangeAwaitingPayment ? (
-          <span>Waiting for the customer&apos;s payment</span>
+          <span key="na-payment">Waiting for the customer&apos;s payment</span>
         ) : nextFollowUp ? (
           followUpOverdue ? (
-            <span className="text-red-700">
+            <span key="na-overdue" className="text-red-700">
               Follow-up overdue ({shortDate(nextFollowUp.due_at)})
             </span>
           ) : (
-            <span>
+            <span key="na-followup">
               Follow up {shortDate(nextFollowUp.due_at)}
               <span className="block text-xs font-normal text-slate-500">
                 {followUpLabel(nextFollowUp)}
@@ -377,12 +379,13 @@ function JourneyStateSummaryBar({
             </span>
           )
         ) : journey.current_state === "Waiting for Inventory" ? (
-          <span>Call customer when inventory arrives</span>
+          <span key="na-inventory">Call customer when inventory arrives</span>
         ) : transitions.find((t) => t.event !== "trial_completed") ? (
           // trial_completed stays excluded: Sleep Trial → Completed is
           // ungated, so "Complete Trial" must never read as the default
           // next step just because no follow-up is scheduled.
           <button
+            key="na-action"
             onClick={() =>
               onAction(
                 journey,
@@ -394,14 +397,16 @@ function JourneyStateSummaryBar({
             {transitions.find((t) => t.event !== "trial_completed")!.label}
           </button>
         ) : (
-          <span className="font-normal text-slate-400">No action needed</span>
+          <span key="na-idle" className="font-normal text-slate-400">No action needed</span>
         )}
       </SummaryCell>
       <SummaryCell label="Attention">
         {attentionItems.length === 0 ? (
-          <span className="text-xs font-normal text-slate-400">None</span>
+          <span key="attention-none" className="text-xs font-normal text-slate-400">None</span>
         ) : (
-          <>
+          // display:contents — a keyed wrapper for the swap that adds no
+          // layout box of its own.
+          <span key="attention-items" className="contents">
             {attentionItems.slice(0, 2).map((a) => (
               <span
                 key={a.text}
@@ -417,7 +422,7 @@ function JourneyStateSummaryBar({
                 +{attentionItems.length - 2} more
               </span>
             )}
-          </>
+          </span>
         )}
       </SummaryCell>
     </div>
@@ -1557,20 +1562,27 @@ export default function JourneyWorkspace({
                   : "Not yet scheduled"}
               </p>
               <div className="mt-1 text-sm text-slate-600">
+                {/* Keyed wrappers: on lock/unlock React removes the whole
+                    span, never a bare <select> or text node — a bare
+                    select/text swap here crashed the reconciler. */}
                 {canReassign && !orderLocked ? (
-                  <select
-                    value={journey.fulfillment_type}
-                    disabled={fulfillmentSaving}
-                    onChange={(e) =>
-                      submitFulfillmentChange(e.target.value as "delivery" | "pickup")
-                    }
-                    className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700"
-                  >
-                    <option value="delivery" disabled={!hasDeliveryAddress}>Delivery</option>
-                    <option value="pickup">Pickup</option>
-                  </select>
+                  <span key="fulfillment-edit">
+                    <select
+                      value={journey.fulfillment_type}
+                      disabled={fulfillmentSaving}
+                      onChange={(e) =>
+                        submitFulfillmentChange(e.target.value as "delivery" | "pickup")
+                      }
+                      className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700"
+                    >
+                      <option value="delivery" disabled={!hasDeliveryAddress}>Delivery</option>
+                      <option value="pickup">Pickup</option>
+                    </select>
+                  </span>
                 ) : (
-                  journey.fulfillment_type === "pickup" ? "Pickup" : "Delivery"
+                  <span key="fulfillment-read">
+                    {journey.fulfillment_type === "pickup" ? "Pickup" : "Delivery"}
+                  </span>
                 )}
               </div>
               {journey.fulfillment_type === "pickup" && journey.store && (
