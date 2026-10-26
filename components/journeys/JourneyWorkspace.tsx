@@ -691,6 +691,7 @@ export default function JourneyWorkspace({
   }
 
   async function saveAddress() {
+    setPanelError(null);
     if (!journey.customer) return;
     setAddressSaving(true);
     try {
@@ -711,6 +712,7 @@ export default function JourneyWorkspace({
   }
 
   async function submitReassign() {
+    setPanelError(null);
     if (reassignMode !== "store" && reassignMode !== "employee") return;
     if (!reassignTarget) return;
     setReassignSaving(true);
@@ -856,6 +858,7 @@ export default function JourneyWorkspace({
   }, [lineAvailability, lineItems, journey.id, journey.store_id, journey.fulfillment_type, inventoryStoreId, stores]);
 
   async function addLineItem(selection: ProductSelection) {
+    setPanelError(null);
     try {
       const unitPrice = selection.salePrice ?? selection.price ?? 0;
 
@@ -987,6 +990,7 @@ export default function JourneyWorkspace({
     ["Sleep Trial", "Completed"].includes(journey.current_state);
 
   async function markFollowUpComplete(id: string) {
+    setPanelError(null);
     try {
       await completeFollowUp(id);
       handlePanelRefresh();
@@ -996,6 +1000,7 @@ export default function JourneyWorkspace({
   }
 
   async function handleReconcileEvent(paymentEventId: string, newOutcome: PaymentOutcome) {
+    setPanelError(null);
     try {
       await reconcilePayment(paymentEventId, newOutcome);
       handlePanelRefresh();

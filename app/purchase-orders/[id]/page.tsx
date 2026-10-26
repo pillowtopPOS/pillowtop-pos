@@ -107,6 +107,7 @@ export default function PurchaseOrderDetailPage() {
   }
 
   async function markShipped() {
+    setPageError(null);
     if (!po) return;
     setShipping(true);
     const { error: err } = await createClient()
@@ -150,6 +151,7 @@ export default function PurchaseOrderDetailPage() {
   }
 
   async function commitLineEdit(l: POLine) {
+    setPageError(null);
     const e = lineEdits[l.id];
     if (!e) return;
     setLineEdits((m) => {
@@ -180,6 +182,7 @@ export default function PurchaseOrderDetailPage() {
   }
 
   async function removeLine(l: POLine) {
+    setPageError(null);
     const { error: err } = await createClient()
       .from("purchase_order_line_items")
       .delete()
@@ -189,6 +192,7 @@ export default function PurchaseOrderDetailPage() {
   }
 
   async function addLine(p: Product) {
+    setPageError(null);
     if (!po || po.lines.some((l) => l.variant_id === p.id)) return;
     const { error: err } = await createClient()
       .from("purchase_order_line_items")

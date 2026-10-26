@@ -380,6 +380,7 @@ export default function SleepTrialSection({
   // Single dispatch point for the Next Action bar. Only actions with real
   // backing reach here — unbacked entries render disabled (Coming soon).
   function handleAction(e: SleepTrialEvaluation, action: string) {
+    setPageError(null);
     switch (action) {
       case "START_EXCHANGE":
         // The builder itself decides create-vs-continue: an open DRAFT on
@@ -631,7 +632,9 @@ export default function SleepTrialSection({
               <div className="mt-1.5 flex gap-2">
                 <button
                   onClick={async () => {
+                    setPageError(null);
                     try {
+                      setPageError(null);
                       const result = await decideSleepTrialException(
                         pendingException.id,
                         "approved"
@@ -652,7 +655,9 @@ export default function SleepTrialSection({
                 </button>
                 <button
                   onClick={async () => {
+                    setPageError(null);
                     try {
+                      setPageError(null);
                       const result = await decideSleepTrialException(
                         pendingException.id,
                         "denied"
@@ -1629,10 +1634,12 @@ function ProtectorOverrideModal({
   const [error, setError] = useState<string | null>(null);
 
   async function save() {
+    setError(null);
     if (!reason.trim()) return;
     setSaving(true);
     setError(null);
     try {
+      setError(null);
       await overrideSleepTrialProtector(e.trial_item_id, reason.trim());
       onSaved();
     } catch (err: any) {
@@ -1705,10 +1712,12 @@ function TrialNoteModal({
   const [error, setError] = useState<string | null>(null);
 
   async function save() {
+    setError(null);
     if (!note.trim()) return;
     setSaving(true);
     setError(null);
     try {
+      setError(null);
       await recordJourneyInteraction({
         journey_id: journey.id,
         interaction_type: "internal_note",
@@ -2017,6 +2026,7 @@ function ConcernFormModal({
   }
 
   async function save() {
+    setError(null);
     if (selected.size === 0) return;
     setSaving(true);
     setError(null);
@@ -2051,6 +2061,7 @@ function ConcernFormModal({
 
     const days = parseInt(followUpDays, 10);
     try {
+      setError(null);
       await openSleepConcern({
         journey_id: journey.id,
         issues,
@@ -2317,11 +2328,13 @@ function ConcernEntryModal({
   const [error, setError] = useState<string | null>(null);
 
   async function save() {
+    setError(null);
     if (!customerReport.trim() && !recommendation.trim() && !employeeNotes.trim() && !newStatus) return;
     setSaving(true);
     setError(null);
     const days = parseInt(followUpDays, 10);
     try {
+      setError(null);
       await addSleepConcernEntry({
         concern_id: concernId,
         idempotency_key: keys.entry,
@@ -2528,10 +2541,12 @@ function TrialStartCorrectionModal({
   const [error, setError] = useState<string | null>(null);
 
   async function save() {
+    setError(null);
     if (!date || !reason.trim()) return;
     setSaving(true);
     setError(null);
     try {
+      setError(null);
       await correctTrialStart(
         journey.id,
         evaluation.trial_item_id,
@@ -2642,6 +2657,7 @@ function ExceptionRequestModal({
   const res = action ? evaluation.actions?.[action] : null;
 
   async function save() {
+    setError(null);
     if (!reasonId) {
       setError("Pick a reason");
       return;
@@ -2674,6 +2690,7 @@ function ExceptionRequestModal({
     setSaving(true);
     setError(null);
     try {
+      setError(null);
       await requestTrialItemException({
         trialItemId: evaluation.trial_item_id,
         exceptionType,
@@ -2837,9 +2854,11 @@ function ExceptionDecisionModal({
   }
 
   async function submit() {
+    setError(null);
     setSaving(true);
     setError(null);
     try {
+      setError(null);
       const approvedTerms =
         mode === "APPROVED_MODIFIED" ? buildApprovedTerms() : null;
       if (mode === "APPROVED_MODIFIED" && Object.keys(approvedTerms ?? {}).length === 0) {

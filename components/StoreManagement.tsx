@@ -138,6 +138,7 @@ export default function StoreManagement() {
     setSaving(true);
 
     try {
+      setPageError(null);
       if (form.id) {
         await updateStore(form.id, {
           name: form.name,
@@ -226,6 +227,7 @@ export default function StoreManagement() {
     const { store, reactivate } = confirm;
 
     try {
+      setPageError(null);
       await updateStore(store.id, { is_active: reactivate });
       setStores((prev) =>
         prev.map((s) =>

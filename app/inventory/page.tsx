@@ -224,6 +224,7 @@ export default function InventoryPage() {
     if (selectedIds.size === 0) return;
     setBulkBusy(true);
     try {
+      setPageError(null);
       const supabase = createClient();
       const { error } = await supabase
         .from("products")
@@ -331,6 +332,7 @@ export default function InventoryPage() {
       const salePrice = coerceMoney(row["Sale Price"]);
 
       if (row.Cost !== undefined && row.Cost !== null && row.Cost.toString().trim() !== "" && cost === null) {
+        setPageError(null);
         skipped.push({ row: idx + 2, reason: "Cost is not a valid number" });
         return;
       }
@@ -385,6 +387,7 @@ export default function InventoryPage() {
   async function saveStock(productId: string, value: string) {
     const qty = Math.max(0, Math.floor(Number(value) || 0));
     try {
+      setPageError(null);
       await adjustInventoryPosition(productId, currentStoreId, qty);
       resetStockInputs();
     } catch (e: any) {
@@ -416,6 +419,7 @@ export default function InventoryPage() {
     if (!shortfall) return;
     setShortfallSaving(true);
     try {
+      setPageError(null);
       await adjustInventoryPosition(shortfall.productId, currentStoreId, shortfall.qty, {
         overrideBelowCommitted: true,
         overrideReason: overrideReason.trim(),

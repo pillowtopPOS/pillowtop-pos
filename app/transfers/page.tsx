@@ -309,6 +309,7 @@ export default function TransfersPage() {
   }
 
   async function handleRequestRestock(storeId: string) {
+    setPageError(null);
     const group = restockByStore.get(storeId) ?? [];
     const selected = group.filter(
       (c) => restockSelected[restockKey(c.store_id, c.variant_id)]
@@ -334,6 +335,7 @@ export default function TransfersPage() {
 
     setRestockingStore(storeId);
     try {
+      setPageError(null);
       for (const c of selected) {
         await createRestockTransferRequest({
           origin_location_id: origin,
@@ -414,6 +416,7 @@ export default function TransfersPage() {
   }
 
   async function handleCreateManual(e: React.FormEvent) {
+    setPageError(null);
     e.preventDefault();
     if (!canManage) return;
     if (!manualForm.origin_location_id || !manualForm.destination_location_id) {
@@ -446,6 +449,7 @@ export default function TransfersPage() {
     }
     setCreating(true);
     try {
+      setPageError(null);
       // A multi-item submission shares one request_group_id so the Requests
       // tab can display and act on it as a single unit.
       const groupId = manualCart.length > 1 ? crypto.randomUUID() : null;
@@ -476,6 +480,7 @@ export default function TransfersPage() {
 
   async function actOnRequest(requestId: string, action: "approve" | "reject" | "cancel") {
     try {
+      setPageError(null);
       if (action === "approve") await approveTransferRequest(requestId);
       if (action === "reject") await rejectTransferRequest(requestId);
       if (action === "cancel") await cancelTransferRequest(requestId);
@@ -490,6 +495,7 @@ export default function TransfersPage() {
   async function handleRunConsolidation() {
     setRunningConsolidation(true);
     try {
+      setPageError(null);
       await runTransferConsolidationNow();
       await loadAll();
     } catch (err: any) {
@@ -516,6 +522,7 @@ export default function TransfersPage() {
     if (!expediteDate || (!expeditingId && !expeditingGroupId)) return;
     setExpediteSubmitting(true);
     try {
+      setPageError(null);
       if (expeditingGroupId) {
         await expediteTransferRequestGroup(expeditingGroupId, expediteDate);
       } else {
@@ -537,6 +544,7 @@ export default function TransfersPage() {
     members: TransferRequestWithDetails[],
     action: "approve" | "reject" | "cancel"
   ) {
+    setPageError(null);
     // Bulk actions only touch still-pending members; anything already
     // approved/rejected/cancelled is skipped and reported as such.
     const eligible = members.filter((m) => m.status === "pending_approval");
@@ -555,6 +563,7 @@ export default function TransfersPage() {
     let succeeded = 0;
     for (const m of eligible) {
       try {
+        setPageError(null);
         await fn(m.id);
         succeeded++;
       } catch {
@@ -572,12 +581,14 @@ export default function TransfersPage() {
   }
 
   async function saveQtyEdit(requestId: string) {
+    setPageError(null);
     const qty = parseInt(editingQtyValue, 10);
     if (editingQtyValue.trim() === "" || Number.isNaN(qty) || qty <= 0) {
       setPageError("Enter a valid quantity.");
       return;
     }
     try {
+      setPageError(null);
       await updateTransferRequestQuantity(requestId, qty);
       setEditingQtyId(null);
       await loadAll();
@@ -870,6 +881,7 @@ export default function TransfersPage() {
 
   async function handleMarkInTransit(t: TransferWithDetails) {
     try {
+      setPageError(null);
       await markTransferInTransit(t.id);
       await loadAll();
     } catch (err: any) {
@@ -896,6 +908,7 @@ export default function TransfersPage() {
     if (!finalizing) return;
     setFinalizeSubmitting(true);
     try {
+      setPageError(null);
       await finalizeTransfer(finalizing.id, receivedMap);
       setFinalizing(null);
       await loadAll();
@@ -940,6 +953,7 @@ export default function TransfersPage() {
   }
 
   async function handleConfirmReceipt() {
+    setPageError(null);
     if (!confirming) return;
     const reports: ReceiptLineReport[] = [];
     for (const line of confirming.line_items) {
@@ -976,6 +990,7 @@ export default function TransfersPage() {
 
     setConfirmSubmitting(true);
     try {
+      setPageError(null);
       await confirmTransferReceipt(confirming.id, reports);
       setConfirming(null);
       await loadAll();

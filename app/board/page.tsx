@@ -340,6 +340,7 @@ export default function BoardPage() {
   );
 
   async function handleDragEnd(event: DragEndEvent) {
+    setBoardError(null);
     const { active, over } = event;
     if (!over) return;
 

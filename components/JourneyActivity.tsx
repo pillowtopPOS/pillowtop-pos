@@ -293,6 +293,7 @@ export default function JourneyActivity({
 
   async function pinInteraction(i: JourneyInteraction, until: string | null) {
     try {
+      setPageError(null);
       await setInteractionImportance(i.id, true, until);
       setPinTarget(null);
       setPinUntil(null);
@@ -304,6 +305,7 @@ export default function JourneyActivity({
 
   async function unpinInteraction(i: JourneyInteraction) {
     try {
+      setPageError(null);
       await setInteractionImportance(i.id, false, null);
       refresh();
     } catch (e: any) {
@@ -327,6 +329,7 @@ export default function JourneyActivity({
     if (!(days > 0)) return;
     setScheduleSaving(true);
     try {
+      setPageError(null);
       await scheduleInteractionFollowUp({
         interaction_id: scheduleTarget.id,
         due_at: new Date(Date.now() + days * 86400000).toISOString(),
@@ -347,6 +350,7 @@ export default function JourneyActivity({
     if (!errorReason) return;
     setErrorSaving(true);
     try {
+      setPageError(null);
       await markInteractionEnteredInError(errorReason.interaction.id, errorReason.reason);
       setErrorReason(null);
       refresh();
@@ -1081,6 +1085,7 @@ function AddUpdateModal({
   async function saveContact() {
     if (!customerId || !newContact.name.trim()) return;
     try {
+      setError(null);
       const created = await createCustomerContact({
         customer_id: customerId,
         name: newContact.name,
@@ -1098,10 +1103,12 @@ function AddUpdateModal({
   }
 
   async function save() {
+    setError(null);
     if (!type || !summary.trim()) return;
     setSaving(true);
     setError(null);
     try {
+      setError(null);
       const days = parseInt(followUpDays, 10);
       const followUp =
         nextAction === "follow_up" && days > 0
@@ -1534,6 +1541,7 @@ function CorrectionModal({
     if (!text.trim()) return;
     setSaving(true);
     try {
+      setError(null);
       await recordJourneyInteraction({
         journey_id: journey.id,
         interaction_type: "correction",

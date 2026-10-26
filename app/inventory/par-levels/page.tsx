@@ -56,6 +56,7 @@ export default function ParLevelsPage() {
     field: "reorder_point" | "target_quantity",
     value: string
   ) {
+    setPageError(null);
     const quantity = Math.max(0, Number(value) || 0);
     const parLevel = rows.find(
       (row) => row.store_id === store && row.variant_id === variantId

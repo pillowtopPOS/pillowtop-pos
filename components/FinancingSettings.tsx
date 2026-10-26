@@ -172,6 +172,7 @@ function TierBuilder({ companyId }: { companyId: string }) {
   }, [companyId]);
 
   function addTier() {
+    setError(null);
     setDrafts([
       ...sortedDrafts,
       {
@@ -185,18 +186,21 @@ function TierBuilder({ companyId }: { companyId: string }) {
   }
 
   function removeTier(key: string) {
+    setError(null);
     setDrafts(drafts.filter((draft) => draft.key !== key));
     setError(null);
     setSuccess(false);
   }
 
   function updateUpperLimit(key: string, upperLimit: string) {
+    setError(null);
     setDrafts(drafts.map((draft) => (draft.key === key ? { ...draft, upperLimit } : draft)));
     setError(null);
     setSuccess(false);
   }
 
   function toggleTerm(key: string, term: number) {
+    setError(null);
     const draftIdx = drafts.findIndex((d) => d.key === key);
     if (draftIdx === -1) return;
 
@@ -217,6 +221,7 @@ function TierBuilder({ companyId }: { companyId: string }) {
   }
 
   async function handleSave() {
+    setError(null);
     setError(null);
     setSuccess(false);
 
@@ -247,6 +252,7 @@ function TierBuilder({ companyId }: { companyId: string }) {
 
     setSaving(true);
     try {
+      setError(null);
       const tiers: FinancingTier[] = orderedDrafts.map((draft, i) => ({
         id: "",
         company_id: companyId,
@@ -412,6 +418,7 @@ function CategoryManager({ companyId }: { companyId: string }) {
     if (!newName.trim()) return;
     setSaving(true);
     try {
+      setPageError(null);
       await upsertProductCategory({ company_id: companyId, name: newName.trim() });
       setNewName("");
       await loadCategories();
@@ -426,6 +433,7 @@ function CategoryManager({ companyId }: { companyId: string }) {
     if (!editId || !editName.trim()) return;
     setSaving(true);
     try {
+      setPageError(null);
       await upsertProductCategory({ id: editId, company_id: companyId, name: editName.trim() });
       setEditId(null);
       await loadCategories();
@@ -438,6 +446,7 @@ function CategoryManager({ companyId }: { companyId: string }) {
 
   async function handleEligibleChange(cat: ProductCategory, eligible: boolean) {
     try {
+      setPageError(null);
       await upsertProductCategory({
         id: cat.id,
         company_id: companyId,
@@ -456,6 +465,7 @@ function CategoryManager({ companyId }: { companyId: string }) {
 
   async function doDelete(id: string) {
     try {
+      setPageError(null);
       await deleteProductCategory(id);
       await loadCategories();
     } catch (e: any) {
@@ -644,6 +654,7 @@ function AccessoryCategoryManager({ companyId }: { companyId: string }) {
     if (!newCatId) return;
     setSaving(true);
     try {
+      setPageError(null);
       await upsertAccessoryCategory({
         company_id: companyId,
         category_id: newCatId,
@@ -684,6 +695,7 @@ function AccessoryCategoryManager({ companyId }: { companyId: string }) {
 
   async function doDelete(id: string) {
     try {
+      setPageError(null);
       await deleteAccessoryCategory(id);
       await load();
     } catch (e: any) {
@@ -849,6 +861,7 @@ function PinManager({ companyId }: { companyId: string }) {
   async function handlePinChange(accCatId: string, tierId: string, productId: string) {
     setSaving(true);
     try {
+      setPageError(null);
       if (!productId) {
         const pin = pins.find(
           (p) => p.accessory_category_id === accCatId && p.financing_tier_id === tierId
@@ -970,6 +983,7 @@ function BundleManager({ companyId }: { companyId: string }) {
     if (!newName.trim()) return;
     setSaving(true);
     try {
+      setPageError(null);
       await upsertAccessoryBundle({ company_id: companyId, name: newName.trim() });
       setNewName("");
       await load();
@@ -986,6 +1000,7 @@ function BundleManager({ companyId }: { companyId: string }) {
 
   async function doDelete(id: string) {
     try {
+      setPageError(null);
       await deleteAccessoryBundle(id);
       await load();
     } catch (e: any) {
@@ -1005,6 +1020,7 @@ function BundleManager({ companyId }: { companyId: string }) {
     if (!editBundle) return;
     setSaving(true);
     try {
+      setPageError(null);
       await saveBundleComponents(editBundle, bundleComps);
       setEditBundle(null);
     } catch (e: any) {

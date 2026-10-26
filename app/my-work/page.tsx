@@ -39,6 +39,7 @@ export default function MyWorkPage() {
 
   async function handleComplete(id: string) {
     try {
+      setPageError(null);
       await completeFollowUp(id);
       load();
     } catch (e: any) {
