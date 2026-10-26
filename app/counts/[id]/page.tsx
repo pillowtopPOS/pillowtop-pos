@@ -11,6 +11,7 @@ import {
 } from "@/lib/journeys/queries";
 import { isStoreConfirmedToday } from "@/lib/journeys/storeConfirm";
 import Modal from "@/components/Modal";
+import ConfirmModal from "@/components/ConfirmModal";
 import { searchProducts, type Product } from "@/lib/inventory/queries";
 import {
   fetchCount,
@@ -64,6 +65,7 @@ export default function CountDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [confirmCancel, setConfirmCancel] = useState<"count" | "request" | null>(null);
   const [acting, setActing] = useState(false);
 
   const [entries, setEntries] = useState<Record<string, string>>({});
@@ -629,11 +631,7 @@ export default function CountDetailPage() {
             <button
               type="button"
               disabled={acting}
-              onClick={() => {
-                if (window.confirm("Cancel this count?")) {
-                  run(() => cancelInventoryCount(count.id), "Count cancelled.");
-                }
-              }}
+              onClick={() => setConfirmCancel("count")}
               className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
             >
               Cancel count
@@ -647,16 +645,25 @@ export default function CountDetailPage() {
           <button
             type="button"
             disabled={acting}
-            onClick={() => {
-              if (window.confirm("Cancel this count request?")) {
-                run(() => cancelInventoryCount(count.id), "Count cancelled.");
-              }
-            }}
+            onClick={() => setConfirmCancel("request")}
             className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
           >
             Cancel request
           </button>
         </div>
+      )}
+
+      {confirmCancel && count && (
+        <ConfirmModal
+          title={confirmCancel === "count" ? "Cancel this count?" : "Cancel this count request?"}
+          message={confirmCancel === "count" ? "Cancel this count?" : "Cancel this count request?"}
+          actionLabel={confirmCancel === "count" ? "Cancel count" : "Cancel request"}
+          onCancel={() => setConfirmCancel(null)}
+          onConfirm={() => {
+            setConfirmCancel(null);
+            run(() => cancelInventoryCount(count.id), "Count cancelled.");
+          }}
+        />
       )}
 
       {finalizeOpen && (

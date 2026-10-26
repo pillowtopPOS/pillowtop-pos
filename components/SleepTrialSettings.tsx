@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import ConfirmModal from "@/components/ConfirmModal";
 import { createClient } from "@/lib/supabase/client";
 import {
   fetchCurrentEmployee,
@@ -60,6 +61,7 @@ const IMPLEMENTED = new Set([
 
 export default function SleepTrialSettings() {
   const [employee, setEmployee] = useState<Employee | null>(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [grants, setGrants] = useState<Set<string> | null>(null);
   const [grantsInstalled, setGrantsInstalled] = useState(true);
   const [policy, setPolicy] = useState<SleepTrialPolicyState | null>(null);
@@ -181,8 +183,11 @@ export default function SleepTrialSettings() {
   }
 
   async function discard() {
-    if (!window.confirm("Discard the draft? The published version stays active."))
-      return;
+    setConfirmDiscard(true);
+  }
+
+  async function doDiscard() {
+    setConfirmDiscard(false);
     try {
       await discardSleepTrialDraft();
       setPublishNote("");
@@ -451,7 +456,16 @@ export default function SleepTrialSettings() {
           </div>
         </Modal>
       )}
-    </main>
+          {confirmDiscard && (
+        <ConfirmModal
+          title="Discard the draft?"
+          message="Discard the draft? The published version stays active."
+          actionLabel="Discard draft"
+          onCancel={() => setConfirmDiscard(false)}
+          onConfirm={doDiscard}
+        />
+      )}
+</main>
   );
 }
 

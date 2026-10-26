@@ -210,6 +210,7 @@ export default function SleepTrialSection({
   const [exceptions, setExceptions] = useState<SleepTrialExceptionRequest[]>([]);
   const [corrections, setCorrections] = useState<TrialStartCorrection[]>([]);
   const [contacts, setContacts] = useState<CustomerContact[]>([]);
+  const [pageError, setPageError] = useState<string | null>(null);
   const [evals, setEvals] = useState<SleepTrialEvaluation[]>([]);
   const [expandedConcern, setExpandedConcern] = useState<string | null>(null);
   const [showConcernForm, setShowConcernForm] = useState(false);
@@ -445,7 +446,7 @@ export default function SleepTrialSection({
           } else {
             // e.g. FEE_WINDOW_NEEDS_APPROVAL offers exception_type null —
             // there is no requestable type for that blocker yet.
-            window.alert(
+            setPageError(
               "This blocker can't be requested as an exception yet."
             );
           }
@@ -455,7 +456,11 @@ export default function SleepTrialSection({
   }
 
   return (
-    <div className="rounded-md border border-teal-200 bg-teal-50 px-3 py-2">
+    <div>
+      {pageError && (
+        <p key="page-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
+      )}
+      <div className="rounded-md border border-teal-200 bg-teal-50 px-3 py-2">
       {/* Trial hero — one card per mattress, most urgent first (spec 19.1).
           Every number/word is the evaluator's output, not recomputed here. */}
       {orderedEvals.length > 0 ? (
@@ -632,13 +637,13 @@ export default function SleepTrialSection({
                         "approved"
                       );
                       if (result === "expired") {
-                        window.alert(
+                        setPageError(
                           "This request had already expired — the trial reached normal eligibility."
                         );
                       }
                       refresh();
                     } catch (e: any) {
-                      window.alert(e.message ?? "Failed to approve");
+                      setPageError(e.message ?? "Failed to approve");
                     }
                   }}
                   className="rounded bg-green-600 px-2 py-1 text-xs font-medium text-white"
@@ -653,13 +658,13 @@ export default function SleepTrialSection({
                         "denied"
                       );
                       if (result === "expired") {
-                        window.alert(
+                        setPageError(
                           "This request had already expired — the trial reached normal eligibility."
                         );
                       }
                       refresh();
                     } catch (e: any) {
-                      window.alert(e.message ?? "Failed to deny");
+                      setPageError(e.message ?? "Failed to deny");
                     }
                   }}
                   className="rounded bg-red-600 px-2 py-1 text-xs font-medium text-white"
@@ -851,6 +856,7 @@ export default function SleepTrialSection({
           }}
         />
       )}
+      </div>
     </div>
   );
 }

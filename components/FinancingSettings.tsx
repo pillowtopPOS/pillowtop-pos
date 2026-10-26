@@ -5,6 +5,7 @@ import { ArrowLeft, Plus, Trash2, X, GripVertical } from "lucide-react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import Modal from "@/components/Modal";
+import ConfirmModal from "@/components/ConfirmModal";
 import { fetchCurrentEmployee, fetchStores, type Employee, type Store } from "@/lib/journeys/queries";
 import {
   fetchProductCategories,
@@ -389,6 +390,8 @@ function TierBuilder({ companyId }: { companyId: string }) {
 // ============================================================
 
 function CategoryManager({ companyId }: { companyId: string }) {
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [newName, setNewName] = useState("");
   const [editId, setEditId] = useState<string | null>(null);
@@ -413,7 +416,7 @@ function CategoryManager({ companyId }: { companyId: string }) {
       setNewName("");
       await loadCategories();
     } catch (e: any) {
-      alert(e.message);
+      setPageError(e.message);
     } finally {
       setSaving(false);
     }
@@ -427,7 +430,7 @@ function CategoryManager({ companyId }: { companyId: string }) {
       setEditId(null);
       await loadCategories();
     } catch (e: any) {
-      alert(e.message);
+      setPageError(e.message);
     } finally {
       setSaving(false);
     }
@@ -443,17 +446,20 @@ function CategoryManager({ companyId }: { companyId: string }) {
       });
       await loadCategories();
     } catch (e: any) {
-      alert(e.message);
+      setPageError(e.message);
     }
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm("Delete this category? Products using it will become uncategorized.")) return;
+  function handleDelete(id: string) {
+    setDeleteTarget(id);
+  }
+
+  async function doDelete(id: string) {
     try {
       await deleteProductCategory(id);
       await loadCategories();
     } catch (e: any) {
-      alert(e.message);
+      setPageError(e.message);
     }
   }
 
@@ -474,6 +480,49 @@ function CategoryManager({ companyId }: { companyId: string }) {
 
   return (
     <div className="space-y-4">
+            {deleteTarget !== null && (
+        <ConfirmModal
+          title="Delete this category?"
+          message="Delete this category? Products using it will become uncategorized."
+          actionLabel="Delete category"
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => {
+            const id = deleteTarget;
+            setDeleteTarget(null);
+            doDelete(id);
+          }}
+        />
+      )}
+      {deleteTarget !== null && (
+        <ConfirmModal
+          title="Remove this accessory suggestion category?"
+          message="Remove this accessory suggestion category?"
+          actionLabel="Remove category"
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => {
+            const id = deleteTarget;
+            setDeleteTarget(null);
+            doDelete(id);
+          }}
+        />
+      )}
+      {deleteTarget !== null && (
+        <ConfirmModal
+          title="Delete this bundle?"
+          message="Delete this bundle?"
+          actionLabel="Delete bundle"
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => {
+            const id = deleteTarget;
+            setDeleteTarget(null);
+            doDelete(id);
+          }}
+        />
+      )}
+{pageError && (
+        <p key="page-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
+      )}
+
       <p className="text-sm text-slate-500">
         Product categories are used to group products for accessory suggestions. Assign categories
         to individual products via the product edit modal on the Inventory page.
@@ -567,6 +616,8 @@ function CategoryManager({ companyId }: { companyId: string }) {
 // ============================================================
 
 function AccessoryCategoryManager({ companyId }: { companyId: string }) {
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [productCats, setProductCats] = useState<ProductCategory[]>([]);
   const [accCats, setAccCats] = useState<AccessoryCategory[]>([]);
   const [saving, setSaving] = useState(false);
@@ -603,7 +654,7 @@ function AccessoryCategoryManager({ companyId }: { companyId: string }) {
       setNewCatId("");
       await load();
     } catch (e: any) {
-      alert(e.message);
+      setPageError(e.message);
     } finally {
       setSaving(false);
     }
@@ -627,18 +678,25 @@ function AccessoryCategoryManager({ companyId }: { companyId: string }) {
     await load();
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm("Remove this accessory suggestion category?")) return;
+  function handleDelete(id: string) {
+    setDeleteTarget(id);
+  }
+
+  async function doDelete(id: string) {
     try {
       await deleteAccessoryCategory(id);
       await load();
     } catch (e: any) {
-      alert(e.message);
+      setPageError(e.message);
     }
   }
 
   return (
     <div className="space-y-4">
+      {pageError && (
+        <p key="page-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
+      )}
+
       <p className="text-sm text-slate-500">
         Configure which product categories appear as accessory suggestions in the financing
         calculator. Set the match mode and default quantity for each.
@@ -745,6 +803,7 @@ function AccessoryCategoryManager({ companyId }: { companyId: string }) {
 // ============================================================
 
 function PinManager({ companyId }: { companyId: string }) {
+  const [pageError, setPageError] = useState<string | null>(null);
   const [accCats, setAccCats] = useState<AccessoryCategory[]>([]);
   const [tiers, setTiers] = useState<FinancingTier[]>([]);
   const [pins, setPins] = useState<AccessoryPin[]>([]);
@@ -806,7 +865,7 @@ function PinManager({ companyId }: { companyId: string }) {
       const fresh = await fetchAccessoryPins(companyId);
       setPins(fresh);
     } catch (e: any) {
-      alert(e.message);
+      setPageError(e.message);
     } finally {
       setSaving(false);
     }
@@ -815,6 +874,10 @@ function PinManager({ companyId }: { companyId: string }) {
   if (accCats.length === 0) {
     return (
       <div className="space-y-2">
+      {pageError && (
+        <p key="page-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
+      )}
+
         <p className="text-sm text-slate-500">
           Pin management is for accessory categories with &ldquo;Manual Pin&rdquo; match mode.
         </p>
@@ -880,6 +943,8 @@ function PinManager({ companyId }: { companyId: string }) {
 // ============================================================
 
 function BundleManager({ companyId }: { companyId: string }) {
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [bundles, setBundles] = useState<AccessoryBundle[]>([]);
   const [accCats, setAccCats] = useState<AccessoryCategory[]>([]);
   const [newName, setNewName] = useState("");
@@ -909,19 +974,22 @@ function BundleManager({ companyId }: { companyId: string }) {
       setNewName("");
       await load();
     } catch (e: any) {
-      alert(e.message);
+      setPageError(e.message);
     } finally {
       setSaving(false);
     }
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm("Delete this bundle?")) return;
+  function handleDelete(id: string) {
+    setDeleteTarget(id);
+  }
+
+  async function doDelete(id: string) {
     try {
       await deleteAccessoryBundle(id);
       await load();
     } catch (e: any) {
-      alert(e.message);
+      setPageError(e.message);
     }
   }
 
@@ -940,7 +1008,7 @@ function BundleManager({ companyId }: { companyId: string }) {
       await saveBundleComponents(editBundle, bundleComps);
       setEditBundle(null);
     } catch (e: any) {
-      alert(e.message);
+      setPageError(e.message);
     } finally {
       setSaving(false);
     }
@@ -954,6 +1022,10 @@ function BundleManager({ companyId }: { companyId: string }) {
 
   return (
     <div className="space-y-4">
+      {pageError && (
+        <p key="page-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
+      )}
+
       <p className="text-sm text-slate-500">
         Bundles combine multiple accessory categories into a named group shown together in the
         calculator.

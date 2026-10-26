@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
+import ConfirmModal from "@/components/ConfirmModal";
 import {
   cloneDefinition,
   generateSummary,
@@ -370,6 +371,7 @@ export function OverviewSection({
   onTemplate: (def: SleepTrialDefinition) => void;
 }) {
   const shown = state.draft ?? state.published;
+  const [pendingTemplate, setPendingTemplate] = useState<(() => void) | null>(null);
 
   return (
     <div>
@@ -415,15 +417,11 @@ export function OverviewSection({
               type="button"
               disabled={!canManage}
               onClick={() => {
-                if (
-                  shown &&
-                  !window.confirm(
-                    "This replaces your current draft. Your published policy is unchanged until you publish."
-                  )
-                ) {
-                  return;
+                if (shown) {
+                  setPendingTemplate(() => () => onTemplate(t.build()));
+                } else {
+                  onTemplate(t.build());
                 }
-                onTemplate(t.build());
               }}
               className="rounded-lg border border-slate-200 bg-white p-4 text-left transition hover:border-brand-400 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
             >
@@ -431,6 +429,19 @@ export function OverviewSection({
               <p className="mt-1 text-xs text-slate-500">{t.blurb}</p>
             </button>
           ))}
+          {pendingTemplate && (
+            <ConfirmModal
+              title="Replace draft?"
+              message="This replaces your current draft. Your published policy is unchanged until you publish."
+              actionLabel="Replace draft"
+              onCancel={() => setPendingTemplate(null)}
+              onConfirm={() => {
+                const run = pendingTemplate;
+                setPendingTemplate(null);
+                run();
+              }}
+            />
+          )}
         </div>
         {!canManage && (
           <p className="mt-2 text-xs text-slate-400">

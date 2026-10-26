@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 // Shared overlay for every pop-up. Handles:
 //   - click on the dimmed area closes (only when the press both starts
@@ -33,11 +33,17 @@ export default function Modal({
   const downOnOverlay = useRef(false);
   const latest = useRef({ onClose, dirty, saving });
   latest.current = { onClose, dirty, saving };
+  // Dirty-close confirmation replaces window.confirm — a second Modal on
+  // the layer stack, so Escape/backdrop close only it, never the form.
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   function requestClose() {
     const { onClose: close, dirty: d, saving: s } = latest.current;
     if (s) return;
-    if (d && !window.confirm("Discard changes?")) return;
+    if (d && !confirmDiscard) {
+      setConfirmDiscard(true);
+      return;
+    }
     close();
   }
 
@@ -73,6 +79,44 @@ export default function Modal({
       }}
     >
       {children}
+      {confirmDiscard && (
+        <DiscardLayer onDiscard={latest.current.onClose} onKeep={() => setConfirmDiscard(false)} />
+      )}
     </div>
+  );
+}
+
+// The "Discard changes?" layer — itself a Modal so it lands on top of the
+// layer stack: Escape/backdrop close only this layer (its dirty=false,
+// so a close here never re-prompts), and the parent stays mounted.
+function DiscardLayer({
+  onDiscard,
+  onKeep,
+}: {
+  onDiscard: () => void;
+  onKeep: () => void;
+}) {
+  return (
+    <Modal onClose={onKeep}>
+      <div className="w-full max-w-xs rounded-lg border border-slate-200 bg-white p-5 shadow-lg">
+        <h2 className="mb-2 text-base font-semibold text-slate-900">
+          Discard changes?
+        </h2>
+        <div className="mt-4 flex gap-2">
+          <button
+            onClick={onDiscard}
+            className="flex-1 rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700"
+          >
+            Discard changes
+          </button>
+          <button
+            onClick={onKeep}
+            className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Keep editing
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }

@@ -54,6 +54,8 @@ const LOCATION_OPTIONS: { value: Store["location_type"]; label: string }[] = [
 
 export default function StoreManagement() {
   const [employee, setEmployee] = useState<Employee | null>(null);
+
+  const [pageError, setPageError] = useState<string | null>(null);
   const [stores, setStores] = useState<Store[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -197,7 +199,7 @@ export default function StoreManagement() {
     } catch (err) {
       console.error(err);
       const msg = err instanceof Error ? err.message : "Save failed";
-      alert(
+      setPageError(
         msg.includes("idx_stores_company_store_code") || msg.includes("duplicate key")
           ? "That store code is already used by another store in this company."
           : msg
@@ -233,7 +235,7 @@ export default function StoreManagement() {
       setConfirm(null);
     } catch (err) {
       console.error(err);
-      alert(err instanceof Error ? err.message : "Toggle failed");
+      setPageError(err instanceof Error ? err.message : "Toggle failed");
     } finally {
       setSaving(false);
     }
@@ -250,6 +252,9 @@ export default function StoreManagement() {
   if (loading) {
     return (
       <main className="min-h-screen bg-slate-50 p-8">
+      {pageError && (
+        <p key="page-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
+      )}
         <div className="mx-auto max-w-4xl text-center text-slate-500">
           Loading stores…
         </div>

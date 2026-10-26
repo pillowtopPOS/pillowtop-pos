@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import ConfirmModal from "@/components/ConfirmModal";
 import { createClient } from "@/lib/supabase/client";
 import {
   quoteSleepTrialAction,
@@ -78,6 +79,7 @@ export default function ExchangeBuilderModal({
 }) {
   const trialItemId = evaluation.trial_item_id;
   const [quote, setQuote] = useState<ExchangeQuote | null>(null);
+  const [confirming, setConfirming] = useState<"draft" | "close" | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [step, setStep] = useState<Step>("return");
   const [selection, setSelection] = useState<ProductSelection | null>(null);
@@ -212,7 +214,12 @@ export default function ExchangeBuilderModal({
 
   async function discardExisting() {
     if (!existingAction) return;
-    if (!window.confirm("Discard this exchange draft?")) return;
+    setConfirming("draft");
+  }
+
+  async function doDiscardExisting() {
+    if (!existingAction) return;
+    setConfirming(null);
     setBusy(true);
     setError(null);
     try {
@@ -348,7 +355,7 @@ export default function ExchangeBuilderModal({
         await discardExchangeDraft(actionId);
         onChanged();
       } catch (e) {
-        window.alert(
+        setQuoteError(
           `The draft could not be discarded: ${friendlyError(e)}`
         );
       }
@@ -361,7 +368,10 @@ export default function ExchangeBuilderModal({
   // must too, or it would silently cancel the draft.
   function requestClose() {
     if (busy) return;
-    if (dirty && !window.confirm("Discard changes?")) return;
+    if (dirty) {
+      setConfirming("close");
+      return;
+    }
     void handleClose();
   }
 
@@ -804,6 +814,27 @@ export default function ExchangeBuilderModal({
           </>
         )}
       </div>
-    </Modal>
+          {confirming === "draft" && (
+        <ConfirmModal
+          title="Discard this exchange draft?"
+          message="Discard this exchange draft?"
+          actionLabel="Discard draft"
+          onCancel={() => setConfirming(null)}
+          onConfirm={doDiscardExisting}
+        />
+      )}
+      {confirming === "close" && (
+        <ConfirmModal
+          title="Discard changes?"
+          message="Discard changes?"
+          actionLabel="Discard changes"
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => {
+            setConfirming(null);
+            void handleClose();
+          }}
+        />
+      )}
+</Modal>
   );
 }

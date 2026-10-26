@@ -149,6 +149,8 @@ export default function BoardPage() {
   const [cancelNetPaid, setCancelNetPaid] = useState<number | null>(null);
   const [cancelJourneyState, setCancelJourneyState] = useState<JourneyWithDetails | null>(null);
   const cancelInFlight = useRef(false);
+  const [boardError, setBoardError] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [boardBusy, setBoardBusy] = useState(false);
   const [showCalculator, setShowCalculator] = useState(false);
 
@@ -350,7 +352,7 @@ export default function BoardPage() {
 
     const transition = getTransitionForTarget(journey.current_state, targetState);
     if (!transition) {
-      window.alert(`Cannot move directly from ${journey.current_state} to ${targetState}`);
+      setBoardError(`Cannot move directly from ${journey.current_state} to ${targetState}`);
       return;
     }
 
@@ -386,7 +388,7 @@ export default function BoardPage() {
 
     for (const field of transition.requiredFields ?? []) {
       if (!field.optional && !fieldValues[field.name]) {
-        window.alert(`${field.label} is required`);
+        setModalError(`${field.label} is required`);
         return;
       }
       if (fieldValues[field.name]) {
@@ -398,17 +400,18 @@ export default function BoardPage() {
     if (transition.event === "delivery_completed") {
       const d = String(eventData.delivered_at ?? "");
       if (d > localTodayISO()) {
-        window.alert("Delivery date can't be in the future.");
+        setModalError("Delivery date can't be in the future.");
         return;
       }
       if (d < localDateISO(journey.created_at)) {
-        window.alert(
+        setModalError(
           "Delivery date can't be before this journey was created."
         );
         return;
       }
     }
 
+    setModalError(null);
     setBoardBusy(true);
     try {
       if (transition.event === "payment_completed") {
@@ -416,11 +419,11 @@ export default function BoardPage() {
         const method = fieldValues.payment_method ?? "";
 
         if (journey.price == null) {
-          window.alert("Journey has no price set");
+          setModalError("Journey has no price set");
           return;
         }
         if (journey.price <= 0) {
-          window.alert("No payment is due on this journey.");
+          setModalError("No payment is due on this journey.");
           return;
         }
 
@@ -448,7 +451,7 @@ export default function BoardPage() {
         fetchJourneyEvents(journey.id).then(setEvents);
       }
     } catch (e: any) {
-      window.alert(e.message ?? "Failed to record event");
+      setModalError(e.message ?? "Failed to record event");
     } finally {
       setBoardBusy(false);
     }
@@ -456,6 +459,7 @@ export default function BoardPage() {
 
   async function handleReconcile(newOutcome: PaymentOutcome) {
     if (!pendingReconcile) return;
+    setModalError(null);
     setBoardBusy(true);
     try {
       await reconcilePayment(pendingReconcile.paymentEventId, newOutcome);
@@ -467,7 +471,7 @@ export default function BoardPage() {
       setFollowUps(freshFollowUps);
       setPendingReconcile(null);
     } catch (e: any) {
-      window.alert(e.message ?? "Reconciliation failed");
+      setModalError(e.message ?? "Reconciliation failed");
     } finally {
       setBoardBusy(false);
     }
@@ -562,12 +566,13 @@ export default function BoardPage() {
         setPendingFieldValues({});
         return;
       }
-      window.alert(msg ?? "Failed to record payment");
+      setModalError(msg ?? "Failed to record payment");
     }
   }
 
   async function confirmOverpayment() {
     if (!pendingOverpayment) return;
+    setModalError(null);
     setBoardBusy(true);
     try {
       await submitBoardPayment(
@@ -672,6 +677,12 @@ export default function BoardPage() {
           </button>
         </div>
       </header>
+
+      {boardError && (
+        <p key="board-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {boardError}
+        </p>
+      )}
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="relative">
@@ -852,6 +863,11 @@ export default function BoardPage() {
                 })()}
               </div>
             )}
+            {modalError && (
+              <p key="modal-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {modalError}
+              </p>
+            )}
             <div className="space-y-3">
               {pendingTransition.transition.requiredFields?.map((field) => (
                 <div key={field.name}>
@@ -954,6 +970,11 @@ export default function BoardPage() {
                 ? "Confirming payment — please wait. This payment is unresolved and no new payment can be submitted for this order until it is reconciled."
                 : "The payment was recorded as failed. No money was collected."}
             </p>
+            {modalError && (
+              <p key="reconcile-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {modalError}
+              </p>
+            )}
             <div className="flex gap-2">
               <button
                 onClick={() => handleReconcile("SUCCEEDED")}
@@ -1072,6 +1093,11 @@ export default function BoardPage() {
               <strong>${pendingOverpayment.credit.toFixed(2)}</strong> credit on their
               account. Continue?
             </p>
+            {modalError && (
+              <p key="overpay-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {modalError}
+              </p>
+            )}
             <div className="flex gap-2">
               <button
                 onClick={confirmOverpayment}

@@ -11,6 +11,8 @@ import { exceptionTypeLabel } from "@/lib/journeys/sleepTrial";
 export default function MyWorkPage() {
   const router = useRouter();
   const [items, setItems] = useState<MyWorkItem[]>([]);
+
+  const [pageError, setPageError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -40,7 +42,7 @@ export default function MyWorkPage() {
       await completeFollowUp(id);
       load();
     } catch (e: any) {
-      window.alert(e.message ?? "Failed to complete follow-up");
+      setPageError(e.message ?? "Failed to complete follow-up");
     }
   }
 
@@ -58,6 +60,9 @@ export default function MyWorkPage() {
 
   return (
     <main className="min-h-screen bg-slate-50 p-6">
+      {pageError && (
+        <p key="page-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
+      )}
       <header className="mb-4 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold text-slate-900">My Work</h1>
         <Link

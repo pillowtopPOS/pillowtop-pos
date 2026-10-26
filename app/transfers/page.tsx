@@ -78,6 +78,8 @@ export default function TransfersPage() {
   const [restockOrigin, setRestockOrigin] = useState<Record<string, string>>({});
   const [restockingStore, setRestockingStore] = useState<string | null>(null);
 
+  const [pageError, setPageError] = useState<string | null>(null);
+
   const [requestFilter, setRequestFilter] = useState<string>("");
   const [transferFilter, setTransferFilter] = useState<string>("");
 
@@ -131,7 +133,7 @@ export default function TransfersPage() {
       <button
         type="button"
         onClick={() =>
-          window.alert(
+          setPageError(
             message ??
               "Transfer request review is restricted to warehouse-based employees. An owner, admin, or warehouse team member needs to handle this request."
           )
@@ -314,18 +316,18 @@ export default function TransfersPage() {
     if (selected.length === 0) return;
     const origin = restockOriginFor(storeId);
     if (!origin) {
-      window.alert("Select an origin location for the restock request.");
+      setPageError("Select an origin location for the restock request.");
       return;
     }
     if (origin === storeId) {
-      window.alert("Origin and destination must be different locations.");
+      setPageError("Origin and destination must be different locations.");
       return;
     }
     for (const c of selected) {
       const raw = restockQty[restockKey(c.store_id, c.variant_id)] ?? String(c.suggested);
       const qty = parseInt(raw, 10);
       if (!qty || qty <= 0) {
-        window.alert(`Enter a valid quantity for ${c.item_name}.`);
+        setPageError(`Enter a valid quantity for ${c.item_name}.`);
         return;
       }
     }
@@ -354,12 +356,12 @@ export default function TransfersPage() {
         for (const c of selected) delete next[restockKey(c.store_id, c.variant_id)];
         return next;
       });
-      window.alert(
+      setPageError(
         `${selected.length} restock request${selected.length === 1 ? "" : "s"} created and pending approval.`
       );
       await loadAll();
     } catch (err: any) {
-      window.alert(err.message ?? "Failed to create restock requests");
+      setPageError(err.message ?? "Failed to create restock requests");
     } finally {
       setRestockingStore(null);
     }
@@ -415,15 +417,15 @@ export default function TransfersPage() {
     e.preventDefault();
     if (!canManage) return;
     if (!manualForm.origin_location_id || !manualForm.destination_location_id) {
-      window.alert("Select an origin and destination");
+      setPageError("Select an origin and destination");
       return;
     }
     if (manualForm.origin_location_id === manualForm.destination_location_id) {
-      window.alert("The origin and destination can't be the same location");
+      setPageError("The origin and destination can't be the same location");
       return;
     }
     if (manualCart.length === 0) {
-      window.alert("Add at least one product to the request");
+      setPageError("Add at least one product to the request");
       return;
     }
     const originName =
@@ -432,11 +434,11 @@ export default function TransfersPage() {
     for (const item of manualCart) {
       const qty = parseInt(item.qty, 10);
       if (item.qty.trim() === "" || Number.isNaN(qty) || qty <= 0) {
-        window.alert(`Enter a valid quantity for ${item.item_name}.`);
+        setPageError(`Enter a valid quantity for ${item.item_name}.`);
         return;
       }
       if (qty > item.ats) {
-        window.alert(
+        setPageError(
           `Origin "${originName}" only has ${item.ats} units of "${item.item_name}" available; requested ${qty}.`
         );
         return;
@@ -466,7 +468,7 @@ export default function TransfersPage() {
       setOriginStock({});
       await loadAll();
     } catch (err: any) {
-      window.alert(err.message ?? "Failed to create request");
+      setPageError(err.message ?? "Failed to create request");
     } finally {
       setCreating(false);
     }
@@ -479,7 +481,7 @@ export default function TransfersPage() {
       if (action === "cancel") await cancelTransferRequest(requestId);
       await loadAll();
     } catch (err: any) {
-      window.alert(err.message ?? "Action failed");
+      setPageError(err.message ?? "Action failed");
     }
   }
 
@@ -491,7 +493,7 @@ export default function TransfersPage() {
       await runTransferConsolidationNow();
       await loadAll();
     } catch (err: any) {
-      window.alert(err.message ?? "Failed to run consolidation");
+      setPageError(err.message ?? "Failed to run consolidation");
     } finally {
       setRunningConsolidation(false);
     }
@@ -523,7 +525,7 @@ export default function TransfersPage() {
       setExpeditingGroupId(null);
       await loadAll();
     } catch (err: any) {
-      window.alert(err.message ?? "Failed to expedite request");
+      setPageError(err.message ?? "Failed to expedite request");
     } finally {
       setExpediteSubmitting(false);
     }
@@ -540,7 +542,7 @@ export default function TransfersPage() {
     const eligible = members.filter((m) => m.status === "pending_approval");
     const verb = { approve: "approved", reject: "rejected", cancel: "cancelled" }[action];
     if (eligible.length === 0) {
-      window.alert(`All ${members.length} items were already handled; nothing was ${verb}.`);
+      setPageError(`All ${members.length} items were already handled; nothing was ${verb}.`);
       return;
     }
     const fn =
@@ -565,14 +567,14 @@ export default function TransfersPage() {
     if (skipped > 0) parts.push(`${skipped} already handled`);
     if (failed.length > 0) parts.push(`failed: ${failed.join(", ")}`);
     if (skipped > 0 || failed.length > 0) {
-      window.alert(parts.join("; ") + ".");
+      setPageError(parts.join("; ") + ".");
     }
   }
 
   async function saveQtyEdit(requestId: string) {
     const qty = parseInt(editingQtyValue, 10);
     if (editingQtyValue.trim() === "" || Number.isNaN(qty) || qty <= 0) {
-      window.alert("Enter a valid quantity.");
+      setPageError("Enter a valid quantity.");
       return;
     }
     try {
@@ -580,7 +582,7 @@ export default function TransfersPage() {
       setEditingQtyId(null);
       await loadAll();
     } catch (err: any) {
-      window.alert(err.message ?? "Failed to update quantity");
+      setPageError(err.message ?? "Failed to update quantity");
     }
   }
 
@@ -877,7 +879,7 @@ export default function TransfersPage() {
       const msg = /committed to other orders/i.test(raw)
         ? "Some of these units are reserved for open customer orders. Resolve or cancel those orders before shipping."
         : raw || "Failed to mark in transit";
-      window.alert(msg);
+      setPageError(msg);
     }
   }
 
@@ -898,7 +900,7 @@ export default function TransfersPage() {
       setFinalizing(null);
       await loadAll();
     } catch (err: any) {
-      window.alert(err.message ?? "Failed to finalize transfer");
+      setPageError(err.message ?? "Failed to finalize transfer");
     } finally {
       setFinalizeSubmitting(false);
     }
@@ -945,20 +947,20 @@ export default function TransfersPage() {
       const entry = receiptMap[line.id];
       const qty = entry ? parseInt(entry.qty, 10) : NaN;
       if (!entry || entry.qty.trim() === "" || Number.isNaN(qty) || qty < 0) {
-        window.alert(`Enter the quantity received for ${name}.`);
+        setPageError(`Enter the quantity received for ${name}.`);
         return;
       }
       let reason: ReceiptLineReport["reason"] = null;
       let note: string | null = null;
       if (qty < line.quantity_shipped) {
         if (!entry.reason) {
-          window.alert(`Select a reason for the shortfall on ${name}.`);
+          setPageError(`Select a reason for the shortfall on ${name}.`);
           return;
         }
         reason = entry.reason as ReceiptLineReport["reason"];
         if (entry.reason === "other") {
           if (!entry.note.trim()) {
-            window.alert(`Add a note describing the issue for ${name}.`);
+            setPageError(`Add a note describing the issue for ${name}.`);
             return;
           }
           note = entry.note.trim();
@@ -978,7 +980,7 @@ export default function TransfersPage() {
       setConfirming(null);
       await loadAll();
     } catch (err: any) {
-      window.alert(err.message ?? "Failed to confirm receipt");
+      setPageError(err.message ?? "Failed to confirm receipt");
     } finally {
       setConfirmSubmitting(false);
     }
@@ -994,6 +996,9 @@ export default function TransfersPage() {
 
   return (
     <main className="min-h-screen bg-slate-50 p-6">
+      {pageError && (
+        <p key="page-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
+      )}
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold text-slate-900">Transfers</h1>
         <div className="flex items-center gap-2">

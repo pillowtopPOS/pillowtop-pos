@@ -48,6 +48,7 @@ import {
   type SleepTrialEvaluation,
 } from "@/lib/journeys/sleepTrial";
 import Modal from "@/components/Modal";
+import ConfirmModal from "@/components/ConfirmModal";
 import ProductPicker, { type ProductSelection } from "@/components/ProductPicker";
 import JourneyActivity from "@/components/JourneyActivity";
 import {
@@ -548,6 +549,15 @@ export default function JourneyWorkspace({
   const [lineAvailability, setLineAvailability] = useState<Record<string, number>>({});
   const [orderEditing, setOrderEditing] = useState(false);
   const [customerContacts, setCustomerContacts] = useState<CustomerContact[]>([]);
+  // Inline error for every action on this panel — replaces window.alert.
+  // Cleared at the start of each attempt; journey switch remounts the
+  // workspace, so a stale error can never linger on another journey.
+  const [panelError, setPanelError] = useState<string | null>(null);
+  const [confirmFulfillment, setConfirmFulfillment] = useState<
+    "delivery" | "pickup" | null
+  >(null);
+  const [confirmRemoveItem, setConfirmRemoveItem] = useState<string | null>(null);
+  const [addressPromptOpen, setAddressPromptOpen] = useState(false);
   const mismatchedRequested = useRef<Set<string>>(new Set());
   // Reassign can be started from the header "..." menu — scroll the
   // Ownership card's chooser into view when it appears.
@@ -640,7 +650,7 @@ export default function JourneyWorkspace({
 
   async function submitFulfillmentChange(value: "delivery" | "pickup") {
     if (value === "delivery" && !hasDeliveryAddress) {
-      window.alert("Add a customer street address before selecting Delivery.");
+      setAddressPromptOpen(true);
       return;
     }
     if (value === journey.fulfillment_type) return;
@@ -649,15 +659,21 @@ export default function JourneyWorkspace({
       "Waiting for Inventory",
       "Ready to Schedule",
     ].includes(journey.current_state);
-    if (hasReservation && !window.confirm("Changing fulfillment will release and re-source inventory. Continue?")) {
+    if (hasReservation) {
+      setConfirmFulfillment(value);
       return;
     }
+    await doFulfillmentChange(value);
+  }
+
+  async function doFulfillmentChange(value: "delivery" | "pickup") {
+    setPanelError(null);
     setFulfillmentSaving(true);
     try {
       await updateJourneyFulfillment(journey.id, value);
       await handlePanelRefresh();
     } catch (e: any) {
-      window.alert(e.message ?? "Failed to update fulfillment type");
+      setPanelError(e.message ?? "Failed to update fulfillment type");
     } finally {
       setFulfillmentSaving(false);
     }
@@ -688,7 +704,7 @@ export default function JourneyWorkspace({
       setEditingAddress(false);
       await handlePanelRefresh();
     } catch (e: any) {
-      window.alert(e.message ?? "Failed to update customer address");
+      setPanelError(e.message ?? "Failed to update customer address");
     } finally {
       setAddressSaving(false);
     }
@@ -707,7 +723,7 @@ export default function JourneyWorkspace({
       closeReassign();
       await onReassigned(journey.id);
     } catch (e: any) {
-      window.alert(e.message ?? "Failed to reassign journey");
+      setPanelError(e.message ?? "Failed to reassign journey");
     } finally {
       setReassignSaving(false);
     }
@@ -896,11 +912,12 @@ export default function JourneyWorkspace({
 
       await doAddLineItem(selection, unitPrice);
     } catch (e: any) {
-      window.alert(e.message ?? "Failed to add item");
+      setPanelError(e.message ?? "Failed to add item");
     }
   }
 
   async function doAddLineItem(selection: ProductSelection, unitPrice: number) {
+    setPanelError(null);
     try {
       await createJourneyLineItem({
         journey_id: journey.id,
@@ -911,7 +928,7 @@ export default function JourneyWorkspace({
       });
       handlePanelRefresh();
     } catch (e: any) {
-      window.alert(e.message ?? "Failed to add item");
+      setPanelError(e.message ?? "Failed to add item");
     }
   }
 
@@ -928,22 +945,25 @@ export default function JourneyWorkspace({
       await updateJourneyLineItem(id, updates);
       handlePanelRefresh();
     } catch (e: any) {
-      window.alert(e.message ?? "Failed to update item");
+      setPanelError(e.message ?? "Failed to update item");
     }
   }
 
   async function removeLineItem(id: string) {
     if (lineItems.length === 1 && paid > 0) {
-      const ok = window.confirm(
-        `Removing the last item leaves $${paid.toFixed(2)} paid with nothing to apply it to. Continue?`
-      );
-      if (!ok) return;
+      setConfirmRemoveItem(id);
+      return;
     }
+    await doRemoveLineItem(id);
+  }
+
+  async function doRemoveLineItem(id: string) {
+    setPanelError(null);
     try {
       await deleteJourneyLineItem(id);
       handlePanelRefresh();
     } catch (e: any) {
-      window.alert(e.message ?? "Failed to remove item");
+      setPanelError(e.message ?? "Failed to remove item");
     }
   }
 
@@ -971,7 +991,7 @@ export default function JourneyWorkspace({
       await completeFollowUp(id);
       handlePanelRefresh();
     } catch (e: any) {
-      window.alert(e.message ?? "Failed to complete follow-up");
+      setPanelError(e.message ?? "Failed to complete follow-up");
     }
   }
 
@@ -980,7 +1000,7 @@ export default function JourneyWorkspace({
       await reconcilePayment(paymentEventId, newOutcome);
       handlePanelRefresh();
     } catch (e: any) {
-      window.alert(e.message ?? "Reconciliation failed");
+      setPanelError(e.message ?? "Reconciliation failed");
     }
   }
 
@@ -1113,6 +1133,11 @@ export default function JourneyWorkspace({
         <div className="grid grid-cols-1 gap-6 p-6 min-[900px]:grid-cols-[3fr_2fr]">
           <div className="min-w-0">
             <div className="space-y-3 text-sm">
+              {panelError && (
+                <p key="panel-error" role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {panelError}
+                </p>
+              )}
               {journey.inventory_ready_notified_at &&
                 INVENTORY_READY_STATES.has(journey.current_state) && (
                 <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">
@@ -1808,6 +1833,64 @@ export default function JourneyWorkspace({
                 <button
                   onClick={() => setPendingAddOn(null)}
                   className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </Modal>
+        )}
+
+        {confirmFulfillment && (
+          <ConfirmModal
+            title="Change fulfillment?"
+            message="Changing fulfillment will release and re-source inventory. Continue?"
+            actionLabel="Change fulfillment"
+            onCancel={() => setConfirmFulfillment(null)}
+            onConfirm={() => {
+              const v = confirmFulfillment;
+              setConfirmFulfillment(null);
+              doFulfillmentChange(v);
+            }}
+          />
+        )}
+
+        {confirmRemoveItem && (
+          <ConfirmModal
+            title="Remove item?"
+            message={`Removing the last item leaves $${paid.toFixed(2)} paid with nothing to apply it to. Continue?`}
+            actionLabel="Remove item"
+            onCancel={() => setConfirmRemoveItem(null)}
+            onConfirm={() => {
+              const id = confirmRemoveItem;
+              setConfirmRemoveItem(null);
+              doRemoveLineItem(id);
+            }}
+          />
+        )}
+
+        {addressPromptOpen && (
+          <Modal onClose={() => setAddressPromptOpen(false)}>
+            <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+              <h2 className="mb-2 text-lg font-semibold text-slate-900">
+                Address required
+              </h2>
+              <p className="mb-3 text-sm text-slate-600">
+                Add a customer street address before selecting Delivery.
+              </p>
+              <div className="mt-4 flex gap-2">
+                <button
+                  onClick={() => {
+                    setAddressPromptOpen(false);
+                    openAddressEditor();
+                  }}
+                  className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
+                >
+                  Add address
+                </button>
+                <button
+                  onClick={() => setAddressPromptOpen(false)}
+                  className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                 >
                   Cancel
                 </button>

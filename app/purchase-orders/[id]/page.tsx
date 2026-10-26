@@ -52,6 +52,8 @@ export default function PurchaseOrderDetailPage() {
   const poId = params?.id as string;
 
   const [employee, setEmployee] = useState<Employee | null>(null);
+
+  const [pageError, setPageError] = useState<string | null>(null);
   const [stores, setStores] = useState<Store[]>([]);
   const [products, setProducts] = useState<POProduct[]>([]);
   const [po, setPO] = useState<PurchaseOrder | null>(null);
@@ -116,7 +118,7 @@ export default function PurchaseOrderDetailPage() {
       .eq("id", po.id);
     setShipping(false);
     if (err) {
-      window.alert(err.message);
+      setPageError(err.message);
       return;
     }
     setShipOpen(false);
@@ -158,7 +160,7 @@ export default function PurchaseOrderDetailPage() {
     const quantity_ordered = Math.max(1, Math.floor(e.quantity_ordered) || 1);
     const unit_cost = Math.max(0, e.unit_cost) || 0;
     if (quantity_ordered < l.quantity_received) {
-      window.alert(
+      setPageError(
         `Ordered quantity can't be less than already received (${l.quantity_received}).`,
       );
       return;
@@ -173,7 +175,7 @@ export default function PurchaseOrderDetailPage() {
       .from("purchase_order_line_items")
       .update({ quantity_ordered, unit_cost })
       .eq("id", l.id);
-    if (err) window.alert(err.message);
+    if (err) setPageError(err.message);
     await load();
   }
 
@@ -182,7 +184,7 @@ export default function PurchaseOrderDetailPage() {
       .from("purchase_order_line_items")
       .delete()
       .eq("id", l.id);
-    if (err) window.alert(err.message);
+    if (err) setPageError(err.message);
     await load();
   }
 
@@ -196,7 +198,7 @@ export default function PurchaseOrderDetailPage() {
         quantity_ordered: 1,
         unit_cost: p.cost ?? 0,
       });
-    if (err) window.alert(err.message);
+    if (err) setPageError(err.message);
     await load();
   }
 
@@ -233,6 +235,9 @@ export default function PurchaseOrderDetailPage() {
   if (loading) {
     return (
       <main className="min-h-screen bg-slate-50 p-6">
+      {pageError && (
+        <p key="page-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
+      )}
         <div className="mx-auto max-w-3xl">
           <p className="text-sm text-slate-500">Loading…</p>
         </div>

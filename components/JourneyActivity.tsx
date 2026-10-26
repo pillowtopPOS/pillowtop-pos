@@ -194,6 +194,7 @@ export default function JourneyActivity({
   const [correcting, setCorrecting] = useState<JourneyInteraction | null>(null);
   const [pinTarget, setPinTarget] = useState<JourneyInteraction | null>(null);
   const [pinUntil, setPinUntil] = useState<string | null>(null);
+  const [pageError, setPageError] = useState<string | null>(null);
   const [scheduleTarget, setScheduleTarget] = useState<JourneyInteraction | null>(null);
   const [scheduleDays, setScheduleDays] = useState("7");
   const [scheduleMethod, setScheduleMethod] = useState("call");
@@ -297,7 +298,7 @@ export default function JourneyActivity({
       setPinUntil(null);
       refresh();
     } catch (e: any) {
-      window.alert(e.message ?? "Failed to pin");
+      setPageError(e.message ?? "Failed to pin");
     }
   }
 
@@ -306,7 +307,7 @@ export default function JourneyActivity({
       await setInteractionImportance(i.id, false, null);
       refresh();
     } catch (e: any) {
-      window.alert(e.message ?? "Failed to unpin");
+      setPageError(e.message ?? "Failed to unpin");
     }
   }
 
@@ -336,7 +337,7 @@ export default function JourneyActivity({
       setScheduleTarget(null);
       refresh();
     } catch (e: any) {
-      window.alert(e.message ?? "Failed to schedule follow-up");
+      setPageError(e.message ?? "Failed to schedule follow-up");
     } finally {
       setScheduleSaving(false);
     }
@@ -350,7 +351,7 @@ export default function JourneyActivity({
       setErrorReason(null);
       refresh();
     } catch (e: any) {
-      window.alert(e.message ?? "Failed to mark entered in error");
+      setPageError(e.message ?? "Failed to mark entered in error");
     } finally {
       setErrorSaving(false);
     }
@@ -418,6 +419,9 @@ export default function JourneyActivity({
 
   return (
     <div className="mt-6">
+      {pageError && (
+        <p key="page-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
+      )}
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-slate-900">Journey Activity</h3>
         <button
@@ -1089,7 +1093,7 @@ function AddUpdateModal({
       setAddingContact(false);
       setNewContact({ name: "", role: "", phone: "" });
     } catch (e: any) {
-      window.alert(e.message ?? "Failed to add contact");
+      setError(e.message ?? "Failed to add contact");
     }
   }
 
@@ -1524,6 +1528,7 @@ function CorrectionModal({
 }) {
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function save() {
     if (!text.trim()) return;
@@ -1541,7 +1546,7 @@ function CorrectionModal({
       });
       onSaved();
     } catch (e: any) {
-      window.alert(e.message ?? "Failed to save correction");
+      setError(e.message ?? "Failed to save correction");
     } finally {
       setSaving(false);
     }
@@ -1561,7 +1566,8 @@ function CorrectionModal({
           rows={3}
           className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
         />
-        <div className="mt-4 flex gap-2">
+        {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+              <div className="mt-4 flex gap-2">
           <button
             onClick={save}
             disabled={!text.trim() || saving}

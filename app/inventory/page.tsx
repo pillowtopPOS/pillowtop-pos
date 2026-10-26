@@ -57,6 +57,8 @@ function coerceMoney(value: unknown): number | null {
 export default function InventoryPage() {
   const router = useRouter();
   const [employee, setEmployee] = useState<Employee | null>(null);
+
+  const [pageError, setPageError] = useState<string | null>(null);
   const [stores, setStores] = useState<Store[]>([]);
   const [currentStoreId, setCurrentStoreId] = useState<string>("");
   const [products, setProducts] = useState<ProductWithStock[]>([]);
@@ -235,7 +237,7 @@ export default function InventoryPage() {
       );
       setSelectedIds(new Set());
     } catch (e: any) {
-      alert(e.message);
+      setPageError(e.message);
     } finally {
       setBulkBusy(false);
     }
@@ -358,7 +360,7 @@ export default function InventoryPage() {
       .upsert(records, { onConflict: "company_id,sku", ignoreDuplicates: false });
 
     if (error) {
-      window.alert(error.message);
+      setPageError(error.message);
       return;
     }
 
@@ -401,7 +403,7 @@ export default function InventoryPage() {
         });
         return;
       }
-      window.alert(
+      setPageError(
         e?.code === "40P01"
           ? "Something else was updating this item. Please try again."
           : e?.message ?? "Failed to update stock"
@@ -421,7 +423,7 @@ export default function InventoryPage() {
       setShortfall(null);
       resetStockInputs();
     } catch (e: any) {
-      window.alert(
+      setPageError(
         e?.code === "40P01"
           ? "Something else was updating this item. Please try again."
           : e?.message ?? "Failed to update stock"
@@ -446,6 +448,9 @@ export default function InventoryPage() {
 
   return (
     <main className="min-h-screen bg-slate-50 p-6">
+      {pageError && (
+        <p key="page-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
+      )}
       <header className="mb-4 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold text-slate-900">Inventory</h1>
         <div className="flex items-center gap-2">
@@ -461,7 +466,7 @@ export default function InventoryPage() {
               <button
                 type="button"
                 onClick={() =>
-                  window.alert(
+                  setPageError(
                     "Par Levels is restricted. An owner or admin needs to enable manager access in Company Settings."
                   )
                 }

@@ -17,6 +17,8 @@ type ParLevel = {
 export default function ParLevelsPage() {
   const supabase = createClient();
   const [stores, setStores] = useState<Store[]>([]);
+
+  const [pageError, setPageError] = useState<string | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [rows, setRows] = useState<ParLevel[]>([]);
   const [store, setStore] = useState("");
@@ -33,7 +35,7 @@ export default function ParLevelsPage() {
       setStores(storesResult);
       setStore(storesResult[0]?.id ?? "");
       setProducts(productsResult.data ?? []);
-      if (rowsResult.error) window.alert(rowsResult.error.message);
+      if (rowsResult.error) setPageError(rowsResult.error.message);
       setRows(rowsResult.data ?? []);
     })();
   }, []);
@@ -79,7 +81,7 @@ export default function ParLevelsPage() {
           .maybeSingle();
 
     if (error) {
-      window.alert(error.message);
+      setPageError(error.message);
       setRowVersions((prev) => ({
         ...prev,
         [`${store}-${variantId}`]: (prev[`${store}-${variantId}`] ?? 0) + 1,
@@ -88,7 +90,7 @@ export default function ParLevelsPage() {
     }
 
     if (!data) {
-      window.alert("You don't have permission to edit par levels.");
+      setPageError("You don't have permission to edit par levels.");
       setRowVersions((prev) => ({
         ...prev,
         [`${store}-${variantId}`]: (prev[`${store}-${variantId}`] ?? 0) + 1,
@@ -99,12 +101,15 @@ export default function ParLevelsPage() {
     const refreshed = await supabase
       .from("par_levels")
       .select("id, store_id, variant_id, reorder_point, target_quantity");
-    if (refreshed.error) window.alert(refreshed.error.message);
+    if (refreshed.error) setPageError(refreshed.error.message);
     else setRows(refreshed.data ?? []);
   }
 
   return (
     <main className="min-h-screen bg-slate-50 p-6">
+      {pageError && (
+        <p key="page-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
+      )}
       <div className="mx-auto max-w-4xl">
         <header className="mb-4 flex items-center justify-between gap-4">
           <h1 className="text-2xl font-semibold text-slate-900">Par Levels</h1>
