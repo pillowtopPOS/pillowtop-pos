@@ -188,14 +188,12 @@ function TierBuilder({ companyId }: { companyId: string }) {
   function removeTier(key: string) {
     setError(null);
     setDrafts(drafts.filter((draft) => draft.key !== key));
-    setError(null);
     setSuccess(false);
   }
 
   function updateUpperLimit(key: string, upperLimit: string) {
     setError(null);
     setDrafts(drafts.map((draft) => (draft.key === key ? { ...draft, upperLimit } : draft)));
-    setError(null);
     setSuccess(false);
   }
 
@@ -221,7 +219,6 @@ function TierBuilder({ companyId }: { companyId: string }) {
   }
 
   async function handleSave() {
-    setError(null);
     setError(null);
     setSuccess(false);
 

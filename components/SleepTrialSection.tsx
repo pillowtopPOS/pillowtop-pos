@@ -634,7 +634,6 @@ export default function SleepTrialSection({
                   onClick={async () => {
                     setPageError(null);
                     try {
-                      setPageError(null);
                       const result = await decideSleepTrialException(
                         pendingException.id,
                         "approved"
@@ -657,7 +656,6 @@ export default function SleepTrialSection({
                   onClick={async () => {
                     setPageError(null);
                     try {
-                      setPageError(null);
                       const result = await decideSleepTrialException(
                         pendingException.id,
                         "denied"
@@ -1637,9 +1635,7 @@ function ProtectorOverrideModal({
     setError(null);
     if (!reason.trim()) return;
     setSaving(true);
-    setError(null);
     try {
-      setError(null);
       await overrideSleepTrialProtector(e.trial_item_id, reason.trim());
       onSaved();
     } catch (err: any) {
@@ -1715,9 +1711,7 @@ function TrialNoteModal({
     setError(null);
     if (!note.trim()) return;
     setSaving(true);
-    setError(null);
     try {
-      setError(null);
       await recordJourneyInteraction({
         journey_id: journey.id,
         interaction_type: "internal_note",
@@ -2029,7 +2023,6 @@ function ConcernFormModal({
     setError(null);
     if (selected.size === 0) return;
     setSaving(true);
-    setError(null);
 
     const issues: IssueInput[] = Array.from(selected.entries()).map(
       ([concern_type_id, name]) => ({ concern_type_id, name })
@@ -2331,10 +2324,8 @@ function ConcernEntryModal({
     setError(null);
     if (!customerReport.trim() && !recommendation.trim() && !employeeNotes.trim() && !newStatus) return;
     setSaving(true);
-    setError(null);
     const days = parseInt(followUpDays, 10);
     try {
-      setError(null);
       await addSleepConcernEntry({
         concern_id: concernId,
         idempotency_key: keys.entry,
@@ -2544,9 +2535,7 @@ function TrialStartCorrectionModal({
     setError(null);
     if (!date || !reason.trim()) return;
     setSaving(true);
-    setError(null);
     try {
-      setError(null);
       await correctTrialStart(
         journey.id,
         evaluation.trial_item_id,
@@ -2690,7 +2679,6 @@ function ExceptionRequestModal({
     setSaving(true);
     setError(null);
     try {
-      setError(null);
       await requestTrialItemException({
         trialItemId: evaluation.trial_item_id,
         exceptionType,
@@ -2856,9 +2844,7 @@ function ExceptionDecisionModal({
   async function submit() {
     setError(null);
     setSaving(true);
-    setError(null);
     try {
-      setError(null);
       const approvedTerms =
         mode === "APPROVED_MODIFIED" ? buildApprovedTerms() : null;
       if (mode === "APPROVED_MODIFIED" && Object.keys(approvedTerms ?? {}).length === 0) {

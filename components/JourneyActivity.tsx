@@ -1106,9 +1106,7 @@ function AddUpdateModal({
     setError(null);
     if (!type || !summary.trim()) return;
     setSaving(true);
-    setError(null);
     try {
-      setError(null);
       const days = parseInt(followUpDays, 10);
       const followUp =
         nextAction === "follow_up" && days > 0
