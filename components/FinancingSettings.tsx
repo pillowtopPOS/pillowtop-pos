@@ -500,32 +500,6 @@ function CategoryManager({ companyId }: { companyId: string }) {
           }}
         />
       )}
-      {deleteTarget !== null && (
-        <ConfirmModal
-          title="Remove this accessory suggestion category?"
-          message="Remove this accessory suggestion category?"
-          actionLabel="Remove category"
-          onCancel={() => setDeleteTarget(null)}
-          onConfirm={() => {
-            const id = deleteTarget;
-            setDeleteTarget(null);
-            doDelete(id);
-          }}
-        />
-      )}
-      {deleteTarget !== null && (
-        <ConfirmModal
-          title="Delete this bundle?"
-          message="Delete this bundle?"
-          actionLabel="Delete bundle"
-          onCancel={() => setDeleteTarget(null)}
-          onConfirm={() => {
-            const id = deleteTarget;
-            setDeleteTarget(null);
-            doDelete(id);
-          }}
-        />
-      )}
 {pageError && (
         <p key="page-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
       )}
@@ -702,6 +676,20 @@ function AccessoryCategoryManager({ companyId }: { companyId: string }) {
 
   return (
     <div className="space-y-4">
+      {deleteTarget !== null && (
+        <ConfirmModal
+          title="Remove this accessory suggestion category?"
+          message="Remove this accessory suggestion category?"
+          actionLabel="Remove category"
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => {
+            const id = deleteTarget;
+            setDeleteTarget(null);
+            doDelete(id);
+          }}
+        />
+      )}
+
       {pageError && (
         <p key="page-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
       )}
@@ -1035,6 +1023,20 @@ function BundleManager({ companyId }: { companyId: string }) {
 
   return (
     <div className="space-y-4">
+      {deleteTarget !== null && (
+        <ConfirmModal
+          title="Delete this bundle?"
+          message="Delete this bundle?"
+          actionLabel="Delete bundle"
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => {
+            const id = deleteTarget;
+            setDeleteTarget(null);
+            doDelete(id);
+          }}
+        />
+      )}
+
       {pageError && (
         <p key="page-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
       )}

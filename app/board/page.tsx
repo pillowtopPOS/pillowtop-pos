@@ -617,7 +617,11 @@ export default function BoardPage() {
   }, [pendingTransition, pendingReconcile, pendingOverpayment]);
 
   async function submitCancel() {
-    if (!cancelJourneyState || !cancelReason.trim()) return;
+    if (!cancelJourneyState) return;
+    if (!cancelReason.trim()) {
+      setCancelError("Enter a reason to cancel.");
+      return;
+    }
     // Already cancelled (stale panel prop): closing is a no-op, never a
     // second journey_cancelled insert.
     if (cancelJourneyState.cancelled_at) {
@@ -1140,7 +1144,10 @@ export default function BoardPage() {
             <h2 className="mb-2 text-lg font-semibold text-slate-900">Cancel Journey</h2>
             <textarea
               value={cancelReason}
-              onChange={(e) => setCancelReason(e.target.value)}
+              onChange={(e) => {
+                setCancelReason(e.target.value);
+                setCancelError(null);
+              }}
               placeholder="Reason for cancellation"
               className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               rows={3}
