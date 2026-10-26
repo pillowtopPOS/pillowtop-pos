@@ -680,6 +680,7 @@ export default function JourneyWorkspace({
   }
 
   function openAddressEditor() {
+    setPanelError(null);
     setAddress({
       street: journey.customer?.street_address ?? "",
       line2: journey.customer?.street_address_line_2 ?? "",
