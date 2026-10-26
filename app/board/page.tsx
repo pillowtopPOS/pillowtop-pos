@@ -1,5 +1,6 @@
 "use client";
 
+import "@/lib/devRemoveChildPatch";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
