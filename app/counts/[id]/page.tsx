@@ -229,6 +229,7 @@ export default function CountDetailPage() {
   );
 
   async function openFinalize() {
+    setError(null);
     setFinalizeError(null);
     setFinalizing(true);
     try {

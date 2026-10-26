@@ -1716,6 +1716,9 @@ export default function TransfersPage() {
           saving={expediteSubmitting}
         >
           <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+                  {pageError && (
+                    <p key="modal-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
+                  )}
             <h2 className="mb-4 text-lg font-semibold text-slate-900">
               Expedite {expeditingGroupId ? "Request Group" : "Request"}
             </h2>

@@ -80,7 +80,13 @@ export default function Modal({
     >
       {children}
       {confirmDiscard && (
-        <DiscardLayer onDiscard={latest.current.onClose} onKeep={() => setConfirmDiscard(false)} />
+        <DiscardLayer
+          onDiscard={() => {
+            setConfirmDiscard(false);
+            latest.current.onClose();
+          }}
+          onKeep={() => setConfirmDiscard(false)}
+        />
       )}
     </div>
   );

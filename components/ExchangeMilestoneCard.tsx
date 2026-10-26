@@ -115,6 +115,7 @@ export default function ExchangeMilestoneCard({
   }
 
   async function submitCancel() {
+    setError(null);
     if (!cancelReason.trim()) {
       setError("A reason is required to cancel an exchange");
       return;
@@ -123,6 +124,7 @@ export default function ExchangeMilestoneCard({
   }
 
   async function submitRefund() {
+    setError(null);
     const cents = dollarsToCents(refundAmount);
     if (cents == null) {
       setError("Enter a non-negative amount.");
@@ -145,6 +147,7 @@ export default function ExchangeMilestoneCard({
   }
 
   async function submitVoid() {
+    setError(null);
     if (!voidReason.trim()) {
       setError("A reason is required to void a refund");
       return;

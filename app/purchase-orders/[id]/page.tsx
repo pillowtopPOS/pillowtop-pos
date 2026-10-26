@@ -489,6 +489,9 @@ export default function PurchaseOrderDetailPage() {
             saving={shipping}
           >
             <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+                    {pageError && (
+                      <p key="modal-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
+                    )}
               <h3 className="text-lg font-semibold">Mark as Shipped</h3>
               <p className="mt-1 text-sm text-slate-500">
                 Confirms the vendor shipped this order directly to the

@@ -638,6 +638,9 @@ export default function StoreManagement() {
           saving={saving}
         >
           <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-lg">
+                  {pageError && (
+                    <p key="modal-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
+                  )}
             <h2 className="mb-2 text-lg font-semibold text-slate-900">
               {confirm.reactivate ? "Reactivate Store" : "Deactivate Store"}
             </h2>

@@ -220,6 +220,7 @@ export default function EmployeeManagement() {
   }
 
   async function handleToggle() {
+    setError(null);
     if (!confirm) return;
     setSaving(true);
     const { employee, reactivate } = confirm;

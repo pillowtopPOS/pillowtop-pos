@@ -944,6 +944,7 @@ export default function JourneyWorkspace({
       pickup_location_id?: string | null;
     }
   ) {
+    setPanelError(null);
     try {
       await updateJourneyLineItem(id, updates);
       handlePanelRefresh();
@@ -1133,16 +1134,16 @@ export default function JourneyWorkspace({
             exchangeAwaitingPayment={exchangeAwaitingPayment}
             onAction={onAction}
           />
+          {panelError && (
+            <p key="panel-error" role="alert" className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {panelError}
+            </p>
+          )}
         </div>
 
         <div className="grid grid-cols-1 gap-6 p-6 min-[900px]:grid-cols-[3fr_2fr]">
           <div className="min-w-0">
             <div className="space-y-3 text-sm">
-              {panelError && (
-                <p key="panel-error" role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {panelError}
-                </p>
-              )}
               {journey.inventory_ready_notified_at &&
                 INVENTORY_READY_STATES.has(journey.current_state) && (
                 <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">
@@ -1780,6 +1781,11 @@ export default function JourneyWorkspace({
                   <input value={address.state} onChange={(e) => setAddress((a) => ({ ...a, state: e.target.value }))} placeholder="State" className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
                   <input value={address.zip} onChange={(e) => setAddress((a) => ({ ...a, zip: e.target.value }))} placeholder="ZIP" className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
                 </div>
+                {panelError && (
+                  <p key="address-error" role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {panelError}
+                  </p>
+                )}
                 <div className="flex gap-2 pt-2">
                   <button onClick={saveAddress} disabled={addressSaving} className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50">{addressSaving ? "Saving…" : "Save"}</button>
                   <button onClick={() => setEditingAddress(false)} className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700">Cancel</button>

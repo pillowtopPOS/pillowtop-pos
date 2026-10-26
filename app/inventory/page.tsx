@@ -444,6 +444,7 @@ export default function InventoryPage() {
   }
 
   async function saveProduct(product: Product | null) {
+    setPageError(null);
     if (!companyId || !product) return;
     await upsertProduct({ ...product, company_id: companyId });
     setEditingProduct(null);
@@ -720,6 +721,9 @@ export default function InventoryPage() {
       {shortfall && (
         <Modal onClose={closeShortfall} saving={shortfallSaving}>
           <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+                  {pageError && (
+                    <p key="modal-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
+                  )}
             <h2 className="mb-1 text-lg font-semibold text-slate-900">
               Stock below committed
             </h2>
@@ -818,6 +822,9 @@ export default function InventoryPage() {
           dirty={uploadStep === "mapping" || uploadStep === "preview"}
         >
           <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+                  {pageError && (
+                    <p key="modal-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
+                  )}
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-semibold text-slate-900">
                 {uploadStep === "mapping" && "Map columns"}

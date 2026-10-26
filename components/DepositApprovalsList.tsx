@@ -34,6 +34,7 @@ export default function DepositApprovalsList() {
   }, []);
 
   async function handleApprove(id: string) {
+    setError(null);
     try {
       await approveDepositException(id);
       setRequests((prev) =>
@@ -47,6 +48,7 @@ export default function DepositApprovalsList() {
   }
 
   async function handleDeny(id: string) {
+    setError(null);
     try {
       await denyDepositException(id);
       setRequests((prev) =>

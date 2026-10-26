@@ -92,6 +92,7 @@ export default function CompanySettingsForm() {
   }, []);
 
   async function loadSettings(company: string | undefined) {
+    setError(null);
     if (!company) {
       setLoading(false);
       return;

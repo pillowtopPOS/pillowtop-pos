@@ -535,6 +535,7 @@ export default function BoardPage() {
     method: string,
     depositApprovalId?: string
   ) {
+    setModalError(null);
     try {
       const { paymentEventId, outcome } = await recordPayment(
         journey.id,
@@ -609,6 +610,11 @@ export default function BoardPage() {
 
     await executeTransition(journey, transition, {});
   }
+
+  // A modal must never open with a stale error from the last one.
+  useEffect(() => {
+    setModalError(null);
+  }, [pendingTransition, pendingReconcile, pendingOverpayment]);
 
   async function submitCancel() {
     if (!cancelJourneyState || !cancelReason.trim()) return;
