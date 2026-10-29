@@ -1103,6 +1103,9 @@ function TrialHeroCard({
               <ExchangeMilestoneCard
                 action={exchangeAction}
                 onChanged={() => onExchangeChanged?.()}
+                canVoidReceipt={
+                  permKeys.has("sleep_trial.complete_exchange")
+                }
               />
             ) : (exchangeAction?.refund_owed_cents ?? 0) > 0 &&
               exchangeAction?.refund_recorded_at == null ? (
