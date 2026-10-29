@@ -78,7 +78,7 @@ declare
   v_existing uuid;
   v_quarantine_id uuid;
 begin
-  if public.current_employee_role() not in ('owner', 'admin') then
+  if coalesce(public.current_employee_role()::text, '') not in ('owner', 'admin') then
     raise exception 'Only an owner or admin can create a quarantine area.';
   end if;
 
@@ -160,6 +160,7 @@ as $$
     from public.employees e
     join public.stores s on s.id = e.home_store_id
     where e.auth_user_id = auth.uid()
+      and e.is_active
       and s.location_type = 'WAREHOUSE'
   );
 $$;
@@ -258,10 +259,13 @@ begin
     raise exception 'The original item on this exchange has no product to receive.';
   end if;
 
-  select e.id, coalesce(e.full_name, e.name) into v_employee, v_employee_name
+  select e.id, e.name into v_employee, v_employee_name
   from public.employees e
   where e.auth_user_id = auth.uid()
-  limit 1;
+    and e.is_active;
+  if v_employee is null then
+    raise exception 'Your employee record was not found or is inactive.';
+  end if;
 
   -- Stock: +1 Returned at the quarantine area. Lock order matches the rest of
   -- the codebase (variant:location:disposition).
@@ -414,10 +418,13 @@ begin
   from public.sleep_journeys where id = v_action.journey_id;
   v_company := v_journey.company_id;
 
-  select e.id, coalesce(e.full_name, e.name) into v_employee, v_employee_name
+  select e.id, e.name into v_employee, v_employee_name
   from public.employees e
   where e.auth_user_id = auth.uid()
-  limit 1;
+    and e.is_active;
+  if v_employee is null then
+    raise exception 'Your employee record was not found or is inactive.';
+  end if;
 
   -- Reverse the stock movement exactly (-1 at the same position).
   perform pg_advisory_xact_lock(

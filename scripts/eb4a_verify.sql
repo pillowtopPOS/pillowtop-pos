@@ -311,6 +311,87 @@ commit;
 -- Expect: an inspection id — Wally passed the warehouse-based rule.
 
 -- ---------------------------------------------------------------------------
+-- 7b. DEACTIVATED warehouse-based employee refused on receive.
+--     Wally is deactivated; the is_active checks must close both doors.
+-- ---------------------------------------------------------------------------
+update public.employees set is_active = false
+where id = 'eb4a0000-0000-4000-8000-000000000005';
+
+insert into public.sleep_trial_actions (
+  id, company_id, journey_id, trial_item_id, action, status,
+  committed_at, committed_by
+) values (
+  'eb4a0000-0000-4000-8000-000000000016', 'eb4a0000-0000-4000-8000-000000000001',
+  'eb4a0000-0000-4000-8000-000000000009', 'eb4a0000-0000-4000-8000-000000000010',
+  'EXCHANGE', 'COMMITTED', now() - interval '2 days',
+  'eb4a0000-0000-4000-8000-000000000004'
+)
+on conflict (id) do nothing;
+
+begin;
+select set_config('request.jwt.claim.sub', 'eb4a0000-0000-4000-8000-00000000a005', true);
+select public.receive_returned_unit(
+  'eb4a0000-0000-4000-8000-000000000016',
+  'eb4a0000-0000-4000-8000-000000000002',
+  current_date
+);
+commit;
+-- Expect: ERROR (deactivated employee fails is_warehouse_based_employee via
+-- is_active, and has_permission will not grant a deactivated employee either;
+-- the permission error or "employee record not found/inactive" surfaces.)
+
+update public.employees set is_active = true
+where id = 'eb4a0000-0000-4000-8000-000000000005';
+
+-- ---------------------------------------------------------------------------
+-- 7c. CROSS-COMPANY create_quarantine_area refused.
+--     An employee of Other Co calls it on OUR store.
+-- ---------------------------------------------------------------------------
+insert into public.stores (id, company_id, name, location_type, is_active)
+values ('eb4a0000-0000-4000-8000-00000000c002', 'eb4a0000-0000-4000-8000-00000000c001', 'EB4A Other Store', 'STORE', true)
+on conflict (id) do nothing;
+insert into public.employees (id, auth_user_id, company_id, home_store_id, name, role)
+values ('eb4a0000-0000-4000-8000-00000000c003', 'eb4a0000-0000-4000-8000-00000000ac03', 'eb4a0000-0000-4000-8000-00000000c001', 'eb4a0000-0000-4000-8000-00000000c002', 'Oscar Other', 'owner')
+on conflict (id) do nothing;
+
+begin;
+select set_config('request.jwt.claim.sub', 'eb4a0000-0000-4000-8000-00000000ac03', true);
+select public.create_quarantine_area('eb4a0000-0000-4000-8000-000000000003');
+commit;
+-- Expect: ERROR "That location is not part of your company."
+
+-- ---------------------------------------------------------------------------
+-- 7d. NO EMPLOYEE ROW — an auth user with no employees record is refused on
+--     all three RPCs (role checks and employee lookup must fail closed).
+-- ---------------------------------------------------------------------------
+begin;
+select set_config('request.jwt.claim.sub', 'eb4a0000-0000-4000-8000-00000000b001', true);
+select public.receive_returned_unit(
+  'eb4a0000-0000-4000-8000-000000000015',
+  'eb4a0000-0000-4000-8000-000000000002',
+  current_date
+);
+commit;
+-- Expect: ERROR (no start_exchange grant and not warehouse-based ->
+-- "You do not have permission to mark an original mattress received.")
+
+begin;
+select set_config('request.jwt.claim.sub', 'eb4a0000-0000-4000-8000-00000000b001', true);
+select public.void_returned_receipt(
+  'eb4a0000-0000-4000-8000-000000000013',
+  'no employee row test'
+);
+commit;
+-- Expect: ERROR "You do not have permission to void a received return."
+-- (role is NULL -> coalesced check fails closed, no complete_exchange grant.)
+
+begin;
+select set_config('request.jwt.claim.sub', 'eb4a0000-0000-4000-8000-00000000b001', true);
+select public.create_quarantine_area('eb4a0000-0000-4000-8000-000000000003');
+commit;
+-- Expect: ERROR "Only an owner or admin can create a quarantine area."
+
+-- ---------------------------------------------------------------------------
 -- 8. RETURNED NEVER COUNTS AS AVAILABLE — the public view (the same read
 --    fetchProductStock makes) shows no Returned row under Prime, and a Prime
 --    read at the warehouse is unaffected by the Returned units.
