@@ -1,5 +1,9 @@
 -- ============================================================================
--- eb-4a verify: migration 099 (receive_returned_unit, void_returned_receipt,
+-- eb-4a verify: migration 099
+-- VERIFIED Oct 29 in Supabase: 18/18 passed. This file includes the four
+-- corrections that run needed: business_timezone on companies, generated
+-- name on employees (insert first_name/last_name), no company_id on
+-- sleep_journeys, and a full customer address (Delivery default, rule 036). (receive_returned_unit, void_returned_receipt,
 -- create_quarantine_area). Run each block ONE AT A TIME in the Supabase SQL
 -- editor. Every block ends in ONE select; results land in public.eb4a_results.
 --
@@ -38,9 +42,9 @@ create table if not exists public.eb4a_results (
 );
 truncate public.eb4a_results;
 
-insert into public.companies (id, name) values
-  ('eb4a0000-0000-4000-8000-000000000001', 'EB4A Verify Co'),
-  ('eb4a0000-0000-4000-8000-00000000c001', 'EB4A Other Co')
+insert into public.companies (id, name, business_timezone) values
+  ('eb4a0000-0000-4000-8000-000000000001', 'EB4A Verify Co', 'America/Chicago'),
+  ('eb4a0000-0000-4000-8000-00000000c001', 'EB4A Other Co', 'America/Chicago')
 on conflict (id) do nothing;
 
 insert into public.stores (id, company_id, name, location_type, is_active) values
@@ -65,11 +69,11 @@ on conflict (id) do nothing;
 
 -- employees: no company_id column; company comes via home_store_id -> stores.
 -- role is the employee_role enum: owner | admin | employee.
-insert into public.employees (id, auth_user_id, home_store_id, name, role, is_active) values
-  ('eb4a0000-0000-4000-8000-000000000004', 'eb4a0000-0000-4000-8000-00000000a004', 'eb4a0000-0000-4000-8000-000000000003', 'Ada Exchange', 'owner', true),
-  ('eb4a0000-0000-4000-8000-000000000005', 'eb4a0000-0000-4000-8000-00000000a005', 'eb4a0000-0000-4000-8000-000000000002', 'Wally Warehouse', 'employee', true),
-  ('eb4a0000-0000-4000-8000-000000000006', 'eb4a0000-0000-4000-8000-00000000a006', 'eb4a0000-0000-4000-8000-000000000003', 'Ned Norights', 'employee', true),
-  ('eb4a0000-0000-4000-8000-00000000c003', 'eb4a0000-0000-4000-8000-00000000ac03', 'eb4a0000-0000-4000-8000-00000000c002', 'Oscar Other', 'owner', true)
+insert into public.employees (id, auth_user_id, home_store_id, first_name, last_name, role, is_active) values
+  ('eb4a0000-0000-4000-8000-000000000004', 'eb4a0000-0000-4000-8000-00000000a004', 'eb4a0000-0000-4000-8000-000000000003', 'Ada', 'Exchange', 'owner', true),
+  ('eb4a0000-0000-4000-8000-000000000005', 'eb4a0000-0000-4000-8000-00000000a005', 'eb4a0000-0000-4000-8000-000000000002', 'Wally', 'Warehouse', 'employee', true),
+  ('eb4a0000-0000-4000-8000-000000000006', 'eb4a0000-0000-4000-8000-00000000a006', 'eb4a0000-0000-4000-8000-000000000003', 'Ned', 'Norights', 'employee', true),
+  ('eb4a0000-0000-4000-8000-00000000c003', 'eb4a0000-0000-4000-8000-00000000ac03', 'eb4a0000-0000-4000-8000-00000000c002', 'Oscar', 'Other', 'owner', true)
 on conflict (id) do nothing;
 
 -- The grants seed trigger (066:270-275) gives sleep_trial.start_exchange and
@@ -86,17 +90,17 @@ insert into public.role_permission_grants (company_id, role, permission_key) val
 on conflict do nothing;
 
 -- customers: no company_id; required first_name, last_name, phone, email.
-insert into public.customers (id, first_name, last_name, phone, email) values
-  ('eb4a0000-0000-4000-8000-000000000007', 'Carl', 'Customer', '555-0101', 'eb4a-carl@example.com')
+insert into public.customers (id, first_name, last_name, phone, email, street_address, city, state, zip_code) values
+  ('eb4a0000-0000-4000-8000-000000000007', 'Carl', 'Customer', '555-0101', 'eb4a-carl@example.com', '1 Main St', 'Dallas', 'TX', '75201')
 on conflict (id) do nothing;
 
 insert into public.products (id, company_id, sku, item_name, price) values
   ('eb4a0000-0000-4000-8000-000000000008', 'eb4a0000-0000-4000-8000-000000000001', 'EB4A-MATT', 'EB4A Mattress', 999.00)
 on conflict (id) do nothing;
 
-insert into public.sleep_journeys (id, company_id, store_id, customer_id, current_state, sale_kind) values
-  ('eb4a0000-0000-4000-8000-000000000009', 'eb4a0000-0000-4000-8000-000000000001', 'eb4a0000-0000-4000-8000-000000000003', 'eb4a0000-0000-4000-8000-000000000007', 'Sleep Trial', 'STANDARD'),
-  ('eb4a0000-0000-4000-8000-000000000011', 'eb4a0000-0000-4000-8000-000000000001', 'eb4a0000-0000-4000-8000-000000000003', 'eb4a0000-0000-4000-8000-000000000007', 'Sold', 'EXCHANGE')
+insert into public.sleep_journeys (id, store_id, customer_id, current_state, sale_kind) values
+  ('eb4a0000-0000-4000-8000-000000000009', 'eb4a0000-0000-4000-8000-000000000003', 'eb4a0000-0000-4000-8000-000000000007', 'Sleep Trial', 'STANDARD'),
+  ('eb4a0000-0000-4000-8000-000000000011', 'eb4a0000-0000-4000-8000-000000000003', 'eb4a0000-0000-4000-8000-000000000007', 'Sold', 'EXCHANGE')
 on conflict (id) do nothing;
 
 update public.sleep_journeys

@@ -231,7 +231,7 @@ begin
 
   select * into v_journey
   from public.sleep_journeys where id = v_action.journey_id;
-  v_company := v_journey.company_id;
+  v_company := v_action.company_id;
 
   if not public.is_store_visible(p_location_id) then
     raise exception 'That location is not part of your company.';
@@ -416,7 +416,7 @@ begin
 
   select * into v_journey
   from public.sleep_journeys where id = v_action.journey_id;
-  v_company := v_journey.company_id;
+  v_company := v_action.company_id;
 
   select e.id, e.name into v_employee, v_employee_name
   from public.employees e
