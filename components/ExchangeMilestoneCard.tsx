@@ -42,6 +42,13 @@ const REFUND_METHODS: { value: ExchangeRefundMethod; label: string }[] = [
   { value: "none", label: "None" },
 ];
 
+function localDateString(d = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 const PAID_CUSTOMER_MESSAGE =
   "The replacement already has a payment on record. Record a refund for the payment first (Journey Activity, Payments), then come back and cancel the exchange. Make sure the money has actually gone back to the customer first, because PillowTop only records it.";
 
@@ -99,6 +106,9 @@ export default function ExchangeMilestoneCard({
     completeExchange: false,
   });
   const [receivedLine, setReceivedLine] = useState<string | null>(null);
+  const [callerIsWarehouseBased, setCallerIsWarehouseBased] =
+    useState(false);
+  const [locationsReady, setLocationsReady] = useState(false);
 
   useEffect(() => {
     // Server enforces regardless; this only decides whether the buttons
@@ -113,6 +123,21 @@ export default function ExchangeMilestoneCard({
         completeExchange: !!b.data,
       })
     );
+    // Warehouse-based employees may receive without the start_exchange
+    // key (server rule), so the button must not hide from them either.
+    supabase.auth.getUser().then(({ data: u }) => {
+      if (!u.user) return;
+      supabase
+        .from("employees")
+        .select("home_store_id, stores(location_type)")
+        .eq("auth_user_id", u.user.id)
+        .eq("is_active", true)
+        .maybeSingle()
+        .then(({ data: emp }) => {
+          const t = (emp as any)?.stores?.location_type;
+          setCallerIsWarehouseBased(t === "WAREHOUSE");
+        });
+    });
   }, []);
 
   useEffect(() => {
@@ -146,7 +171,7 @@ export default function ExchangeMilestoneCard({
     if (which === "cancel") setCancelReason("");
     if (which === "void") setVoidReason("");
     if (which === "receive") {
-      setReceiveDate(new Date().toISOString().slice(0, 10));
+      setReceiveDate(localDateString());
       void primeReceiveForm();
     }
     if (which === "voidReceipt") setVoidReason("");
@@ -157,29 +182,39 @@ export default function ExchangeMilestoneCard({
   // default location is their home store and owner/admin get the
   // one-click quarantine fix when the server reports none.
   async function primeReceiveForm() {
-    const supabase = createClient();
-    const stores = await fetchStores(true);
-    const { data: u } = await supabase.auth.getUser();
-    let emp: { role: string; home_store_id: string | null } | null = null;
-    if (u.user) {
-      const res = await supabase
-        .from("employees")
-        .select("role, home_store_id")
-        .eq("auth_user_id", u.user.id)
-        .eq("is_active", true)
-        .maybeSingle();
-      emp = res.data;
+    setLocationsReady(false);
+    try {
+      const supabase = createClient();
+      const stores = await fetchStores(true);
+      const { data: u } = await supabase.auth.getUser();
+      let emp: { role: string; home_store_id: string | null; home_location_type?: string | null } | null = null;
+      if (u.user) {
+        const res = await supabase
+          .from("employees")
+          .select("role, home_store_id")
+          .eq("auth_user_id", u.user.id)
+          .eq("is_active", true)
+          .maybeSingle();
+        emp = res.data;
+      }
+      const sellable = stores.filter(
+        (l) => l.location_type !== "WAREHOUSE_QUARANTINE"
+      );
+      setEmployeeRole(emp?.role ?? null);
+      const homeId = emp?.home_store_id ?? null;
+      const homeType = homeId
+        ? stores.find((l) => l.id === homeId)?.location_type ?? null
+        : null;
+      setCallerIsWarehouseBased(homeType === "WAREHOUSE");
+      const ordered = homeId
+        ? [...sellable.filter((l) => l.id === homeId), ...sellable.filter((l) => l.id !== homeId)]
+        : sellable;
+      setReceiveLocations(ordered);
+      setReceiveLocationId(homeId ?? ordered[0]?.id ?? "");
+      setLocationsReady(true);
+    } catch {
+      setError("Could not load locations. Close this window and try again.");
     }
-    const sellable = stores.filter(
-      (l) => l.location_type !== "WAREHOUSE_QUARANTINE"
-    );
-    setEmployeeRole(emp?.role ?? null);
-    const homeId = emp?.home_store_id ?? null;
-    const ordered = homeId
-      ? [...sellable.filter((l) => l.id === homeId), ...sellable.filter((l) => l.id !== homeId)]
-      : sellable;
-    setReceiveLocations(ordered);
-    setReceiveLocationId(homeId ?? ordered[0]?.id ?? "");
   }
 
   async function submit(fn: () => Promise<void>) {
@@ -288,7 +323,7 @@ export default function ExchangeMilestoneCard({
 
   const canMarkReceived =
     action.status === "COMMITTED" && !action.original_received_on &&
-    callerCan.startExchange;
+    (callerCan.startExchange || callerIsWarehouseBased);
   const canVoidThisReceipt =
     !!action.original_received_on && callerCan.completeExchange;
 
@@ -684,7 +719,7 @@ export default function ExchangeMilestoneCard({
             <input
               type="date"
               value={receiveDate}
-              max={new Date().toISOString().slice(0, 10)}
+              max={localDateString()}
               min={(action.committed_at ?? action.created_at ?? "").slice(0, 10) || undefined}
               onChange={(e) => {
                 setReceiveDate(e.target.value);
@@ -735,7 +770,7 @@ export default function ExchangeMilestoneCard({
                 <button
                   key="mark-received"
                   onClick={() => submitReceive(false)}
-                  disabled={saving || !receiveLocationId}
+                  disabled={saving || !locationsReady || !receiveLocationId}
                   className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
                 >
                   {saving ? "Working..." : "Mark received"}
