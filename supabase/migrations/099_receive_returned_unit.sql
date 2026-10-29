@@ -375,7 +375,7 @@ declare
   v_employee_name text;
   v_inspection public.returned_unit_inspections%rowtype;
 begin
-  if public.current_employee_role() not in ('owner', 'admin')
+  if coalesce(public.current_employee_role()::text, '') not in ('owner', 'admin')
      and not public.has_permission('sleep_trial.complete_exchange') then
     raise exception 'You do not have permission to void a received return.';
   end if;
