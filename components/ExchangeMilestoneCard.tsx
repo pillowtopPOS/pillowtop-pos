@@ -71,11 +71,9 @@ function MilestoneLine({ label, m }: { label: string; m: ExchangeMilestone }) {
 export default function ExchangeMilestoneCard({
   action,
   onChanged,
-  canVoidReceipt = true,
 }: {
   action: ExchangeActionRead;
   onChanged: () => void;
-  canVoidReceipt?: boolean;
 }) {
   const router = useRouter();
   const [dialog, setDialog] = useState<
@@ -96,7 +94,26 @@ export default function ExchangeMilestoneCard({
   const [receiveLocationId, setReceiveLocationId] = useState("");
   const [receiveLocations, setReceiveLocations] = useState<Store[]>([]);
   const [employeeRole, setEmployeeRole] = useState<string | null>(null);
+  const [callerCan, setCallerCan] = useState({
+    startExchange: false,
+    completeExchange: false,
+  });
   const [receivedLine, setReceivedLine] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Server enforces regardless; this only decides whether the buttons
+    // render at all.
+    const supabase = createClient();
+    Promise.all([
+      supabase.rpc("has_permission", { p_key: "sleep_trial.start_exchange" }),
+      supabase.rpc("has_permission", { p_key: "sleep_trial.complete_exchange" }),
+    ]).then(([a, b]) =>
+      setCallerCan({
+        startExchange: !!a.data,
+        completeExchange: !!b.data,
+      })
+    );
+  }, []);
 
   useEffect(() => {
     if (!action.original_received_on) {
@@ -270,9 +287,10 @@ export default function ExchangeMilestoneCard({
   }
 
   const canMarkReceived =
-    action.status === "COMMITTED" && !action.original_received_on;
+    action.status === "COMMITTED" && !action.original_received_on &&
+    callerCan.startExchange;
   const canVoidThisReceipt =
-    !!action.original_received_on && canVoidReceipt;
+    !!action.original_received_on && callerCan.completeExchange;
 
   const originalReceivedOpen = blockers.some((b) =>
     b.includes("original mattress")
