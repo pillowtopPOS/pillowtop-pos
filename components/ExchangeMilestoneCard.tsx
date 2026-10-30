@@ -107,6 +107,7 @@ export default function ExchangeMilestoneCard({
   const [callerIsWarehouseBased, setCallerIsWarehouseBased] =
     useState(false);
   const [locationsReady, setLocationsReady] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
     // Server enforces regardless; this only decides whether the buttons
@@ -141,6 +142,7 @@ export default function ExchangeMilestoneCard({
   useEffect(() => {
     if (dialog !== "receive") return;
     let cancelled = false;
+    setError(null);
     (async () => {
       try {
         const stores = await fetchStores(true);
@@ -167,6 +169,7 @@ export default function ExchangeMilestoneCard({
         setLocationsReady(true);
       } catch {
         if (!cancelled) {
+          setLoadFailed(true);
           setError("Could not load locations. Close this window and try again.");
         }
       }
@@ -209,14 +212,12 @@ export default function ExchangeMilestoneCard({
     if (which === "receive") {
       setReceiveDate(localDateString());
       setLocationsReady(false);
+      setLoadFailed(false);
     }
     if (which === "voidReceipt") setVoidReason("");
     setDialog(which);
   }
 
-  // Load the location picker and the employee's role/home store so the
-  // default location is their home store and owner/admin get the
-  // one-click quarantine fix when the server reports none.
 
   async function submit(fn: () => Promise<void>) {
     if (submitGuard.current) return;
@@ -707,10 +708,25 @@ export default function ExchangeMilestoneCard({
             <h2 className="mb-2 text-lg font-semibold text-slate-900">
               Mark original received
             </h2>
-            {!locationsReady && (
+            {error && (
+              <p key="receive-error" className="mt-3 text-sm text-red-600">
+                {error}
+              </p>
+            )}
+            {!locationsReady && !loadFailed && (
               <p key="receive-loading" className="text-sm text-slate-500">
                 Loading locations...
               </p>
+            )}
+            {loadFailed && (
+              <div key="receive-failed" className="mt-4 flex gap-2">
+                <button
+                  onClick={() => setDialog(null)}
+                  className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+              </div>
             )}
             {locationsReady && (
               <div key="receive-body">
@@ -755,11 +771,6 @@ export default function ExchangeMilestoneCard({
                     </option>
                   ))}
                 </select>
-                {error && (
-                  <p key="receive-error" className="mt-3 text-sm text-red-600">
-                    {error}
-                  </p>
-                )}
                 <div className="mt-4 flex gap-2">
                   <button
                     key="mark-received"
