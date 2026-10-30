@@ -53,6 +53,14 @@ insert into public.stores (id, company_id, name, location_type, is_active) value
   ('eb4a0000-0000-4000-8000-00000000c002', 'eb4a0000-0000-4000-8000-00000000c001', 'EB4A Other Store', 'STORE', true)
 on conflict (id) do nothing;
 
+-- A quarantine row whose parent is a STORE, inserted directly (only a
+-- definer or postgres can create these) to prove receive refuses it.
+insert into public.stores (id, company_id, name, location_type, parent_location_id, is_active)
+values ('eb4a0000-0000-4000-8000-000000000041', 'eb4a0000-0000-4000-8000-000000000001',
+        'EB4A Store Quarantine (bad parent)', 'WAREHOUSE_QUARANTINE',
+        'eb4a0000-0000-4000-8000-000000000003', true)
+on conflict (id) do nothing;
+
 -- auth.users rows are required: employees.auth_user_id is an FK to auth.users.
 -- Columns used: id, instance_id, aud, role, email, encrypted_password,
 -- email_confirmed_at, created_at, updated_at (the NOT NULL set on stock
@@ -265,6 +273,63 @@ begin
     'same=' || (v_q1 = v_q2) || ' qty=' || v_qty,
     v_q1 = v_q2 and v_qty = 1);
 end $$;
+
+select * from public.eb4a_results order by id desc limit 1;
+
+-- ---------------------------------------------------------------------------
+-- 4b. RECEIVE AT A STORE-PARENTED QUARANTINE ROW refused (100 guard).
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  v_msg text;
+begin
+  perform set_config('request.jwt.claim.sub', 'eb4a0000-0000-4000-8000-00000000a004', true);
+  begin
+    perform public.receive_returned_unit(
+      'eb4a0000-0000-4000-8000-000000000022',
+      'eb4a0000-0000-4000-8000-000000000041', current_date);
+    insert into public.eb4a_results (test_name, expected, actual, passed)
+    values ('store-parented quarantine refused', 'pick the warehouse', 'no error raised', false);
+  exception when others then
+    get stacked diagnostics v_msg = message_text;
+    insert into public.eb4a_results (test_name, expected, actual, passed)
+    values ('store-parented quarantine refused', 'received at the warehouse. Pick the warehouse',
+      v_msg, v_msg like '%received at the warehouse%Pick the warehouse%');
+  end;
+end $$;
+
+select * from public.eb4a_results order by id desc limit 1;
+
+-- ---------------------------------------------------------------------------
+-- 4c. INACTIVE QUARANTINE refused: deactivate the warehouse quarantine,
+--     receive is refused, then reactivate.
+-- ---------------------------------------------------------------------------
+update public.stores set is_active = false
+where parent_location_id = 'eb4a0000-0000-4000-8000-000000000002'
+  and location_type = 'WAREHOUSE_QUARANTINE';
+
+do $$
+declare
+  v_msg text;
+begin
+  perform set_config('request.jwt.claim.sub', 'eb4a0000-0000-4000-8000-00000000a004', true);
+  begin
+    perform public.receive_returned_unit(
+      'eb4a0000-0000-4000-8000-000000000022',
+      'eb4a0000-0000-4000-8000-000000000002', current_date);
+    insert into public.eb4a_results (test_name, expected, actual, passed)
+    values ('inactive quarantine refused', 'pick the warehouse', 'no error raised', false);
+  exception when others then
+    get stacked diagnostics v_msg = message_text;
+    insert into public.eb4a_results (test_name, expected, actual, passed)
+    values ('inactive quarantine refused', 'received at the warehouse. Pick the warehouse',
+      v_msg, v_msg like '%received at the warehouse%Pick the warehouse%');
+  end;
+end $$;
+
+update public.stores set is_active = true
+where parent_location_id = 'eb4a0000-0000-4000-8000-000000000002'
+  and location_type = 'WAREHOUSE_QUARANTINE';
 
 select * from public.eb4a_results order by id desc limit 1;
 
@@ -667,7 +732,8 @@ where company_id = 'eb4a0000-0000-4000-8000-000000000001';
 -- quarantine children before parent stores
 delete from public.stores where parent_location_id in (
   'eb4a0000-0000-4000-8000-000000000002',
-  'eb4a0000-0000-4000-8000-000000000003');
+  'eb4a0000-0000-4000-8000-000000000003')
+   or id = 'eb4a0000-0000-4000-8000-000000000041';
 delete from public.stores where id in (
   'eb4a0000-0000-4000-8000-000000000002',
   'eb4a0000-0000-4000-8000-000000000003',

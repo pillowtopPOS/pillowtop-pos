@@ -148,6 +148,20 @@ begin
   if v_quarantine_id is null then
     raise exception 'That location has no quarantine area. An owner or admin can create one for the warehouse.';
   end if;
+  -- The resolved quarantine must be active under an active warehouse. This
+  -- also refuses a quarantine row parented to a store when that row is
+  -- passed directly as p_location_id.
+  if not exists (
+    select 1
+    from public.stores q
+    join public.stores p on p.id = q.parent_location_id
+    where q.id = v_quarantine_id
+      and q.is_active
+      and p.is_active
+      and p.location_type = 'WAREHOUSE'
+  ) then
+    raise exception 'Returned mattresses are received at the warehouse. Pick the warehouse.';
+  end if;
   select name into v_quarantine_name from public.stores where id = v_quarantine_id;
 
   -- Date guards.

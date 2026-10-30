@@ -715,6 +715,12 @@ export default function ExchangeMilestoneCard({
             <label className="mt-3 block text-xs font-medium text-slate-600">
               Receiving location
             </label>
+            {locationsReady && receiveLocations.length === 0 && (
+              <p key="receive-no-warehouse" className="mt-1 text-sm text-amber-800">
+                No warehouse with a quarantine area was found. Ask an owner
+                or admin.
+              </p>
+            )}
             {receiveLocations.length === 1 ? (
               <p key="receive-single-loc" className="mt-1 text-sm text-slate-900">
                 {receiveLocations[0].name}
