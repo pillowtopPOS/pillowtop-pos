@@ -139,6 +139,44 @@ export default function ExchangeMilestoneCard({
   }, []);
 
   useEffect(() => {
+    if (dialog !== "receive") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const stores = await fetchStores(true);
+        const warehouses = stores.filter(
+          (l) => l.location_type === "WAREHOUSE"
+        );
+        // A quarantine child row marks the warehouse that already has an
+        // area; default the picker to it.
+        const quarantineParentIds = new Set(
+          stores
+            .filter((l) => l.location_type === "WAREHOUSE_QUARANTINE")
+            .map((l) => (l as Store & { parent_location_id?: string }).parent_location_id)
+        );
+        const withArea = warehouses.filter((l) =>
+          quarantineParentIds.has(l.id)
+        );
+        const ordered =
+          withArea.length > 0
+            ? [...withArea, ...warehouses.filter((l) => !quarantineParentIds.has(l.id))]
+            : warehouses;
+        if (cancelled) return;
+        setReceiveLocations(ordered);
+        setReceiveLocationId(ordered[0]?.id ?? "");
+        setLocationsReady(true);
+      } catch {
+        if (!cancelled) {
+          setError("Could not load locations. Close this window and try again.");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [dialog]);
+
+  useEffect(() => {
     if (!action.original_received_on) {
       setReceivedLine(null);
       return;
@@ -170,7 +208,7 @@ export default function ExchangeMilestoneCard({
     if (which === "void") setVoidReason("");
     if (which === "receive") {
       setReceiveDate(localDateString());
-      void primeReceiveForm();
+      setLocationsReady(false);
     }
     if (which === "voidReceipt") setVoidReason("");
     setDialog(which);
@@ -179,35 +217,6 @@ export default function ExchangeMilestoneCard({
   // Load the location picker and the employee's role/home store so the
   // default location is their home store and owner/admin get the
   // one-click quarantine fix when the server reports none.
-  async function primeReceiveForm() {
-    setLocationsReady(false);
-    try {
-      const supabase = createClient();
-      const stores = await fetchStores(true);
-      const warehouses = stores.filter(
-        (l) => l.location_type === "WAREHOUSE"
-      );
-      // A quarantine child row marks the warehouse that already has an
-      // area; default the picker to it.
-      const quarantineParentIds = new Set(
-        stores
-          .filter((l) => l.location_type === "WAREHOUSE_QUARANTINE")
-          .map((l) => (l as Store & { parent_location_id?: string }).parent_location_id)
-      );
-      const withArea = warehouses.filter((l) =>
-        quarantineParentIds.has(l.id)
-      );
-      const ordered =
-        withArea.length > 0
-          ? [...withArea, ...warehouses.filter((l) => !quarantineParentIds.has(l.id))]
-          : warehouses;
-      setReceiveLocations(ordered);
-      setReceiveLocationId(ordered[0]?.id ?? "");
-      setLocationsReady(true);
-    } catch {
-      setError("Could not load locations. Close this window and try again.");
-    }
-  }
 
   async function submit(fn: () => Promise<void>) {
     if (submitGuard.current) return;
@@ -698,71 +707,77 @@ export default function ExchangeMilestoneCard({
             <h2 className="mb-2 text-lg font-semibold text-slate-900">
               Mark original received
             </h2>
-            <label className="block text-xs font-medium text-slate-600">
-              Received date
-            </label>
-            <input
-              type="date"
-              value={receiveDate}
-              max={localDateString()}
-              min={(action.committed_at ?? action.created_at ?? "").slice(0, 10) || undefined}
-              onChange={(e) => {
-                setReceiveDate(e.target.value);
-                setError(null);
-              }}
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            />
-            <label className="mt-3 block text-xs font-medium text-slate-600">
-              Receiving location
-            </label>
-            {locationsReady && receiveLocations.length === 0 && (
-              <p key="receive-no-warehouse" className="mt-1 text-sm text-amber-800">
-                No warehouse with a quarantine area was found. Ask an owner
-                or admin.
+            {!locationsReady && (
+              <p key="receive-loading" className="text-sm text-slate-500">
+                Loading locations...
               </p>
             )}
-            {receiveLocations.length === 1 ? (
-              <p key="receive-single-loc" className="mt-1 text-sm text-slate-900">
-                {receiveLocations[0].name}
-              </p>
-            ) : (
-              <select
-                key="receive-loc-select"
-                value={receiveLocationId}
-                onChange={(e) => {
-                  setReceiveLocationId(e.target.value);
-                  setError(null);
-                }}
-                className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-              >
-                {receiveLocations.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name}
-                  </option>
-                ))}
-              </select>
+            {locationsReady && (
+              <div key="receive-body">
+                <label className="block text-xs font-medium text-slate-600">
+                  Received date
+                </label>
+                <input
+                  type="date"
+                  value={receiveDate}
+                  max={localDateString()}
+                  min={(action.committed_at ?? action.created_at ?? "").slice(0, 10) || undefined}
+                  onChange={(e) => {
+                    setReceiveDate(e.target.value);
+                    setError(null);
+                  }}
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                />
+                <label className="mt-3 block text-xs font-medium text-slate-600">
+                  Receiving location
+                </label>
+                <p
+                  key="receive-no-warehouse"
+                  hidden={receiveLocations.length !== 0}
+                  className="mt-1 text-sm text-amber-800"
+                >
+                  No warehouse with a quarantine area was found. Ask an
+                  owner or admin.
+                </p>
+                <select
+                  key="receive-loc-select"
+                  value={receiveLocationId}
+                  disabled={receiveLocations.length <= 1}
+                  onChange={(e) => {
+                    setReceiveLocationId(e.target.value);
+                    setError(null);
+                  }}
+                  className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm disabled:bg-slate-50 disabled:text-slate-600"
+                >
+                  {receiveLocations.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
+                  ))}
+                </select>
+                {error && (
+                  <p key="receive-error" className="mt-3 text-sm text-red-600">
+                    {error}
+                  </p>
+                )}
+                <div className="mt-4 flex gap-2">
+                  <button
+                    key="mark-received"
+                    onClick={submitReceive}
+                    disabled={saving || !receiveLocationId}
+                    className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                  >
+                    {saving ? "Working..." : "Mark received"}
+                  </button>
+                  <button
+                    onClick={() => setDialog(null)}
+                    className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
             )}
-            {error && (
-              <p key="receive-error" className="mt-3 text-sm text-red-600">
-                {error}
-              </p>
-            )}
-            <div className="mt-4 flex gap-2">
-              <button
-                key="mark-received"
-                onClick={submitReceive}
-                disabled={saving || !locationsReady || !receiveLocationId}
-                className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-              >
-                {saving ? "Working..." : "Mark received"}
-              </button>
-              <button
-                onClick={() => setDialog(null)}
-                className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-            </div>
           </div>
         </Modal>
       )}
