@@ -3,7 +3,13 @@
 import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { fetchStores, type Store } from "@/lib/journeys/queries";
+import {
+  fetchCurrentEmployee,
+  fetchStores,
+  selectableStores,
+  type Employee,
+  type Store,
+} from "@/lib/journeys/queries";
 
 export default function StoreSelectPage() {
   return (
@@ -24,6 +30,10 @@ function StoreSelectContent() {
   const searchParams = useSearchParams();
   const returnTo = searchParams.get("returnTo") || "/board";
   const [stores, setStores] = useState<Store[]>([]);
+  const [employee, setEmployee] = useState<Employee | null>(null);
+  const [loadState, setLoadState] = useState<
+    "loading" | "ready" | "failed"
+  >("loading");
   const [selected, setSelected] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,12 +47,21 @@ function StoreSelectContent() {
         return;
       }
 
-      fetchStores(true).then(setStores);
+      Promise.all([fetchStores(true), fetchCurrentEmployee()])
+        .then(([storeList, emp]) => {
+          setStores(storeList);
+          setEmployee(emp);
+          setLoadState("ready");
+        })
+        .catch(() => setLoadState("failed"));
     });
   }, [router]);
 
+  const list = selectableStores(stores, employee);
+  const selectedValid = list.some((store) => store.id === selected);
+
   async function handleContinue() {
-    if (!selected) return;
+    if (!selectedValid) return;
 
     setLoading(true);
     setError(null);
@@ -83,7 +102,22 @@ function StoreSelectContent() {
         )}
 
         <div className="space-y-2">
-          {stores.map((store) => (
+          {loadState === "loading" && (
+            <p key="stores-loading" className="text-sm text-slate-500">
+              Loading stores...
+            </p>
+          )}
+          {loadState === "failed" && (
+            <p key="stores-failed" className="text-sm text-red-600">
+              Could not load stores. Reload the page and try again.
+            </p>
+          )}
+          {loadState === "ready" && list.length === 0 && (
+            <p key="no-stores" className="text-sm text-slate-500">
+              No stores are available to pick from.
+            </p>
+          )}
+          {loadState === "ready" && list.map((store) => (
             <label
               key={store.id}
               className={`flex cursor-pointer items-center justify-between rounded-md border p-3 ${
@@ -111,7 +145,7 @@ function StoreSelectContent() {
 
         <button
           onClick={handleContinue}
-          disabled={!selected || loading}
+          disabled={!selectedValid || loading || loadState !== "ready"}
           className="w-full rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
         >
           {loading ? "Saving…" : "Continue"}

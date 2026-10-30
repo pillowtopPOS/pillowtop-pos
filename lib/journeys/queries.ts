@@ -394,6 +394,23 @@ export async function fetchStores(activeOnly = false): Promise<Store[]> {
   return (data as unknown as Store[]) ?? [];
 }
 
+/** Oct 30 rule (store-picker): active-store pickers list only real STORE
+ *  locations. WAREHOUSE and WAREHOUSE_QUARANTINE rows appear only for a
+ *  warehouse-based employee, defined the same way as the DB helper
+ *  (home_store_id points at a WAREHOUSE location). The home store type is
+ *  looked up inside the same stores list. Display-only filtering; a
+ *  server-side guard on active_store_id is a separate item. */
+export function selectableStores(
+  stores: Store[],
+  currentEmployee: Employee | null
+): Store[] {
+  const homeType = stores.find(
+    (s) => s.id === currentEmployee?.home_store_id
+  )?.location_type;
+  if (homeType === "WAREHOUSE") return stores;
+  return stores.filter((s) => s.location_type === "STORE");
+}
+
 export async function createStore(store: Partial<Store>) {
   const supabase = createClient();
   const { data, error } = await supabase
