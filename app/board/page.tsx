@@ -31,6 +31,7 @@ import {
   fetchEmployees,
   fetchCurrentEmployee,
   fetchStores,
+  selectableStores,
   fetchLiveTrialItemStatuses,
   subscribeToJourneyChanges,
   recordJourneyEvent,
@@ -727,7 +728,7 @@ export default function BoardPage() {
         >
           <option value="active">Active store</option>
           <option value="all">All stores</option>
-          {stores.map((s) => (
+          {selectableStores(stores, currentEmployee).map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
             </option>

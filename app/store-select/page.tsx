@@ -3,7 +3,13 @@
 import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { fetchStores, type Store } from "@/lib/journeys/queries";
+import {
+  fetchCurrentEmployee,
+  fetchStores,
+  selectableStores,
+  type Employee,
+  type Store,
+} from "@/lib/journeys/queries";
 
 export default function StoreSelectPage() {
   return (
@@ -24,6 +30,7 @@ function StoreSelectContent() {
   const searchParams = useSearchParams();
   const returnTo = searchParams.get("returnTo") || "/board";
   const [stores, setStores] = useState<Store[]>([]);
+  const [employee, setEmployee] = useState<Employee | null>(null);
   const [selected, setSelected] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +44,12 @@ function StoreSelectContent() {
         return;
       }
 
-      fetchStores(true).then(setStores);
+      Promise.all([fetchStores(true), fetchCurrentEmployee()]).then(
+        ([storeList, emp]) => {
+          setStores(storeList);
+          setEmployee(emp);
+        }
+      );
     });
   }, [router]);
 
@@ -83,7 +95,12 @@ function StoreSelectContent() {
         )}
 
         <div className="space-y-2">
-          {stores.map((store) => (
+          {selectableStores(stores, employee).length === 0 && (
+            <p key="no-stores" className="text-sm text-slate-500">
+              No stores are available to pick from.
+            </p>
+          )}
+          {selectableStores(stores, employee).map((store) => (
             <label
               key={store.id}
               className={`flex cursor-pointer items-center justify-between rounded-md border p-3 ${
