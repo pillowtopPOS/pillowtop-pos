@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Modal from "@/components/Modal";
 import { activityShortDate } from "@/lib/journeys/activityLabels";
@@ -10,11 +10,15 @@ import {
   centsToDollars,
   dollarsToCents,
   recordExchangeRefund,
+  receiveReturnedUnit,
   voidExchangeRefund,
+  voidReturnedReceipt,
   type ExchangeActionRead,
   type ExchangeMilestone,
   type ExchangeRefundMethod,
 } from "@/lib/journeys/exchange";
+import { fetchStores, type Store } from "@/lib/journeys/queries";
+import { createClient } from "@/lib/supabase/client";
 
 // EB-3b: the milestone card on the original journey's Sleep Trial section.
 // Every flag (can_cancel, can_record_refund, can_void_refund,
@@ -36,6 +40,13 @@ const REFUND_METHODS: { value: ExchangeRefundMethod; label: string }[] = [
   { value: "store_credit", label: "Store credit" },
   { value: "none", label: "None" },
 ];
+
+function localDateString(d = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 
 const PAID_CUSTOMER_MESSAGE =
   "The replacement already has a payment on record. Record a refund for the payment first (Journey Activity, Payments), then come back and cancel the exchange. Make sure the money has actually gone back to the customer first, because PillowTop only records it.";
@@ -71,9 +82,10 @@ export default function ExchangeMilestoneCard({
   onChanged: () => void;
 }) {
   const router = useRouter();
-  const [dialog, setDialog] = useState<"cancel" | "refund" | "void" | null>(
-    null
-  );
+  const [dialog, setDialog] = useState<
+    "cancel" | "refund" | "void" | "receive" | "voidReceipt" | null
+  >(null);
+  const submitGuard = useRef(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -83,12 +95,112 @@ export default function ExchangeMilestoneCard({
   const [refundAmount, setRefundAmount] = useState("");
   const [refundReference, setRefundReference] = useState("");
   const [voidReason, setVoidReason] = useState("");
+  // EB-4a: receive + void-receipt state
+  const [receiveDate, setReceiveDate] = useState("");
+  const [receiveLocationId, setReceiveLocationId] = useState("");
+  const [receiveLocations, setReceiveLocations] = useState<Store[]>([]);
+  const [callerCan, setCallerCan] = useState({
+    startExchange: false,
+    completeExchange: false,
+  });
+  const [receivedLine, setReceivedLine] = useState<string | null>(null);
+  const [callerIsWarehouseBased, setCallerIsWarehouseBased] =
+    useState(false);
+  const [locationsReady, setLocationsReady] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  useEffect(() => {
+    // Server enforces regardless; this only decides whether the buttons
+    // render at all.
+    const supabase = createClient();
+    Promise.all([
+      supabase.rpc("has_permission", { p_key: "sleep_trial.start_exchange" }),
+      supabase.rpc("has_permission", { p_key: "sleep_trial.complete_exchange" }),
+    ]).then(([a, b]) =>
+      setCallerCan({
+        startExchange: !!a.data,
+        completeExchange: !!b.data,
+      })
+    );
+    // Warehouse-based employees may receive without the start_exchange
+    // key (server rule), so the button must not hide from them either.
+    supabase.auth.getUser().then(({ data: u }) => {
+      if (!u.user) return;
+      supabase
+        .from("employees")
+        .select("home_store_id, stores(location_type)")
+        .eq("auth_user_id", u.user.id)
+        .eq("is_active", true)
+        .maybeSingle()
+        .then(({ data: emp }) => {
+          const t = (emp as any)?.stores?.location_type;
+          setCallerIsWarehouseBased(t === "WAREHOUSE");
+        });
+    });
+  }, []);
+
+  useEffect(() => {
+    if (dialog !== "receive") return;
+    let cancelled = false;
+    setError(null);
+    (async () => {
+      try {
+        const stores = await fetchStores(true);
+        const warehouses = stores.filter(
+          (l) => l.location_type === "WAREHOUSE"
+        );
+        // A quarantine child row marks the warehouse that already has an
+        // area; default the picker to it.
+        const quarantineParentIds = new Set(
+          stores
+            .filter((l) => l.location_type === "WAREHOUSE_QUARANTINE")
+            .map((l) => (l as Store & { parent_location_id?: string }).parent_location_id)
+        );
+        const withArea = warehouses.filter((l) =>
+          quarantineParentIds.has(l.id)
+        );
+        const ordered =
+          withArea.length > 0
+            ? [...withArea, ...warehouses.filter((l) => !quarantineParentIds.has(l.id))]
+            : warehouses;
+        if (cancelled) return;
+        setReceiveLocations(ordered);
+        setReceiveLocationId(ordered[0]?.id ?? "");
+        setLocationsReady(true);
+      } catch {
+        if (!cancelled) {
+          setLoadFailed(true);
+          setError("Could not load locations. Close this window and try again.");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [dialog]);
+
+  useEffect(() => {
+    if (!action.original_received_on) {
+      setReceivedLine(null);
+      return;
+    }
+    const supabase = createClient();
+    supabase
+      .from("journey_interactions")
+      .select("summary")
+      .eq("source_record_id", action.action_id)
+      .like("summary", "Original mattress received%")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => setReceivedLine(data?.summary ?? null));
+  }, [action.action_id, action.original_received_on]);
 
   const owed = action.refund_owed_cents ?? 0;
   const refundRecorded = action.refund_recorded_at != null;
   const history = action.refund_history ?? [];
 
-  function open(which: "cancel" | "refund" | "void") {
+  function open(which: "cancel" | "refund" | "void" | "receive" | "voidReceipt") {
     setError(null);
     if (which === "refund") {
       setRefundMethod("card");
@@ -97,10 +209,19 @@ export default function ExchangeMilestoneCard({
     }
     if (which === "cancel") setCancelReason("");
     if (which === "void") setVoidReason("");
+    if (which === "receive") {
+      setReceiveDate(localDateString());
+      setLocationsReady(false);
+      setLoadFailed(false);
+    }
+    if (which === "voidReceipt") setVoidReason("");
     setDialog(which);
   }
 
+
   async function submit(fn: () => Promise<void>) {
+    if (submitGuard.current) return;
+    submitGuard.current = true;
     setSaving(true);
     setError(null);
     try {
@@ -111,6 +232,7 @@ export default function ExchangeMilestoneCard({
       setError(e.message ?? "Something went wrong");
     } finally {
       setSaving(false);
+      submitGuard.current = false;
     }
   }
 
@@ -165,10 +287,41 @@ export default function ExchangeMilestoneCard({
       setError(e.message ?? "Something went wrong");
     } finally {
       setSaving(false);
+      submitGuard.current = false;
     }
   }
 
   const blockers = action.complete_blockers ?? [];
+  async function submitReceive() {
+    setError(null);
+    if (!receiveDate) {
+      setError("Pick a received date.");
+      return;
+    }
+    if (!receiveLocationId) {
+      setError("Pick a receiving location.");
+      return;
+    }
+    await submit(async () => {
+      await receiveReturnedUnit(action.action_id, receiveLocationId, receiveDate);
+    });
+  }
+
+  async function submitVoidReceipt() {
+    setError(null);
+    if (!voidReason.trim()) {
+      setError("Enter a reason to void this receipt.");
+      return;
+    }
+    await submit(() => voidReturnedReceipt(action.action_id, voidReason));
+  }
+
+  const canMarkReceived =
+    action.status === "COMMITTED" && !action.original_received_on &&
+    (callerCan.startExchange || callerIsWarehouseBased);
+  const canVoidThisReceipt =
+    !!action.original_received_on && callerCan.completeExchange;
+
   const originalReceivedOpen = blockers.some((b) =>
     b.includes("original mattress")
   );
@@ -199,6 +352,10 @@ export default function ExchangeMilestoneCard({
           <MilestoneLine key={key} label={label} m={action.milestones[key]} />
         ))}
       </ul>
+
+      {action.original_received_on && receivedLine && (
+        <p className="mt-1 text-xs text-slate-500">{receivedLine}</p>
+      )}
 
       {owed > 0 && !refundRecorded && (
         <p className="mt-1.5 text-xs font-medium text-amber-800">
@@ -246,14 +403,32 @@ export default function ExchangeMilestoneCard({
       {(action.can_cancel ||
         action.can_record_refund ||
         action.can_void_refund ||
-        action.can_complete) && (
+        action.can_complete ||
+        canMarkReceived ||
+        canVoidThisReceipt) && (
         <div className="mt-2 flex flex-wrap items-start gap-2">
-          {action.can_cancel && (
+          {action.can_cancel && !action.original_received_on && (
             <button
               onClick={() => open("cancel")}
               className="rounded-md border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
             >
               Cancel exchange
+            </button>
+          )}
+          {canMarkReceived && (
+            <button
+              onClick={() => open("receive")}
+              className="rounded-md border border-teal-400 bg-teal-50 px-2 py-1 text-xs font-medium text-teal-800 hover:bg-teal-100"
+            >
+              Mark original received
+            </button>
+          )}
+          {canVoidThisReceipt && (
+            <button
+              onClick={() => open("voidReceipt")}
+              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Void receipt
             </button>
           )}
           {action.can_record_refund && (
@@ -290,9 +465,7 @@ export default function ExchangeMilestoneCard({
                   ))}
                   {originalReceivedOpen && (
                     <li className="text-xs text-slate-500">
-                      Receiving the original mattress is not built yet, so
-                      Complete stays blocked until it is.
-                    </li>
+                      Mark the original mattress received first.</li>
                   )}
                 </ul>
               )}
@@ -523,6 +696,142 @@ export default function ExchangeMilestoneCard({
                 className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
               >
                 {saving ? "Voiding…" : "Void refund"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {dialog === "receive" && (
+        <Modal onClose={() => setDialog(null)} saving={saving}>
+          <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+            <h2 className="mb-2 text-lg font-semibold text-slate-900">
+              Mark original received
+            </h2>
+            {error && (
+              <p key="receive-error" className="mt-3 text-sm text-red-600">
+                {error}
+              </p>
+            )}
+            {!locationsReady && !loadFailed && (
+              <p key="receive-loading" className="text-sm text-slate-500">
+                Loading locations...
+              </p>
+            )}
+            {loadFailed && (
+              <div key="receive-failed" className="mt-4 flex gap-2">
+                <button
+                  onClick={() => setDialog(null)}
+                  className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+            {locationsReady && (
+              <div key="receive-body">
+                <label className="block text-xs font-medium text-slate-600">
+                  Received date
+                </label>
+                <input
+                  type="date"
+                  value={receiveDate}
+                  max={localDateString()}
+                  min={(action.committed_at ?? action.created_at ?? "").slice(0, 10) || undefined}
+                  onChange={(e) => {
+                    setReceiveDate(e.target.value);
+                    setError(null);
+                  }}
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                />
+                <label className="mt-3 block text-xs font-medium text-slate-600">
+                  Receiving location
+                </label>
+                <p
+                  key="receive-no-warehouse"
+                  hidden={receiveLocations.length !== 0}
+                  className="mt-1 text-sm text-amber-800"
+                >
+                  No warehouse with a quarantine area was found. Ask an
+                  owner or admin.
+                </p>
+                <select
+                  key="receive-loc-select"
+                  value={receiveLocationId}
+                  disabled={receiveLocations.length <= 1}
+                  onChange={(e) => {
+                    setReceiveLocationId(e.target.value);
+                    setError(null);
+                  }}
+                  className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm disabled:bg-slate-50 disabled:text-slate-600"
+                >
+                  {receiveLocations.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="mt-4 flex gap-2">
+                  <button
+                    key="mark-received"
+                    onClick={submitReceive}
+                    disabled={saving || !receiveLocationId}
+                    className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                  >
+                    {saving ? "Working..." : "Mark received"}
+                  </button>
+                  <button
+                    onClick={() => setDialog(null)}
+                    className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {dialog === "voidReceipt" && (
+        <Modal onClose={() => setDialog(null)} saving={saving}>
+          <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+            <h2 className="mb-2 text-lg font-semibold text-slate-900">
+              Void receipt
+            </h2>
+            <p className="mb-3 text-sm text-slate-600">
+              This reverses the received unit out of quarantine and clears
+              the received date. Only do this if the receipt was recorded in
+              error.
+            </p>
+            <textarea
+              value={voidReason}
+              onChange={(e) => {
+                setVoidReason(e.target.value);
+                setError(null);
+              }}
+              placeholder="Reason (required)"
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              rows={3}
+            />
+            {error && (
+              <p key="voidreceipt-error" className="mt-3 text-sm text-red-600">
+                {error}
+              </p>
+            )}
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={submitVoidReceipt}
+                disabled={saving}
+                className="flex-1 rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {saving ? "Working..." : "Void receipt"}
+              </button>
+              <button
+                onClick={() => setDialog(null)}
+                className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
               </button>
             </div>
           </div>

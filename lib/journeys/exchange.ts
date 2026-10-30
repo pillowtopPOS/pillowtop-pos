@@ -417,3 +417,48 @@ export function dollarsToCents(input: string): number | null {
 export function centsToDollars(cents: number | null | undefined): string {
   return ((cents ?? 0) / 100).toFixed(2);
 }
+
+/** EB-4a: record the original mattress received into the location's
+ *  quarantine area. Returns the returned_unit_inspections id. Server
+ *  enforces start_exchange or warehouse-based, COMMITTED status, and
+ *  date guards; errors surface verbatim. */
+export async function receiveReturnedUnit(
+  actionId: string,
+  locationId: string,
+  receivedOn: string
+): Promise<string> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("receive_returned_unit", {
+    p_action_id: actionId,
+    p_location_id: locationId,
+    p_received_on: receivedOn,
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
+}
+
+/** EB-4a: void a mistaken receipt while the inspection is still
+ *  AWAITING_INSPECTION. Reason is required. */
+export async function voidReturnedReceipt(
+  actionId: string,
+  reason: string
+): Promise<void> {
+  const supabase = createClient();
+  const { error } = await supabase.rpc("void_returned_receipt", {
+    p_action_id: actionId,
+    p_reason: reason,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** EB-4a: owner/admin one-click quarantine provisioning for a location. */
+export async function createQuarantineArea(
+  locationId: string
+): Promise<string> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("create_quarantine_area", {
+    p_location_id: locationId,
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
+}
