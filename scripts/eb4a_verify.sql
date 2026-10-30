@@ -201,7 +201,7 @@ end $$;
 select * from public.eb4a_results order by id desc limit 1;
 
 -- ---------------------------------------------------------------------------
--- 3. RECEIVE AT STORE WITHOUT QUARANTINE -> clear error.
+-- 3. RECEIVE AT A STORE refused (100: warehouse receiving only).
 -- ---------------------------------------------------------------------------
 do $$
 declare
@@ -213,37 +213,55 @@ begin
       'eb4a0000-0000-4000-8000-000000000021',
       'eb4a0000-0000-4000-8000-000000000003', current_date);
     insert into public.eb4a_results (test_name, expected, actual, passed)
-    values ('receive without quarantine', 'quarantine error', 'no error raised', false);
+    values ('receive at store refused', 'pick the warehouse', 'no error raised', false);
   exception when others then
     get stacked diagnostics v_msg = message_text;
     insert into public.eb4a_results (test_name, expected, actual, passed)
-    values ('receive without quarantine', 'no quarantine area + points to Settings',
-      v_msg, v_msg like '%no quarantine area%' and v_msg like '%Settings%');
+    values ('receive at store refused', 'received at the warehouse. Pick the warehouse',
+      v_msg, v_msg like '%received at the warehouse%Pick the warehouse%');
   end;
 end $$;
 
 select * from public.eb4a_results order by id desc limit 1;
 
 -- ---------------------------------------------------------------------------
--- 4. create_quarantine_area for the store, twice (idempotent), then receive.
+-- 4. create_quarantine_area on a STORE refused; twice on the warehouse
+--    returns the same (auto-provisioned) id; then receive there works.
 -- ---------------------------------------------------------------------------
+do $$
+declare
+  v_msg text;
+begin
+  perform set_config('request.jwt.claim.sub', 'eb4a0000-0000-4000-8000-00000000a004', true);
+  begin
+    perform public.create_quarantine_area('eb4a0000-0000-4000-8000-000000000003');
+    insert into public.eb4a_results (test_name, expected, actual, passed)
+    values ('quarantine on store refused', 'warehouse only', 'no error raised', false);
+  exception when others then
+    get stacked diagnostics v_msg = message_text;
+    insert into public.eb4a_results (test_name, expected, actual, passed)
+    values ('quarantine on store refused', 'can only be created for a warehouse',
+      v_msg, v_msg like '%can only be created for a warehouse%');
+  end;
+end $$;
+
 do $$
 declare
   v_q1 uuid; v_q2 uuid; v_insp uuid;
   v_qty int;
 begin
   perform set_config('request.jwt.claim.sub', 'eb4a0000-0000-4000-8000-00000000a004', true);
-  v_q1 := public.create_quarantine_area('eb4a0000-0000-4000-8000-000000000003');
-  v_q2 := public.create_quarantine_area('eb4a0000-0000-4000-8000-000000000003');
+  v_q1 := public.create_quarantine_area('eb4a0000-0000-4000-8000-000000000002');
+  v_q2 := public.create_quarantine_area('eb4a0000-0000-4000-8000-000000000002');
   v_insp := public.receive_returned_unit(
     'eb4a0000-0000-4000-8000-000000000021',
-    'eb4a0000-0000-4000-8000-000000000003', current_date);
+    'eb4a0000-0000-4000-8000-000000000002', current_date);
   select on_hand_quantity into v_qty from public.inventory_positions
     where variant_id = 'eb4a0000-0000-4000-8000-000000000008' and disposition = 'Returned'
       and location_id = v_q1;
   insert into public.eb4a_results (test_name, expected, actual, passed) values (
-    'create_quarantine_area twice + receive',
-    'same id both calls, qty=1 at store quarantine',
+    'create_quarantine_area twice + receive at warehouse',
+    'same id both calls, qty=1 at warehouse quarantine',
     'same=' || (v_q1 = v_q2) || ' qty=' || v_qty,
     v_q1 = v_q2 and v_qty = 1);
 end $$;

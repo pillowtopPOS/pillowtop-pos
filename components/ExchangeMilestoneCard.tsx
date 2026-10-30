@@ -8,7 +8,6 @@ import {
   cancelSleepTrialAction,
   completeSleepTrialAction,
   centsToDollars,
-  createQuarantineArea,
   dollarsToCents,
   recordExchangeRefund,
   receiveReturnedUnit,
@@ -100,7 +99,6 @@ export default function ExchangeMilestoneCard({
   const [receiveDate, setReceiveDate] = useState("");
   const [receiveLocationId, setReceiveLocationId] = useState("");
   const [receiveLocations, setReceiveLocations] = useState<Store[]>([]);
-  const [employeeRole, setEmployeeRole] = useState<string | null>(null);
   const [callerCan, setCallerCan] = useState({
     startExchange: false,
     completeExchange: false,
@@ -186,31 +184,25 @@ export default function ExchangeMilestoneCard({
     try {
       const supabase = createClient();
       const stores = await fetchStores(true);
-      const { data: u } = await supabase.auth.getUser();
-      let emp: { role: string; home_store_id: string | null; home_location_type?: string | null } | null = null;
-      if (u.user) {
-        const res = await supabase
-          .from("employees")
-          .select("role, home_store_id")
-          .eq("auth_user_id", u.user.id)
-          .eq("is_active", true)
-          .maybeSingle();
-        emp = res.data;
-      }
-      const sellable = stores.filter(
-        (l) => l.location_type !== "WAREHOUSE_QUARANTINE"
+      const warehouses = stores.filter(
+        (l) => l.location_type === "WAREHOUSE"
       );
-      setEmployeeRole(emp?.role ?? null);
-      const homeId = emp?.home_store_id ?? null;
-      const homeType = homeId
-        ? stores.find((l) => l.id === homeId)?.location_type ?? null
-        : null;
-      setCallerIsWarehouseBased(homeType === "WAREHOUSE");
-      const ordered = homeId
-        ? [...sellable.filter((l) => l.id === homeId), ...sellable.filter((l) => l.id !== homeId)]
-        : sellable;
+      // A quarantine child row marks the warehouse that already has an
+      // area; default the picker to it.
+      const quarantineParentIds = new Set(
+        stores
+          .filter((l) => l.location_type === "WAREHOUSE_QUARANTINE")
+          .map((l) => (l as Store & { parent_location_id?: string }).parent_location_id)
+      );
+      const withArea = warehouses.filter((l) =>
+        quarantineParentIds.has(l.id)
+      );
+      const ordered =
+        withArea.length > 0
+          ? [...withArea, ...warehouses.filter((l) => !quarantineParentIds.has(l.id))]
+          : warehouses;
       setReceiveLocations(ordered);
-      setReceiveLocationId(homeId ?? ordered[0]?.id ?? "");
+      setReceiveLocationId(ordered[0]?.id ?? "");
       setLocationsReady(true);
     } catch {
       setError("Could not load locations. Close this window and try again.");
@@ -290,7 +282,7 @@ export default function ExchangeMilestoneCard({
   }
 
   const blockers = action.complete_blockers ?? [];
-  async function submitReceive(createAreaFirst = false) {
+  async function submitReceive() {
     setError(null);
     if (!receiveDate) {
       setError("Pick a received date.");
@@ -298,13 +290,6 @@ export default function ExchangeMilestoneCard({
     }
     if (!receiveLocationId) {
       setError("Pick a receiving location.");
-      return;
-    }
-    if (createAreaFirst) {
-      await submit(async () => {
-        await createQuarantineArea(receiveLocationId);
-        await receiveReturnedUnit(action.action_id, receiveLocationId, receiveDate);
-      });
       return;
     }
     await submit(async () => {
@@ -412,7 +397,7 @@ export default function ExchangeMilestoneCard({
         canMarkReceived ||
         canVoidThisReceipt) && (
         <div className="mt-2 flex flex-wrap items-start gap-2">
-          {action.can_cancel && (
+          {action.can_cancel && !action.original_received_on && (
             <button
               onClick={() => open("cancel")}
               className="rounded-md border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
@@ -730,52 +715,41 @@ export default function ExchangeMilestoneCard({
             <label className="mt-3 block text-xs font-medium text-slate-600">
               Receiving location
             </label>
-            <select
-              value={receiveLocationId}
-              onChange={(e) => {
-                setReceiveLocationId(e.target.value);
-                setError(null);
-              }}
-              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-            >
-              {receiveLocations.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
+            {receiveLocations.length === 1 ? (
+              <p key="receive-single-loc" className="mt-1 text-sm text-slate-900">
+                {receiveLocations[0].name}
+              </p>
+            ) : (
+              <select
+                key="receive-loc-select"
+                value={receiveLocationId}
+                onChange={(e) => {
+                  setReceiveLocationId(e.target.value);
+                  setError(null);
+                }}
+                className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+              >
+                {receiveLocations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </select>
+            )}
             {error && (
               <p key="receive-error" className="mt-3 text-sm text-red-600">
                 {error}
               </p>
             )}
-            {error && error.includes("quarantine area") &&
-              (employeeRole === "owner" || employeeRole === "admin") && (
-              <p key="quarantine-hint" className="mt-1 text-xs text-slate-500">
-                Create the quarantine area and retry in one step.
-              </p>
-            )}
             <div className="mt-4 flex gap-2">
-              {error && error.includes("quarantine area") &&
-              (employeeRole === "owner" || employeeRole === "admin") ? (
-                <button
-                  key="create-and-receive"
-                  onClick={() => submitReceive(true)}
-                  disabled={saving}
-                  className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-                >
-                  {saving ? "Working..." : "Create quarantine area and receive"}
-                </button>
-              ) : (
-                <button
-                  key="mark-received"
-                  onClick={() => submitReceive(false)}
-                  disabled={saving || !locationsReady || !receiveLocationId}
-                  className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-                >
-                  {saving ? "Working..." : "Mark received"}
-                </button>
-              )}
+              <button
+                key="mark-received"
+                onClick={submitReceive}
+                disabled={saving || !locationsReady || !receiveLocationId}
+                className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+              >
+                {saving ? "Working..." : "Mark received"}
+              </button>
               <button
                 onClick={() => setDialog(null)}
                 className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
