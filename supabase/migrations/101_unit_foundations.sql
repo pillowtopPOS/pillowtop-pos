@@ -347,11 +347,28 @@ begin
   from public.employees e
   where e.auth_user_id = auth.uid() and e.is_active;
 
+  -- Context product/disposition changes are honored only on two-leg
+  -- (relocation or condition-change) transitions. On any other transition a
+  -- key that differs from the current value is refused; an equal value is
+  -- ignored.
+  if not v_rule.two_leg then
+    if (p_context ? 'new_product_id'
+          and (p_context ->> 'new_product_id')::uuid is distinct from v_unit.product_id)
+       or (p_context ? 'new_disposition'
+          and (p_context ->> 'new_disposition')::public.disposition
+              is distinct from v_unit.disposition) then
+      raise exception 'Product or disposition can only change in a relocation or condition change.';
+    end if;
+  end if;
+
   v_delta := v_rule.position_delta;
-  v_new_product := coalesce(
-    (p_context ->> 'new_product_id')::uuid, v_unit.product_id);
-  v_new_disposition := coalesce(
-    p_context ->> 'new_disposition', v_unit.disposition::text)::public.disposition;
+  v_new_product := case when v_rule.two_leg
+    then coalesce((p_context ->> 'new_product_id')::uuid, v_unit.product_id)
+    else v_unit.product_id end;
+  v_new_disposition := case when v_rule.two_leg
+    then coalesce(p_context ->> 'new_disposition',
+                  v_unit.disposition::text)::public.disposition
+    else v_unit.disposition end;
 
   -- Same-bucket two-leg with nothing changing is pointless; refuse it.
   if v_rule.two_leg
@@ -376,8 +393,8 @@ begin
 
   -- Returned or Damaged stock may never silently regain Prime: only a
   -- finished inspection may authorize it, recorded in the event data.
-  if v_rule.two_leg
-     and v_unit.disposition in ('Returned', 'Damaged')
+  -- Checked against the RESULTING disposition on every transition.
+  if v_unit.disposition in ('Returned', 'Damaged')
      and v_new_disposition = 'Prime'
      and coalesce(p_context ->> 'authorized_by', '') <> 'inspection_finish' then
     raise exception 'Only a finished inspection can return a unit to Prime stock.';

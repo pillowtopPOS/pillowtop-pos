@@ -641,6 +641,60 @@ end $$;
 select * from public.unit_s1_results order by id desc limit 1;
 
 -- ---------------------------------------------------------------------------
+-- 10k. Found unit with new_disposition Prime refused; RETURNED -> QUARANTINE
+--      with new_product_id refused; found unit keeps its own disposition.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  v_unit uuid; v_msg text; v_ok1 boolean := false; v_ok2 boolean := false;
+  v_disp text; v_rows int;
+begin
+  -- plant a MISSING unit (was Returned before going missing) and mirror
+  insert into public.units (company_id, product_id, unit_number, status,
+    location_id, disposition)
+  values ('dd5d0000-0000-4000-8000-000000000001',
+    'dd5d0000-0000-4000-8000-000000000011', 902, 'MISSING',
+    'dd5d0000-0000-4000-8000-000000000002', 'Returned')
+  returning id into v_unit;
+
+  -- MISSING -> STOCK with new_disposition=Prime: refused (two guards could
+  -- fire; either message is a pass)
+  begin
+    perform public.move_unit(v_unit, 'STOCK', null,
+      jsonb_build_object('new_disposition', 'Prime'));
+  exception when others then v_ok1 := true; end;
+
+  -- MISSING -> STOCK clean: unit returns as Returned, consistency clean
+  perform public.move_unit(v_unit, 'STOCK', null, '{}'::jsonb);
+  select disposition::text into v_disp from public.units where id = v_unit;
+  select count(*) into v_rows
+  from public.check_unit_consistency('dd5d0000-0000-4000-8000-000000000001');
+
+  -- RETURNED -> QUARANTINE with a new_product_id: refused
+  begin
+    insert into public.units (company_id, product_id, unit_number, status,
+      location_id, disposition)
+    values ('dd5d0000-0000-4000-8000-000000000001',
+      'dd5d0000-0000-4000-8000-000000000011', 903, 'RETURNED',
+      'dd5d0000-0000-4000-8000-000000000002', 'Returned');
+    perform public.move_unit(
+      (select id from public.units where unit_number = 903
+        and company_id = 'dd5d0000-0000-4000-8000-000000000001'),
+      'QUARANTINE', null,
+      jsonb_build_object('new_product_id', 'dd5d0000-0000-4000-8000-000000000011'));
+  exception when others then v_ok2 := true; end;
+
+  insert into public.unit_s1_results (test_name, expected, actual, passed)
+  values ('context-only-on-two-leg', 'found+Prime refused, RETURNED+new_product refused',
+    'p=' || v_ok1 || ' np=' || v_ok2, v_ok1 and v_ok2);
+  insert into public.unit_s1_results (test_name, expected, actual, passed)
+  values ('found keeps own disposition', 'Returned, consistency 0 rows',
+    v_disp || ' rows=' || v_rows, v_disp = 'Returned' and v_rows = 0);
+end $$;
+
+select * from public.unit_s1_results order by id desc limit 2;
+
+-- ---------------------------------------------------------------------------
 -- 11. ALL RESULTS
 -- ---------------------------------------------------------------------------
 select * from public.unit_s1_results order by id;
