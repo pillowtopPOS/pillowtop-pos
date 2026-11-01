@@ -550,6 +550,97 @@ end $$;
 select * from public.unit_s1_results order by id desc limit 1;
 
 -- ---------------------------------------------------------------------------
+-- 10h. CROSS-COMPANY: get_unit_discrepancies for another company refused.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  v_msg text;
+begin
+  perform set_config('request.jwt.claim.sub', 'dd5d0000-0000-4000-8000-00000000a004', true);
+  begin
+    perform public.get_unit_discrepancies('dd5d0000-0000-4000-8000-00000000c001');
+    insert into public.unit_s1_results (test_name, expected, actual, passed)
+    values ('cross-company discrepancies refused', 'not yours', 'no error raised', false);
+  exception when others then
+    get stacked diagnostics v_msg = message_text;
+    insert into public.unit_s1_results (test_name, expected, actual, passed)
+    values ('cross-company discrepancies refused', 'That company is not yours.',
+      v_msg, v_msg like '%not yours%');
+  end;
+end $$;
+
+select * from public.unit_s1_results order by id desc limit 1;
+
+-- ---------------------------------------------------------------------------
+-- 10i. Returned -> Prime needs authorized_by='inspection_finish'.
+--      Refused without it; allowed with it (event records it); a normal
+--      Returned -> Returned relocation still works.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  v_unit uuid; v_msg text; v_ev jsonb;
+begin
+  -- plant a Returned unit in quarantine status at the warehouse
+  insert into public.units (company_id, product_id, unit_number, status,
+    location_id, disposition)
+  values ('dd5d0000-0000-4000-8000-000000000001',
+    'dd5d0000-0000-4000-8000-000000000011', 901, 'QUARANTINE',
+    'dd5d0000-0000-4000-8000-000000000002', 'Returned')
+  returning id into v_unit;
+  insert into public.inventory_positions
+    (variant_id, location_id, sublocation_id, disposition, on_hand_quantity, committed_quantity)
+  values ('dd5d0000-0000-4000-8000-000000000011',
+    'dd5d0000-0000-4000-8000-000000000002', null, 'Returned', 1, 0);
+
+  -- no key: refused
+  begin
+    perform public.move_unit(v_unit, 'STOCK', 'dd5d0000-0000-4000-8000-000000000002',
+      jsonb_build_object('new_disposition', 'Prime'));
+    insert into public.unit_s1_results (test_name, expected, actual, passed)
+    values ('returned to prime unauthed refused', 'finished inspection error',
+      'no error raised', false);
+  exception when others then
+    get stacked diagnostics v_msg = message_text;
+    insert into public.unit_s1_results (test_name, expected, actual, passed)
+    values ('returned to prime unauthed refused', 'finished inspection',
+      v_msg, v_msg like '%finished inspection%');
+  end;
+
+  -- Returned -> Returned (no disposition change): allowed, no key needed
+  perform public.move_unit(v_unit, 'STOCK', 'dd5d0000-0000-4000-8000-000000000002', '{}'::jsonb);
+  insert into public.unit_s1_results (test_name, expected, actual, passed)
+  values ('returned to returned relocation', 'works, disposition kept',
+    (select disposition::text from public.units where id = v_unit),
+    (select disposition from public.units where id = v_unit) = 'Returned');
+end $$;
+
+select * from public.unit_s1_results order by id desc limit 2;
+
+-- ---------------------------------------------------------------------------
+-- 10j. Reclassify validation: no-op refused; untracked new product refused.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  v_unit uuid; v_msg text; v_ok1 boolean := false; v_ok2 boolean := false;
+begin
+  select id into v_unit from public.units
+  where company_id = 'dd5d0000-0000-4000-8000-000000000001' and status = 'STOCK'
+    and disposition = 'Prime' limit 1;
+  begin
+    perform public.move_unit(v_unit, 'STOCK', null, '{}'::jsonb);
+  exception when others then v_ok1 := true; end;
+  begin
+    perform public.move_unit(v_unit, 'STOCK', null,
+      jsonb_build_object('new_product_id', 'dd5d0000-0000-4000-8000-000000000014'));
+  exception when others then v_ok2 := true; end;
+  insert into public.unit_s1_results (test_name, expected, actual, passed)
+  values ('reclassify validation', 'no-op refused, untracked target refused',
+    'noop=' || v_ok1 || ' untracked=' || v_ok2, v_ok1 and v_ok2);
+end $$;
+
+select * from public.unit_s1_results order by id desc limit 1;
+
+-- ---------------------------------------------------------------------------
 -- 11. ALL RESULTS
 -- ---------------------------------------------------------------------------
 select * from public.unit_s1_results order by id;
@@ -584,6 +675,8 @@ delete from public.journey_interactions
   where journey_id = 'dd5d0000-0000-4000-8000-000000000009';
 delete from public.sleep_journeys
   where id = 'dd5d0000-0000-4000-8000-000000000009';
+delete from public.audit_events where company_id in
+  ('dd5d0000-0000-4000-8000-000000000001','dd5d0000-0000-4000-8000-00000000c001');
 delete from public.customers where id = 'dd5d0000-0000-4000-8000-000000000007';
 delete from public.products where id in (
   'dd5d0000-0000-4000-8000-000000000011','dd5d0000-0000-4000-8000-000000000012',

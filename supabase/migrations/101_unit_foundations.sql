@@ -353,6 +353,36 @@ begin
   v_new_disposition := coalesce(
     p_context ->> 'new_disposition', v_unit.disposition::text)::public.disposition;
 
+  -- Same-bucket two-leg with nothing changing is pointless; refuse it.
+  if v_rule.two_leg
+     and v_new_product = v_unit.product_id
+     and v_new_disposition = v_unit.disposition
+     and coalesce(p_to_location_id, v_unit.location_id) = v_unit.location_id then
+    raise exception 'Nothing changed: give a new product, disposition or location to move this unit.';
+  end if;
+
+  -- A reclassified product must exist, belong to this company and be tracked.
+  if v_new_product <> v_unit.product_id then
+    if not exists (
+      select 1 from public.products pr
+      where pr.id = v_new_product and pr.company_id = v_unit.company_id
+    ) then
+      raise exception 'That product does not exist in this company.';
+    end if;
+    if not public.is_unit_tracked(v_new_product) then
+      raise exception 'That product is not tracked per unit.';
+    end if;
+  end if;
+
+  -- Returned or Damaged stock may never silently regain Prime: only a
+  -- finished inspection may authorize it, recorded in the event data.
+  if v_rule.two_leg
+     and v_unit.disposition in ('Returned', 'Damaged')
+     and v_new_disposition = 'Prime'
+     and coalesce(p_context ->> 'authorized_by', '') <> 'inspection_finish' then
+    raise exception 'Only a finished inspection can return a unit to Prime stock.';
+  end if;
+
   -- Two-leg relocation: minus 1 at the old (product, location,
   -- disposition), plus 1 at the new, two ledger rows sharing the unit id
   -- as correlation. The minus leg may never take on_hand below zero.
@@ -565,12 +595,29 @@ stable
 security definer
 set search_path = public
 as $$
+declare
+  v_company uuid;
 begin
   if not public.has_permission('units.manage_settings') then
     raise exception 'You do not have permission to view unit discrepancies.';
   end if;
+
+  -- The company comes from the caller's employee record, never from the
+  -- argument alone: an admin of one company cannot read another's.
+  select s.company_id into v_company
+  from public.employees e
+  join public.stores s on s.id = e.home_store_id
+  where e.auth_user_id = auth.uid()
+    and e.is_active;
+  if v_company is null then
+    raise exception 'Your employee record was not found or is inactive.';
+  end if;
+  if p_company_id is distinct from v_company then
+    raise exception 'That company is not yours.';
+  end if;
+
   return query
-    select * from public.check_unit_consistency(p_company_id);
+    select * from public.check_unit_consistency(v_company);
 end;
 $$;
 
@@ -670,6 +717,11 @@ begin
   return new;
 end;
 $$;
+
+revoke execute on function public.seed_unit_permission_defaults(uuid)
+  from authenticated, anon, public;
+revoke execute on function public.trg_seed_unit_permissions()
+  from authenticated, anon, public;
 
 drop trigger if exists trg_companies_seed_unit_permissions on public.companies;
 create trigger trg_companies_seed_unit_permissions
