@@ -92,6 +92,10 @@ begin
   where company_id = p_company_id
   returning next_value - 1 into v_next;
 
+  if v_next is null then
+    raise exception 'That company was not found.';
+  end if;
+
   return v_next;
 end;
 $$;
@@ -105,7 +109,7 @@ revoke execute on function public.allocate_unit_number(uuid)
 
 create table if not exists public.units (
   id uuid primary key default gen_random_uuid(),
-  company_id uuid not null references public.companies (id) on delete cascade,
+  company_id uuid not null references public.companies (id) on delete restrict,
   product_id uuid not null references public.products (id) on delete restrict,
   unit_number bigint not null,
   status text not null default 'STOCK' check (status in (
@@ -143,8 +147,8 @@ comment on table public.units is
 
 create table if not exists public.unit_events (
   id uuid primary key default gen_random_uuid(),
-  unit_id uuid not null references public.units (id) on delete cascade,
-  company_id uuid not null references public.companies (id) on delete cascade,
+  unit_id uuid not null references public.units (id) on delete restrict,
+  company_id uuid not null references public.companies (id) on delete restrict,
   event_type text not null,
   actor_id uuid references public.employees (id) on delete set null,
   journey_id uuid references public.sleep_journeys (id) on delete set null,
@@ -202,31 +206,40 @@ create table if not exists public.unit_transitions (
   ledger_reason text,
   mirror_owner text not null default 'move_unit'
     check (mirror_owner in ('move_unit', 'wrapper', 'none')),
+  two_leg boolean not null default false,
   primary key (from_status, to_status)
 );
 
 insert into public.unit_transitions
-  (from_status, to_status, position_delta, ledger_reason, mirror_owner)
+  (from_status, to_status, position_delta, ledger_reason, mirror_owner, two_leg)
 values
-  -- creation is handled by create_unit, not this table
-  ('STOCK',        'RESERVED',    0, null,                   'wrapper'),
-  ('RESERVED',     'STOCK',       0, null,                   'wrapper'),
-  ('RESERVED',     'IN_TRANSIT',  0, 'transfer_ship',        'wrapper'),
-  ('IN_TRANSIT',   'STOCK',       0, 'transfer_receive',     'wrapper'),
-  ('RESERVED',     'STAGED',      0, null,                   'none'),
-  ('STAGED',       'RESERVED',    0, null,                   'none'),
-  ('STAGED',       'DELIVERED',   0, 'sale_delivery',        'wrapper'),
-  ('RESERVED',     'DELIVERED',   0, 'sale_delivery',        'wrapper'),
-  ('DELIVERED',    'RETURNED',    0, 'return_received',      'wrapper'),
-  ('RETURNED',     'QUARANTINE',  0, null,                   'none'),
-  ('QUARANTINE',   'STOCK',       0, null,                   'none'),
-  ('STOCK',        'MISSING',    -1, 'unit_missing',         'move_unit'),
-  ('MISSING',      'STOCK',       1, 'unit_found',           'move_unit'),
-  ('QUARANTINE',   'DAMAGED',     0, null,                   'none'),
-  ('DAMAGED',      'STOCK',       0, null,                   'none'),
-  ('STOCK',        'STOCK',       0, 'unit_reclassified',    'move_unit'),
-  ('STOCK',        'VOID',       -1, 'unit_voided',          'move_unit'),
-  ('QUARANTINE',   'VOID',        0, 'unit_voided',          'move_unit')
+  -- creation is handled by create_unit, not this table.
+  -- mirror_owner=wrapper: the existing function (PO receive, transfer
+  -- ship/receive, delivery, returned receipt) already writes the position
+  -- and ledger, so move_unit must not also write them.
+  ('STOCK',        'RESERVED',    0, null,                'wrapper',   false),
+  ('RESERVED',     'STOCK',       0, null,                'wrapper',   false),
+  ('RESERVED',     'IN_TRANSIT',  0, 'transfer_ship',     'wrapper',   false),
+  ('STOCK',        'IN_TRANSIT',  0, 'transfer_ship',     'wrapper',   false),
+  ('IN_TRANSIT',   'STOCK',       0, 'transfer_receive',  'wrapper',   false),
+  ('IN_TRANSIT',   'RESERVED',    0, 'transfer_receive',  'wrapper',   false),
+  ('RESERVED',     'STAGED',      0, null,                'none',      false),
+  ('STAGED',       'RESERVED',    0, null,                'none',      false),
+  ('STAGED',       'DELIVERED',   0, 'sale_delivery',     'wrapper',   false),
+  ('RESERVED',     'DELIVERED',   0, 'sale_delivery',     'wrapper',   false),
+  ('DELIVERED',    'RETURNED',    0, 'return_received',   'wrapper',   false),
+  ('RETURNED',     'QUARANTINE',  0, null,                'none',      false),
+  -- two-leg relocations: minus 1 at the old bucket, plus 1 at the new,
+  -- two ledger rows with a shared correlation id. Disposition is preserved
+  -- on the plus leg unless the caller converts it explicitly in context.
+  ('QUARANTINE',   'STOCK',       0, 'unit_relocated',    'move_unit', true),
+  ('QUARANTINE',   'DAMAGED',     0, 'unit_relocated',    'move_unit', true),
+  ('DAMAGED',      'STOCK',       0, 'unit_relocated',    'move_unit', true),
+  ('STOCK',        'STOCK',       0, 'unit_reclassified', 'move_unit', true),
+  ('STOCK',        'MISSING',    -1, 'unit_missing',      'move_unit', false),
+  ('MISSING',      'STOCK',       1, 'unit_found',        'move_unit', false),
+  ('STOCK',        'VOID',       -1, 'unit_voided',       'move_unit', false),
+  ('QUARANTINE',   'VOID',        0, 'unit_voided',       'wrapper',   false)
 on conflict (from_status, to_status) do nothing;
 
 comment on table public.unit_transitions is
@@ -321,6 +334,15 @@ begin
     raise exception 'A unit cannot move from % to %.', v_unit.status, p_to_status;
   end if;
 
+  -- A RESERVED unit always knows which requirement it fills: new
+  -- reservations must pass requirement_id; preserved assignments
+  -- (STAGED -> RESERVED, IN_TRANSIT -> RESERVED) already carry it.
+  if p_to_status = 'RESERVED'
+     and coalesce((p_context ->> 'requirement_id')::uuid,
+                  v_unit.assigned_requirement_id) is null then
+    raise exception 'Reserving a unit requires the requirement it will fill.';
+  end if;
+
   select e.id into v_employee
   from public.employees e
   where e.auth_user_id = auth.uid() and e.is_active;
@@ -331,9 +353,46 @@ begin
   v_new_disposition := coalesce(
     p_context ->> 'new_disposition', v_unit.disposition::text)::public.disposition;
 
-  -- Mirror effect applied here only when this transition owns it.
+  -- Two-leg relocation: minus 1 at the old (product, location,
+  -- disposition), plus 1 at the new, two ledger rows sharing the unit id
+  -- as correlation. The minus leg may never take on_hand below zero.
+  if v_rule.mirror_owner = 'move_unit' and v_rule.two_leg then
+    update public.inventory_positions
+    set on_hand_quantity = on_hand_quantity - 1, updated_at = now()
+    where variant_id = v_unit.product_id
+      and location_id = v_unit.location_id
+      and sublocation_id is null
+      and disposition = v_unit.disposition
+      and on_hand_quantity >= 1;
+    if not found then
+      raise exception 'The inventory mirror does not have this unit to move. Run the consistency check and reconcile first.';
+    end if;
+    insert into public.inventory_positions (
+      variant_id, location_id, sublocation_id, disposition,
+      on_hand_quantity, committed_quantity
+    ) values (
+      v_new_product, coalesce(p_to_location_id, v_unit.location_id),
+      null, v_new_disposition, 1, 0
+    )
+    on conflict (variant_id, location_id, sublocation_id, disposition)
+    do update set
+      on_hand_quantity = inventory_positions.on_hand_quantity + 1,
+      updated_at = now();
+    if v_rule.ledger_reason is not null then
+      insert into public.stock_ledger_entries (
+        variant_id, location_id, disposition, quantity_delta,
+        reason, reference_type, actor_id, correlation_id
+      ) values
+        (v_unit.product_id, v_unit.location_id, v_unit.disposition, -1,
+         v_rule.ledger_reason, 'unit', v_employee::text, v_unit.id),
+        (v_new_product, coalesce(p_to_location_id, v_unit.location_id),
+         v_new_disposition, 1,
+         v_rule.ledger_reason, 'unit', v_employee::text, v_unit.id);
+    end if;
+
+  -- Single-leg mirror effect applied here only when this transition owns it.
   -- on_hand may never go below zero: that is the legitimate block.
-  if v_rule.mirror_owner = 'move_unit' and v_delta <> 0 then
+  elsif v_rule.mirror_owner = 'move_unit' and v_delta <> 0 then
     if v_delta < 0 then
       update public.inventory_positions
       set on_hand_quantity = on_hand_quantity + v_delta, updated_at = now()
@@ -380,12 +439,16 @@ begin
       product_id = v_new_product,
       disposition = v_new_disposition,
       assigned_requirement_id = case
+        -- An assigned unit keeps its assignment through a transfer and
+        -- staging. RESERVED -> STOCK is the unassign path and clears it.
         when p_to_status = 'RESERVED'
-          then (p_context ->> 'requirement_id')::uuid
-        when p_to_status in ('DELIVERED', 'RETURNED', 'VOID', 'MISSING',
-                             'IN_TRANSIT', 'STOCK')
+          then coalesce((p_context ->> 'requirement_id')::uuid,
+                        v_unit.assigned_requirement_id)
+        when v_unit.status = 'RESERVED' and p_to_status = 'STOCK'
           then null
-        else assigned_requirement_id
+        when p_to_status in ('DELIVERED', 'RETURNED', 'VOID', 'MISSING')
+          then null
+        else v_unit.assigned_requirement_id
       end,
       delivered_journey_id = case
         when p_to_status = 'DELIVERED'
@@ -486,6 +549,33 @@ $$;
 revoke execute on function public.check_unit_consistency(uuid)
   from authenticated, anon, public;
 
+-- Stage 2 discrepancy view calls this: a thin permission-checked wrapper.
+create or replace function public.get_unit_discrepancies(p_company_id uuid)
+returns table (
+  product_id uuid,
+  location_id uuid,
+  disposition public.disposition,
+  units_on_hand bigint,
+  mirror_on_hand integer,
+  units_reserved bigint,
+  mirror_committed integer
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+begin
+  if not public.has_permission('units.manage_settings') then
+    raise exception 'You do not have permission to view unit discrepancies.';
+  end if;
+  return query
+    select * from public.check_unit_consistency(p_company_id);
+end;
+$$;
+
+grant execute on function public.get_unit_discrepancies(uuid) to authenticated;
+
 -- ----------------------------------------------------------------------------
 -- 8. RLS: read scoped to the caller's company the same way products are
 --    (is_product_visible_by_company, 005:56, checks the caller can see a
@@ -498,14 +588,14 @@ drop policy if exists "Units readable" on public.units;
 create policy "Units readable"
   on public.units for select
   to authenticated
-  using (public.is_product_visible_by_company(company_id));
+  using (public.is_own_company(company_id));
 
 alter table public.unit_events enable row level security;
 drop policy if exists "Unit events readable" on public.unit_events;
 create policy "Unit events readable"
   on public.unit_events for select
   to authenticated
-  using (public.is_product_visible_by_company(company_id));
+  using (public.is_own_company(company_id));
 
 alter table public.unit_transitions enable row level security;
 drop policy if exists "Unit transitions readable" on public.unit_transitions;
@@ -585,3 +675,118 @@ drop trigger if exists trg_companies_seed_unit_permissions on public.companies;
 create trigger trg_companies_seed_unit_permissions
 after insert on public.companies
 for each row execute function public.trg_seed_unit_permissions();
+
+-- ----------------------------------------------------------------------------
+-- 10. set_role_permission: extend the allowed-key list with the units.* keys.
+--     Latest prior definition: 091_exchange_ui_support.sql:107. This is the
+--     one existing function this migration changes; every existing key is
+--     preserved verbatim.
+-- ----------------------------------------------------------------------------
+
+create or replace function public.set_role_permission(
+  p_role text,
+  p_key text,
+  p_granted boolean
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_actor_id uuid;
+  v_caller_role text;
+  v_company_id uuid;
+  v_grant_id uuid;
+begin
+  select e.id, e.role::text, s.company_id
+    into v_actor_id, v_caller_role, v_company_id
+  from public.employees e
+  join public.stores s on s.id = e.home_store_id
+  where e.auth_user_id = auth.uid()
+    and e.is_active;
+
+  if v_actor_id is null then
+    raise exception 'Not authenticated as an employee';
+  end if;
+
+  if v_caller_role not in ('owner', 'admin') then
+    raise exception 'Only owners and admins can change permissions';
+  end if;
+
+  if not exists (
+    select 1
+    from unnest(enum_range(null::public.employee_role)) as v
+    where v::text = p_role
+  ) then
+    raise exception 'Unknown role: %', p_role;
+  end if;
+
+  if p_key not in (
+    'sleep_trial.manage_concerns',
+    'sleep_trial.start_exchange',
+    'sleep_trial.start_return',
+    'sleep_trial.request_exceptions',
+    'sleep_trial.approve_exceptions',
+    'sleep_trial.approve_own_exceptions',
+    'sleep_trial.override_protector',
+    'sleep_trial.correct_dates',
+    'sleep_trial.manage_policy',
+    'sleep_trial.view_policy_details',
+    'inventory.reduce_below_committed',
+    'sleep_trial.complete_exchange',
+    'inventory.inspect_returns',
+    'inventory.manage_inspection_checklist',
+    'sleep_trial.void_refund',
+    'units.assign',
+    'units.unassign',
+    'units.override_set',
+    'units.swap',
+    'units.void',
+    'units.manage_settings'
+  ) then
+    raise exception 'Unknown permission key: %', p_key;
+  end if;
+
+  if p_role = 'owner' and not p_granted then
+    raise exception 'Owner permissions cannot be removed';
+  end if;
+
+  select id into v_grant_id
+  from public.role_permission_grants
+  where company_id = v_company_id
+    and role = p_role
+    and permission_key = p_key;
+
+  if p_granted and v_grant_id is null then
+    insert into public.role_permission_grants (company_id, role, permission_key, created_by)
+    values (v_company_id, p_role, p_key, v_actor_id)
+    returning id into v_grant_id;
+
+    perform public.log_audit_event(
+      p_company_id   := v_company_id,
+      p_entity_type  := 'role_permission_grant',
+      p_entity_id    := v_grant_id,
+      p_event_type   := 'SLEEP_TRIAL_PERMISSION_GRANTED',
+      p_after        := jsonb_build_object('role', p_role, 'permission_key', p_key, 'granted', true),
+      p_actor_employee_id := v_actor_id
+    );
+  elsif not p_granted and v_grant_id is not null then
+    delete from public.role_permission_grants where id = v_grant_id;
+
+    perform public.log_audit_event(
+      p_company_id   := v_company_id,
+      p_entity_type  := 'role_permission_grant',
+      p_entity_id    := v_grant_id,
+      p_event_type   := 'SLEEP_TRIAL_PERMISSION_REVOKED',
+      p_before       := jsonb_build_object('role', p_role, 'permission_key', p_key, 'granted', true),
+      p_after        := jsonb_build_object('role', p_role, 'permission_key', p_key, 'granted', false),
+      p_actor_employee_id := v_actor_id
+    );
+  end if;
+  -- Granting an existing grant or revoking a missing one is a no-op; nothing
+  -- changed, so nothing is audited.
+end;
+$$;
+
+grant execute on function public.set_role_permission(text, text, boolean) to authenticated;

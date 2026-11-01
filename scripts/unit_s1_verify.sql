@@ -371,16 +371,203 @@ select 'untracked product untouched',
     where product_id = 'dd5d0000-0000-4000-8000-000000000014');
 
 -- ---------------------------------------------------------------------------
+-- 10b. ASSIGNMENT SURVIVES SHIP + RECEIVE (RESERVED -> IN_TRANSIT -> RESERVED).
+--      mirror_owner=wrapper rows: the script plays the wrapper and adjusts
+--      the position by hand, as the real transfer functions will.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  v_unit uuid; v_req uuid := 'dd5d0000-0000-4000-8000-000000000015';
+  v_after uuid; v_qty int;
+begin
+  select id into v_unit from public.units
+  where company_id = 'dd5d0000-0000-4000-8000-000000000001' and status = 'STOCK'
+  limit 1;
+
+  -- assign (needs requirement_id in context)
+  perform public.move_unit(v_unit, 'RESERVED', null,
+    jsonb_build_object('requirement_id', v_req));
+  -- ship: wrapper decrements source position (playing the wrapper)
+  update public.inventory_positions
+  set on_hand_quantity = on_hand_quantity - 1
+  where variant_id = 'dd5d0000-0000-4000-8000-000000000011'
+    and location_id = 'dd5d0000-0000-4000-8000-000000000002' and disposition = 'Prime';
+  perform public.move_unit(v_unit, 'IN_TRANSIT', null,
+    jsonb_build_object('transfer_id', null));
+  select assigned_requirement_id into v_after from public.units where id = v_unit;
+  insert into public.unit_s1_results (test_name, expected, actual, passed)
+  values ('assignment survives ship', 'requirement kept through IN_TRANSIT',
+    coalesce(v_after::text, 'null'), v_after = v_req);
+
+  -- receive: wrapper increments destination position (same location here)
+  update public.inventory_positions
+  set on_hand_quantity = on_hand_quantity + 1
+  where variant_id = 'dd5d0000-0000-4000-8000-000000000011'
+    and location_id = 'dd5d0000-0000-4000-8000-000000000002' and disposition = 'Prime';
+  perform public.move_unit(v_unit, 'RESERVED', null, '{}'::jsonb);
+  select assigned_requirement_id into v_after from public.units where id = v_unit;
+  insert into public.unit_s1_results (test_name, expected, actual, passed)
+  values ('assigned unit arrives RESERVED', 'requirement still kept',
+    coalesce(v_after::text, 'null'), v_after = v_req);
+end $$;
+
+select * from public.unit_s1_results order by id desc limit 2;
+
+-- ---------------------------------------------------------------------------
+-- 10c. UNASSIGNED STOCK -> IN_TRANSIT -> STOCK (restock/overstock transfer).
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  v_unit uuid; v_status text; v_req uuid;
+begin
+  select id into v_unit from public.units
+  where company_id = 'dd5d0000-0000-4000-8000-000000000001' and status = 'STOCK'
+    and assigned_requirement_id is null
+  limit 1;
+  update public.inventory_positions
+  set on_hand_quantity = on_hand_quantity - 1
+  where variant_id = 'dd5d0000-0000-4000-8000-000000000011'
+    and location_id = 'dd5d0000-0000-4000-8000-000000000002' and disposition = 'Prime';
+  perform public.move_unit(v_unit, 'IN_TRANSIT', null, '{}'::jsonb);
+  update public.inventory_positions
+  set on_hand_quantity = on_hand_quantity + 1
+  where variant_id = 'dd5d0000-0000-4000-8000-000000000011'
+    and location_id = 'dd5d0000-0000-4000-8000-000000000002' and disposition = 'Prime';
+  perform public.move_unit(v_unit, 'STOCK', null, '{}'::jsonb);
+  select status, assigned_requirement_id into v_status, v_req
+  from public.units where id = v_unit;
+  insert into public.unit_s1_results (test_name, expected, actual, passed)
+  values ('unassigned unit ships and arrives', 'STOCK, no requirement',
+    v_status || ' req=' || coalesce(v_req::text,'null'),
+    v_status = 'STOCK' and v_req is null);
+end $$;
+
+select * from public.unit_s1_results order by id desc limit 1;
+
+-- ---------------------------------------------------------------------------
+-- 10d. CONDITION CONVERSION (STOCK -> STOCK reclassify, Prime -> Floor):
+--      two-leg mirror, consistency stays clean.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  v_unit uuid; v_rows int;
+begin
+  select id into v_unit from public.units
+  where company_id = 'dd5d0000-0000-4000-8000-000000000001' and status = 'STOCK'
+    and disposition = 'Prime'
+  limit 1;
+  perform public.move_unit(v_unit, 'STOCK', null,
+    jsonb_build_object('new_disposition', 'Floor', 'event_type', 'UNIT_RECLASSIFIED'));
+  select count(*) into v_rows
+  from public.check_unit_consistency('dd5d0000-0000-4000-8000-000000000001');
+  insert into public.unit_s1_results (test_name, expected, actual, passed)
+  values ('condition conversion two-leg', 'consistency 0 rows',
+    v_rows || ' rows', v_rows = 0);
+end $$;
+
+select * from public.unit_s1_results order by id desc limit 1;
+
+-- ---------------------------------------------------------------------------
+-- 10e. QUARANTINE -> STOCK two-leg: Returned unit relocated keeps
+--      disposition and stays consistent.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  v_unit uuid; v_rows int;
+begin
+  insert into public.units (company_id, product_id, unit_number, status,
+    location_id, disposition)
+  values ('dd5d0000-0000-4000-8000-000000000001',
+    'dd5d0000-0000-4000-8000-000000000011', 900, 'QUARANTINE',
+    'dd5d0000-0000-4000-8000-000000000002', 'Returned')
+  returning id into v_unit;
+  insert into public.inventory_positions
+    (variant_id, location_id, sublocation_id, disposition, on_hand_quantity, committed_quantity)
+  values ('dd5d0000-0000-4000-8000-000000000011',
+    'dd5d0000-0000-4000-8000-000000000002', null, 'Returned', 1, 0);
+  perform public.move_unit(v_unit, 'STOCK',
+    'dd5d0000-0000-4000-8000-000000000003', '{}'::jsonb);
+  select count(*) into v_rows
+  from public.check_unit_consistency('dd5d0000-0000-4000-8000-000000000001');
+  insert into public.unit_s1_results (test_name, expected, actual, passed)
+  values ('quarantine to stock two-leg', 'consistency 0 rows, Returned kept',
+    v_rows || ' rows', v_rows = 0);
+end $$;
+
+select * from public.unit_s1_results order by id desc limit 1;
+
+-- ---------------------------------------------------------------------------
+-- 10f. STOCK -> RESERVED with no requirement_id refused.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  v_unit uuid; v_msg text;
+begin
+  select id into v_unit from public.units
+  where company_id = 'dd5d0000-0000-4000-8000-000000000001' and status = 'STOCK'
+    and assigned_requirement_id is null
+  limit 1;
+  begin
+    perform public.move_unit(v_unit, 'RESERVED', null, '{}'::jsonb);
+    insert into public.unit_s1_results (test_name, expected, actual, passed)
+    values ('reserve without requirement refused', 'requires the requirement',
+      'no error raised', false);
+  exception when others then
+    get stacked diagnostics v_msg = message_text;
+    insert into public.unit_s1_results (test_name, expected, actual, passed)
+    values ('reserve without requirement refused', 'requires the requirement',
+      v_msg, v_msg like '%requires the requirement%');
+  end;
+end $$;
+
+select * from public.unit_s1_results order by id desc limit 1;
+
+-- ---------------------------------------------------------------------------
+-- 10g. ROLE GRID accepts the units keys (set_role_permission, as Ada).
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  v_msg text; v_granted boolean := false;
+begin
+  perform set_config('request.jwt.claim.sub', 'dd5d0000-0000-4000-8000-00000000a004', true);
+  begin
+    perform public.set_role_permission('employee', 'units.assign', true);
+    v_granted := exists (
+      select 1 from public.role_permission_grants
+      where company_id = 'dd5d0000-0000-4000-8000-000000000001'
+        and role = 'employee' and permission_key = 'units.assign');
+    insert into public.unit_s1_results (test_name, expected, actual, passed)
+    values ('role grid accepts units key', 'grant written',
+      'granted=' || v_granted, v_granted);
+  exception when others then
+    get stacked diagnostics v_msg = message_text;
+    insert into public.unit_s1_results (test_name, expected, actual, passed)
+    values ('role grid accepts units key', 'grant written',
+      'error: ' || v_msg, false);
+  end;
+end $$;
+
+select * from public.unit_s1_results order by id desc limit 1;
+
+-- ---------------------------------------------------------------------------
 -- 11. ALL RESULTS
 -- ---------------------------------------------------------------------------
 select * from public.unit_s1_results order by id;
 
 -- ---------------------------------------------------------------------------
 -- 12. TEARDOWN
+--     unit_events is append-only via trigger: disable the two guards in
+--     this block, delete fixtures, re-enable. Same pattern works for
+--     stock_ledger_entries, which eb4a_verify.sql showed deletes fine as
+--     postgres (no append-only trigger on it).
 -- ---------------------------------------------------------------------------
 drop table public.unit_s1_results;
+alter table public.unit_events disable trigger trg_unit_events_no_update;
+alter table public.unit_events disable trigger trg_unit_events_no_delete;
 delete from public.unit_events where company_id in
   ('dd5d0000-0000-4000-8000-000000000001','dd5d0000-0000-4000-8000-00000000c001');
+alter table public.unit_events enable trigger trg_unit_events_no_update;
+alter table public.unit_events enable trigger trg_unit_events_no_delete;
 delete from public.units where company_id in
   ('dd5d0000-0000-4000-8000-000000000001','dd5d0000-0000-4000-8000-00000000c001');
 delete from public.unit_counters where company_id in
