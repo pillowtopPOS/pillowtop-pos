@@ -110,6 +110,7 @@ export default function UnitsPage() {
   const [canSeeDiscrepancies, setCanSeeDiscrepancies] = useState(false);
 
   const [query, setQuery] = useState("");
+  const [searched, setSearched] = useState("");
   const [lookup, setLookup] = useState<LookupState>({ kind: "idle" });
   const [events, setEvents] = useState<UnitEvent[]>([]);
   const [eventsState, setEventsState] = useState<
@@ -201,6 +202,7 @@ export default function UnitsPage() {
     const digits = query.replace(/\D/g, "");
     if (!digits) return;
     const seq = ++lookupSeq.current;
+    setSearched(digits);
     setLookup({ kind: "loading" });
     setEventsState("idle");
     setEvents([]);
@@ -219,11 +221,15 @@ export default function UnitsPage() {
       if (seq !== lookupSeq.current || !mounted.current) return;
       if (!data) {
         setLookup({ kind: "notfound" });
+        inputRef.current?.focus();
+        inputRef.current?.select();
         return;
       }
       const raw = data as any;
       const unit: UnitRow = { ...raw, products: Array.isArray(raw.products) ? raw.products[0] ?? null : raw.products };
       setLookup({ kind: "found", unit });
+      inputRef.current?.focus();
+      inputRef.current?.select();
       void loadEvents(unit.id, seq);
 
       // Assigned or delivered customer: requirement -> journey -> customer.
@@ -271,11 +277,14 @@ export default function UnitsPage() {
         setVoidedByName(emp?.name ?? null);
       }
     } catch (e: any) {
-      if (seq === lookupSeq.current && mounted.current)
+      if (seq === lookupSeq.current && mounted.current) {
         setLookup({
           kind: "failed",
           message: e.message ?? "Something went wrong",
         });
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }
     }
   }
 
@@ -336,6 +345,7 @@ export default function UnitsPage() {
           ref={inputRef}
           inputMode="numeric"
           maxLength={15}
+          onFocus={(e) => e.target.select()}
           value={query}
           onChange={(e) => setQuery(e.target.value.replace(/\D/g, ""))}
           placeholder="Unit number"
@@ -350,7 +360,7 @@ export default function UnitsPage() {
       )}
       {lookup.kind === "notfound" && (
         <p key="lookup-notfound" className="mt-4 text-sm text-slate-700">
-          No unit with that number.
+          No unit with number {searched}.
         </p>
       )}
       {lookup.kind === "failed" && (
