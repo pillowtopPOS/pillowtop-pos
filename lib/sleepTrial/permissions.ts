@@ -98,3 +98,30 @@ export async function setRolePermission(
   });
   if (error) throw new Error(error.message);
 }
+
+export type PermissionGroup = "Sleep trial" | "Inventory" | "Unit ID";
+
+export type PermissionDef = {
+  key: string;
+  label: string;
+  group: PermissionGroup;
+};
+
+// Every key is_valid_permission_key accepts (migration 104), grouped for
+// display. The employee "Extra permissions" section and the role grid both
+// render from this list.
+export const ALL_PERMISSIONS: PermissionDef[] = [
+  ...SLEEP_TRIAL_PERMISSIONS.map((p) => ({ ...p, group: "Sleep trial" as const })),
+  { key: "sleep_trial.complete_exchange", label: "Complete exchanges", group: "Sleep trial" },
+  { key: "sleep_trial.void_refund", label: "Void recorded refunds", group: "Sleep trial" },
+  { key: "inventory.reduce_below_committed", label: "Reduce stock below committed", group: "Inventory" },
+  { key: "inventory.inspect_returns", label: "Inspect returned items", group: "Inventory" },
+  { key: "inventory.manage_inspection_checklist", label: "Edit the inspection checklist", group: "Inventory" },
+  { key: "inventory.receive_po", label: "Receive purchase orders", group: "Inventory" },
+  { key: "units.assign", label: "Assign units to customer orders", group: "Unit ID" },
+  { key: "units.unassign", label: "Unassign units from orders", group: "Unit ID" },
+  { key: "units.override_set", label: "Set aside an in-stock unit for an order (override a set)", group: "Unit ID" },
+  { key: "units.swap", label: "Swap a unit on an order for another unit", group: "Unit ID" },
+  { key: "units.void", label: "Void a unit", group: "Unit ID" },
+  { key: "units.manage_settings", label: "Manage Unit ID settings and view the discrepancy report", group: "Unit ID" },
+];

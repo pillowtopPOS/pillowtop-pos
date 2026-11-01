@@ -16,6 +16,8 @@ import {
   type EmployeeRole,
   type Store,
 } from "@/lib/journeys/queries";
+import { ALL_PERMISSIONS } from "@/lib/sleepTrial/permissions";
+import { createClient } from "@/lib/supabase/client";
 
 const ROLES: { value: EmployeeRole; label: string; description: string }[] = [
   {
@@ -94,6 +96,11 @@ export default function EmployeeManagement() {
   const isAdmin =
     currentEmployee?.role === "owner" || currentEmployee?.role === "admin";
 
+  // Per-employee override counts for the list badge (admin viewers only).
+  const [overrideCounts, setOverrideCounts] = useState<Map<string, number>>(
+    new Map()
+  );
+
   const storeNames = useMemo(() => {
     const map = new Map<string, string>();
     stores.forEach((s) => map.set(s.id, s.name));
@@ -119,6 +126,18 @@ export default function EmployeeManagement() {
       setStores(s);
       setRoles(r);
       setLoading(false);
+      // Badge data: one query, counted per employee. Failure never blocks.
+      const supabase = createClient();
+      supabase
+        .from("employee_permission_overrides")
+        .select("employee_id")
+        .then(({ data }) => {
+          const counts = new Map<string, number>();
+          (data ?? []).forEach((r: any) => {
+            counts.set(r.employee_id, (counts.get(r.employee_id) ?? 0) + 1);
+          });
+          setOverrideCounts(counts);
+        });
     });
   }, []);
 
@@ -306,6 +325,12 @@ export default function EmployeeManagement() {
                       {!e.is_active && (
                         <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600">
                           Inactive
+                        </span>
+                      )}
+                      {isAdmin && (overrideCounts.get(e.id) ?? 0) > 0 && (
+                        <span className="rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700">
+                          {overrideCounts.get(e.id)} custom permission
+                          {overrideCounts.get(e.id) === 1 ? "" : "s"}
                         </span>
                       )}
                       {!e.auth_user_id && (
@@ -526,6 +551,14 @@ export default function EmployeeManagement() {
               </div>
             </div>
 
+            {isAdmin && editingId && (
+              <ExtraPermissions
+                key={editingId}
+                employeeId={editingId}
+                employeeRole={form.role}
+              />
+            )}
+
             {error && (
               <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                 {error}
@@ -608,5 +641,224 @@ export default function EmployeeManagement() {
         </Modal>
       )}
     </main>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Extra permissions: per-employee overrides on top of the role. Database is
+// the source of truth; each row is a three-way select saved immediately.
+// ---------------------------------------------------------------------------
+
+type OverrideValue = "default" | "allow" | "deny";
+
+function ExtraPermissions({
+  employeeId,
+  employeeRole,
+}: {
+  employeeId: string;
+  employeeRole: string;
+}) {
+  const supabase = createClient();
+  const mounted = useRef(true);
+  const [state, setState] = useState<"loading" | "ready" | "failed">("loading");
+  const [overrides, setOverrides] = useState<Map<string, boolean>>(new Map());
+  const [roleGrants, setRoleGrants] = useState<Set<string>>(new Set());
+  const [pending, setPending] = useState<Set<string>>(new Set());
+  const [errors, setErrors] = useState<Map<string, string>>(new Map());
+  const [saved, setSaved] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    mounted.current = true;
+    void load();
+    return () => {
+      mounted.current = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employeeId, employeeRole]);
+
+  async function load() {
+    setState("loading");
+    const [ovRes, rgRes] = await Promise.all([
+      supabase
+        .from("employee_permission_overrides")
+        .select("permission_key, granted")
+        .eq("employee_id", employeeId),
+      supabase
+        .from("role_permission_grants")
+        .select("permission_key")
+        .eq("role", employeeRole),
+    ]);
+    if (!mounted.current) return;
+    if (ovRes.error || rgRes.error) {
+      setState("failed");
+      return;
+    }
+    setOverrides(
+      new Map(
+        (ovRes.data ?? []).map((r: any) => [r.permission_key, r.granted])
+      )
+    );
+    setRoleGrants(
+      new Set((rgRes.data ?? []).map((r: any) => r.permission_key))
+    );
+    setState("ready");
+  }
+
+  function rowValue(key: string): OverrideValue {
+    if (!overrides.has(key)) return "default";
+    return overrides.get(key) ? "allow" : "deny";
+  }
+
+  async function change(key: string, value: OverrideValue) {
+    const prev = rowValue(key);
+    const granted = value === "default" ? null : value === "allow";
+    setPending((p) => new Set(p).add(key));
+    setErrors((m) => {
+      const n = new Map(m);
+      n.delete(key);
+      return n;
+    });
+    const { error } = await supabase.rpc("set_employee_permission", {
+      p_employee_id: employeeId,
+      p_key: key,
+      p_granted: granted,
+    });
+    if (!mounted.current) return;
+    setPending((p) => {
+      const n = new Set(p);
+      n.delete(key);
+      return n;
+    });
+    if (error) {
+      setErrors((m) => new Map(m).set(key, error.message));
+      return;
+    }
+    setOverrides((m) => {
+      const n = new Map(m);
+      if (granted === null) n.delete(key);
+      else n.set(key, granted);
+      return n;
+    });
+    setSaved((s) => new Set(s).add(key));
+    setTimeout(() => {
+      if (!mounted.current) return;
+      setSaved((s) => {
+        const n = new Set(s);
+        n.delete(key);
+        return n;
+      });
+    }, 2000);
+    void prev;
+  }
+
+  if (employeeRole === "owner") {
+    return (
+      <div key="extra-owner" className="mt-6 border-t border-slate-200 pt-4">
+        <h3 className="text-sm font-semibold text-slate-900">
+          Extra permissions
+        </h3>
+        <p className="mt-1 text-sm text-slate-500">
+          Owners always have every permission.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div key="extra-section" className="mt-6 border-t border-slate-200 pt-4">
+      <h3 className="text-sm font-semibold text-slate-900">
+        Extra permissions
+      </h3>
+      <p className="mt-1 text-sm text-slate-500">
+        These apply to this person only, on top of their role. Use them when
+        someone does a job their role does not normally cover, like receiving
+        purchase orders.
+      </p>
+
+      {state === "loading" && (
+        <p key="extra-loading" className="mt-3 text-sm text-slate-500">
+          Loading permissions...
+        </p>
+      )}
+      {state === "failed" && (
+        <div key="extra-failed" className="mt-3">
+          <p className="text-sm text-red-600">
+            Permissions could not be loaded.
+          </p>
+          <button
+            onClick={() => void load()}
+            className="mt-1 rounded-md border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+      {state === "ready" && (
+        <div key="extra-ready" className="mt-3">
+          {(() => {
+            const groups = new Map<string, typeof ALL_PERMISSIONS>();
+            ALL_PERMISSIONS.forEach((p) => {
+              const g = groups.get(p.group) ?? [];
+              g.push(p);
+              groups.set(p.group, g);
+            });
+            return Array.from(groups.entries()).map(([group, keys]) => (
+              <div key={group} className="mt-3 first:mt-0">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {group}
+                </p>
+                {keys.map((p) => {
+                  const roleAllowed = roleGrants.has(p.key);
+                  const hasOverride = overrides.has(p.key);
+                  const isPending = pending.has(p.key);
+                  const err = errors.get(p.key);
+                  return (
+                    <div key={p.key} className="mt-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm text-slate-700">
+                            {p.label}
+                            {hasOverride && (
+                              <span className="ml-2 rounded bg-brand-50 px-1.5 py-0.5 text-xs font-medium text-brand-700">
+                                Custom
+                              </span>
+                            )}
+                            {saved.has(p.key) && (
+                              <span className="ml-2 text-xs text-green-600">
+                                Saved
+                              </span>
+                            )}
+                          </p>
+                          <p className="text-xs text-slate-400">
+                            {roleAllowed
+                              ? "Role allows"
+                              : "Role does not allow"}
+                          </p>
+                        </div>
+                        <select
+                          value={rowValue(p.key)}
+                          disabled={isPending}
+                          onChange={(e) =>
+                            void change(p.key, e.target.value as OverrideValue)
+                          }
+                          className="shrink-0 rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-700 disabled:opacity-50"
+                        >
+                          <option value="default">Use role default</option>
+                          <option value="allow">Always allow</option>
+                          <option value="deny">Never allow</option>
+                        </select>
+                      </div>
+                      {err && (
+                        <p className="mt-1 text-xs text-red-600">{err}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ));
+          })()}
+        </div>
+      )}
+    </div>
   );
 }

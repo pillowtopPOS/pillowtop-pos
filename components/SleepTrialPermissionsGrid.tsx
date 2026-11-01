@@ -8,7 +8,7 @@ import {
   grantKey,
   PERMISSION_ROLES,
   setRolePermission,
-  SLEEP_TRIAL_PERMISSIONS,
+  ALL_PERMISSIONS,
 } from "@/lib/sleepTrial/permissions";
 
 // "Who can do what" grid (spec Section 5.3 Section 8, part 1). Writes
@@ -106,7 +106,18 @@ export default function SleepTrialPermissionsGrid({
             </tr>
           </thead>
           <tbody>
-            {SLEEP_TRIAL_PERMISSIONS.map((p) => (
+            {ALL_PERMISSIONS.map((p, i) => (
+              <>
+                {(i === 0 || ALL_PERMISSIONS[i - 1].group !== p.group) && (
+                  <tr key={`group-${p.group}`}>
+                    <td
+                      colSpan={PERMISSION_ROLES.length + 1}
+                      className="pt-4 pb-1 text-xs font-semibold uppercase tracking-wide text-slate-500"
+                    >
+                      {p.group}
+                    </td>
+                  </tr>
+                )}
               <tr
                 key={p.key}
                 className="border-b border-slate-100 last:border-0"
@@ -150,6 +161,7 @@ export default function SleepTrialPermissionsGrid({
                   );
                 })}
               </tr>
+              </>
             ))}
           </tbody>
         </table>
