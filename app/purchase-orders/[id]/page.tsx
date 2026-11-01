@@ -11,7 +11,10 @@ import {
   type Store,
 } from "@/lib/journeys/queries";
 import { Printer } from "lucide-react";
-import type { Product } from "@/lib/inventory/queries";
+import {
+  hasPermission,
+  type Product,
+} from "@/lib/inventory/queries";
 import {
   fetchPurchaseOrder,
   fetchPOProducts,
@@ -65,12 +68,23 @@ export default function PurchaseOrderDetailPage() {
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [shipOpen, setShipOpen] = useState(false);
+  const [canReceive, setCanReceive] = useState(false);
   const [tracking, setTracking] = useState("");
   const [shipping, setShipping] = useState(false);
 
   const canWrite = ["owner", "admin", "manager"].includes(
     employee?.role ?? "",
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    hasPermission("inventory.receive_po").then((ok) => {
+      if (!cancelled) setCanReceive(ok);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const isDropShip = po?.fulfillment_type === "drop_ship";
   const editable =
     canWrite && po !== null && PO_EDITABLE_STATUSES.includes(po.status);
@@ -310,9 +324,9 @@ export default function PurchaseOrderDetailPage() {
             >
               Done
             </Link>
-            {canWrite && (
+            {(canWrite || canReceive) && (
               <div className="flex gap-3">
-                {po.status === "draft" && (
+                {canWrite && po.status === "draft" && (
                   <button
                     onClick={() => void submit()}
                     className="rounded bg-brand-600 px-4 py-2 text-sm text-white"
@@ -320,7 +334,8 @@ export default function PurchaseOrderDetailPage() {
                     Submit
                   </button>
                 )}
-                {!isDropShip &&
+                {canReceive &&
+                  !isDropShip &&
                   ["submitted", "partially_received"].includes(po.status) &&
                   hasOpenLines && (
                     <button
@@ -330,7 +345,7 @@ export default function PurchaseOrderDetailPage() {
                       Receive
                     </button>
                   )}
-                {isDropShip && po.status === "submitted" && (
+                {canWrite && isDropShip && po.status === "submitted" && (
                   <button
                     onClick={() => setShipOpen(true)}
                     className="rounded bg-brand-600 px-4 py-2 text-sm text-white"

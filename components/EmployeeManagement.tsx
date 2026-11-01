@@ -126,20 +126,21 @@ export default function EmployeeManagement() {
       setStores(s);
       setRoles(r);
       setLoading(false);
-      // Badge data: one query, counted per employee. Failure never blocks.
-      const supabase = createClient();
-      supabase
-        .from("employee_permission_overrides")
-        .select("employee_id")
-        .then(({ data }) => {
-          const counts = new Map<string, number>();
-          (data ?? []).forEach((r: any) => {
-            counts.set(r.employee_id, (counts.get(r.employee_id) ?? 0) + 1);
-          });
-          setOverrideCounts(counts);
-        });
+      void loadOverrideCounts();
     });
   }, []);
+
+  async function loadOverrideCounts() {
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("employee_permission_overrides")
+      .select("employee_id");
+    const counts = new Map<string, number>();
+    (data ?? []).forEach((r: any) => {
+      counts.set(r.employee_id, (counts.get(r.employee_id) ?? 0) + 1);
+    });
+    setOverrideCounts(counts);
+  }
 
   function openNew() {
     setEditingId(null);
@@ -181,6 +182,7 @@ export default function EmployeeManagement() {
   }
 
   function closeModal() {
+    void loadOverrideCounts();
     setIsOpen(false);
     setEditingId(null);
     setForm(emptyForm);
@@ -555,7 +557,9 @@ export default function EmployeeManagement() {
               <ExtraPermissions
                 key={editingId}
                 employeeId={editingId}
-                employeeRole={form.role}
+                employeeRole={
+                  employees.find((e) => e.id === editingId)?.role ?? form.role
+                }
               />
             )}
 
@@ -710,7 +714,6 @@ function ExtraPermissions({
   }
 
   async function change(key: string, value: OverrideValue) {
-    const prev = rowValue(key);
     const granted = value === "default" ? null : value === "allow";
     setPending((p) => new Set(p).add(key));
     setErrors((m) => {
@@ -748,7 +751,6 @@ function ExtraPermissions({
         return n;
       });
     }, 2000);
-    void prev;
   }
 
   if (employeeRole === "owner") {
@@ -772,7 +774,8 @@ function ExtraPermissions({
       <p className="mt-1 text-sm text-slate-500">
         These apply to this person only, on top of their role. Use them when
         someone does a job their role does not normally cover, like receiving
-        purchase orders.
+        purchase orders. Changes here save immediately. They do not wait for
+        the Save button below.
       </p>
 
       {state === "loading" && (

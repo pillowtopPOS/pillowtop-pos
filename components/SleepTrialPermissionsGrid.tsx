@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Check } from "lucide-react";
 import {
   APPROVE_EXCEPTIONS_KEY,
@@ -107,7 +107,7 @@ export default function SleepTrialPermissionsGrid({
           </thead>
           <tbody>
             {ALL_PERMISSIONS.map((p, i) => (
-              <>
+              <Fragment key={p.key}>
                 {(i === 0 || ALL_PERMISSIONS[i - 1].group !== p.group) && (
                   <tr key={`group-${p.group}`}>
                     <td
@@ -161,7 +161,7 @@ export default function SleepTrialPermissionsGrid({
                   );
                 })}
               </tr>
-              </>
+              </Fragment>
             ))}
           </tbody>
         </table>
