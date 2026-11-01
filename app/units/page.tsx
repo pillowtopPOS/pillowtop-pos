@@ -38,7 +38,7 @@ type UnitRow = {
   void_reason: string | null;
   voided_by: string | null;
   created_at: string;
-  products?: { item_name: string; sku: string } | null;
+  product_id: string;
 };
 
 type UnitEvent = {
@@ -117,6 +117,10 @@ export default function UnitsPage() {
     "idle" | "loading" | "ready" | "failed"
   >("idle");
   const [actorNames, setActorNames] = useState<Map<string, string>>(new Map());
+  const [productInfo, setProductInfo] = useState<{
+    item_name: string;
+    sku: string;
+  } | null>(null);
   const [journeyInfo, setJourneyInfo] = useState<{
     journeyId: string;
     customerName: string | null;
@@ -206,6 +210,7 @@ export default function UnitsPage() {
     setLookup({ kind: "loading" });
     setEventsState("idle");
     setEvents([]);
+    setProductInfo(null);
     setJourneyInfo(null);
     setPoId(null);
     setVoidedByName(null);
@@ -213,7 +218,7 @@ export default function UnitsPage() {
       const { data, error } = await supabase
         .from("units")
         .select(
-          "id, unit_number, status, location_id, disposition, assigned_requirement_id, delivered_journey_id, purchase_order_line_item_id, voided_at, void_reason, voided_by, created_at, products(item_name, sku)"
+          "id, unit_number, status, location_id, disposition, assigned_requirement_id, delivered_journey_id, purchase_order_line_item_id, voided_at, void_reason, voided_by, created_at, product_id"
         )
         .eq("unit_number", Number(digits))
         .maybeSingle();
@@ -225,12 +230,22 @@ export default function UnitsPage() {
         inputRef.current?.select();
         return;
       }
-      const raw = data as any;
-      const unit: UnitRow = { ...raw, products: Array.isArray(raw.products) ? raw.products[0] ?? null : raw.products };
+      const unit = data as UnitRow;
       setLookup({ kind: "found", unit });
       inputRef.current?.focus();
       inputRef.current?.select();
       void loadEvents(unit.id, seq);
+      // Names come from products_public: the base products table holds
+      // cost and is only readable by owner/admin/manager.
+      void (async () => {
+        const { data: prod } = await supabase
+          .from("products_public")
+          .select("id, item_name, sku")
+          .eq("id", unit.product_id)
+          .maybeSingle();
+        if (seq !== lookupSeq.current || !mounted.current) return;
+        if (prod) setProductInfo({ item_name: prod.item_name, sku: prod.sku });
+      })();
 
       // Assigned or delivered customer: requirement -> journey -> customer.
       let journeyId: string | null = unit.delivered_journey_id;
@@ -307,7 +322,7 @@ export default function UnitsPage() {
       const ids = Array.from(new Set(rows.map((r) => r.product_id)));
       if (ids.length > 0) {
         const { data: prods } = await supabase
-          .from("products")
+          .from("products_public")
           .select("id, item_name, sku")
           .in("id", ids);
         if (mounted.current)
@@ -389,8 +404,8 @@ export default function UnitsPage() {
             <div>
               <dt className="inline font-medium">Product: </dt>
               <dd className="inline">
-                {unit.products?.item_name ?? "Unknown"} (
-                {unit.products?.sku ?? "?"})
+                {productInfo?.item_name ?? "Unknown"} (
+                {productInfo?.sku ?? "?"})
               </dd>
             </div>
             <div>
