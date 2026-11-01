@@ -33,6 +33,7 @@ const NAV = [
   { href: "/board", label: "Board", icon: LayoutGrid },
   { href: "/my-work", label: "My Work", icon: Calendar },
   { href: "/inventory", label: "Inventory", icon: Package },
+  { href: "/units", label: "Units", icon: Tag },
   { href: "/opportunities", label: "Opportunities", icon: Lightbulb },
 ];
 

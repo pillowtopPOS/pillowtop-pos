@@ -9,6 +9,7 @@ import {
   type Employee,
   type Store,
 } from "@/lib/journeys/queries";
+import { hasPermission } from "@/lib/inventory/queries";
 
 // Statuses are stored as codes; the page always shows plain English.
 const STATUS_LABEL: Record<string, string> = {
@@ -84,6 +85,9 @@ function eventLine(
     case "UNIT_CREATED":
       return `Received into stock${dest}${who}`;
     case "UNIT_MOVED":
+      if (e.from_status === e.to_status) {
+        return `Condition or version changed${dest}${who}`;
+      }
       return `${from ?? "?"} to ${to}${dest}${who}`;
     case "UNIT_VOIDED":
       return `Voided${who}`;
@@ -98,6 +102,7 @@ export default function UnitsPage() {
   const supabase = createClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const mounted = useRef(true);
+  const lookupSeq = useRef(0);
 
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [stores, setStores] = useState<Store[]>([]);
@@ -107,6 +112,9 @@ export default function UnitsPage() {
   const [query, setQuery] = useState("");
   const [lookup, setLookup] = useState<LookupState>({ kind: "idle" });
   const [events, setEvents] = useState<UnitEvent[]>([]);
+  const [eventsState, setEventsState] = useState<
+    "idle" | "loading" | "ready" | "failed"
+  >("idle");
   const [actorNames, setActorNames] = useState<Map<string, string>>(new Map());
   const [journeyInfo, setJourneyInfo] = useState<{
     journeyId: string;
@@ -143,10 +151,8 @@ export default function UnitsPage() {
         storeList.find((s) => s.id === emp?.home_store_id)?.company_id ??
         null;
       setCompanyId(cid);
-      const { data: allowed } = await supabase.rpc("has_permission", {
-        p_key: "units.manage_settings",
-      });
-      if (!cancelled) setCanSeeDiscrepancies(!!allowed);
+      const allowed = await hasPermission("units.manage_settings");
+      if (!cancelled) setCanSeeDiscrepancies(allowed);
       inputRef.current?.focus();
     })().catch(() => {});
     return () => {
@@ -156,8 +162,9 @@ export default function UnitsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function loadEvents(unitId: string) {
-    const { data } = await supabase
+  async function loadEvents(unitId: string, seq: number) {
+    setEventsState("loading");
+    const { data, error } = await supabase
       .from("unit_events")
       .select(
         "id, event_type, actor_id, journey_id, from_status, to_status, from_location_id, to_location_id, created_at"
@@ -165,9 +172,14 @@ export default function UnitsPage() {
       .eq("unit_id", unitId)
       .order("created_at", { ascending: true })
       .order("id", { ascending: true });
+    if (seq !== lookupSeq.current || !mounted.current) return;
+    if (error) {
+      setEventsState("failed");
+      return;
+    }
     const rows = (data ?? []) as UnitEvent[];
-    if (!mounted.current) return;
     setEvents(rows);
+    setEventsState("ready");
     const actorIds = Array.from(
       new Set(rows.map((r) => r.actor_id).filter(Boolean))
     ) as string[];
@@ -176,17 +188,21 @@ export default function UnitsPage() {
         .from("employees")
         .select("id, name")
         .in("id", actorIds);
-      if (!mounted.current) return;
-      setActorNames(
-        new Map((emps ?? []).map((e: any) => [e.id, e.name as string]))
-      );
+      if (seq !== lookupSeq.current || !mounted.current) return;
+      if (emps) {
+        setActorNames(
+          new Map(emps.map((e: any) => [e.id, e.name as string]))
+        );
+      }
     }
   }
 
   async function runLookup() {
     const digits = query.replace(/\D/g, "");
     if (!digits) return;
+    const seq = ++lookupSeq.current;
     setLookup({ kind: "loading" });
+    setEventsState("idle");
     setEvents([]);
     setJourneyInfo(null);
     setPoId(null);
@@ -200,7 +216,7 @@ export default function UnitsPage() {
         .eq("unit_number", Number(digits))
         .maybeSingle();
       if (error) throw new Error(error.message);
-      if (!mounted.current) return;
+      if (seq !== lookupSeq.current || !mounted.current) return;
       if (!data) {
         setLookup({ kind: "notfound" });
         return;
@@ -208,7 +224,7 @@ export default function UnitsPage() {
       const raw = data as any;
       const unit: UnitRow = { ...raw, products: Array.isArray(raw.products) ? raw.products[0] ?? null : raw.products };
       setLookup({ kind: "found", unit });
-      void loadEvents(unit.id);
+      void loadEvents(unit.id, seq);
 
       // Assigned or delivered customer: requirement -> journey -> customer.
       let journeyId: string | null = unit.delivered_journey_id;
@@ -219,6 +235,7 @@ export default function UnitsPage() {
           .eq("id", unit.assigned_requirement_id)
           .maybeSingle();
         journeyId = req?.journey_id ?? null;
+        if (seq !== lookupSeq.current || !mounted.current) return;
       }
       if (journeyId && mounted.current) {
         const { data: j } = await supabase
@@ -226,7 +243,8 @@ export default function UnitsPage() {
           .select("id, customers(first_name, last_name)")
           .eq("id", journeyId)
           .maybeSingle();
-        if (mounted.current && j) {
+        if (seq !== lookupSeq.current || !mounted.current) return;
+        if (j) {
           const c = (j as any).customers;
           setJourneyInfo({
             journeyId: j.id,
@@ -240,7 +258,8 @@ export default function UnitsPage() {
           .select("purchase_order_id")
           .eq("id", unit.purchase_order_line_item_id)
           .maybeSingle();
-        if (mounted.current) setPoId(li?.purchase_order_id ?? null);
+        if (seq !== lookupSeq.current || !mounted.current) return;
+        setPoId(li?.purchase_order_id ?? null);
       }
       if (unit.voided_by && mounted.current) {
         const { data: emp } = await supabase
@@ -248,10 +267,11 @@ export default function UnitsPage() {
           .select("name")
           .eq("id", unit.voided_by)
           .maybeSingle();
-        if (mounted.current) setVoidedByName(emp?.name ?? null);
+        if (seq !== lookupSeq.current || !mounted.current) return;
+        setVoidedByName(emp?.name ?? null);
       }
     } catch (e: any) {
-      if (mounted.current)
+      if (seq === lookupSeq.current && mounted.current)
         setLookup({
           kind: "failed",
           message: e.message ?? "Something went wrong",
@@ -315,6 +335,7 @@ export default function UnitsPage() {
         <input
           ref={inputRef}
           inputMode="numeric"
+          maxLength={15}
           value={query}
           onChange={(e) => setQuery(e.target.value.replace(/\D/g, ""))}
           placeholder="Unit number"
@@ -413,12 +434,32 @@ export default function UnitsPage() {
           <h2 className="mt-5 text-sm font-semibold text-slate-900">
             History
           </h2>
-          {events.length === 0 && (
+          {eventsState === "loading" && (
+            <p key="events-loading" className="mt-2 text-sm text-slate-500">
+              Loading history...
+            </p>
+          )}
+          {eventsState === "failed" && (
+            <div key="events-failed" className="mt-2">
+              <p className="text-sm text-red-600">
+                History could not be loaded.
+              </p>
+              <button
+                onClick={() =>
+                  unit && void loadEvents(unit.id, lookupSeq.current)
+                }
+                className="mt-1 rounded-md border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+          {eventsState === "ready" && events.length === 0 && (
             <p key="events-empty" className="mt-2 text-sm text-slate-500">
               No history yet.
             </p>
           )}
-          {events.length > 0 && (
+          {eventsState === "ready" && events.length > 0 && (
             <ul key="events-list" className="mt-2 space-y-1">
               {events.map((e) => (
                 <li key={e.id} className="text-sm text-slate-600">
@@ -438,7 +479,8 @@ export default function UnitsPage() {
           <button
             onClick={() => {
               setShowDisc((v) => !v);
-              if (discState === "idle") void loadDiscrepancies();
+              if (discState === "idle" || discState === "failed")
+                void loadDiscrepancies();
             }}
             className="text-sm font-semibold text-slate-900 hover:underline"
           >
@@ -446,6 +488,11 @@ export default function UnitsPage() {
           </button>
           {showDisc && (
             <div key="disc-body" className="mt-3">
+              {!companyId && (
+                <p key="disc-noco" className="mt-3 text-sm text-slate-600">
+                  Your account could not be matched to a company.
+                </p>
+              )}
               <p className="text-xs text-slate-500">
                 When the unit list and the stock count disagree, someone
                 should look at why.
@@ -456,9 +503,17 @@ export default function UnitsPage() {
                 </p>
               )}
               {discState === "failed" && (
-                <p key="disc-failed" className="mt-3 text-sm text-red-600">
-                  The check could not run. Try again later.
-                </p>
+                <div key="disc-failed" className="mt-3">
+                  <p className="text-sm text-red-600">
+                    The check could not run. Try again later.
+                  </p>
+                  <button
+                    onClick={() => void loadDiscrepancies()}
+                    className="mt-1 rounded-md border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
+                  >
+                    Retry
+                  </button>
+                </div>
               )}
               {discState === "denied" && (
                 <p key="disc-denied" className="mt-3 text-sm text-slate-600">
@@ -504,7 +559,13 @@ export default function UnitsPage() {
                         <td className="py-1 text-right font-medium text-amber-700">
                           {r.units_on_hand - r.mirror_on_hand}
                         </td>
-                        <td className="py-1 text-right">
+                        <td
+                          className={`py-1 text-right ${
+                            r.units_reserved !== r.mirror_committed
+                              ? "font-medium text-amber-700"
+                              : ""
+                          }`}
+                        >
                           {r.units_reserved}/{r.mirror_committed}
                         </td>
                       </tr>

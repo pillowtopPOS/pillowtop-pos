@@ -1,93 +1,83 @@
 -- ============================================================================
--- DEMO ONLY. Never run against a real client.
--- Seeds 3 demo units on the TBM company so the Units page has data.
--- Single paste; ends in one select printing the demo unit ids.
+-- DEMO ONLY. Never run against a real client with live data.
+-- Single paste. Creates one throwaway product (sku DEMO-UNIT-1) with 3 demo
+-- units so the Units page has something to show. It does NOT touch any real
+-- product or real stock. Undo with unit_s1_seed_demo_cleanup.sql.
+--
+-- What you get (unit numbers come from the company counter):
+--   unit 1: In stock            unit 2: Held for a demo customer
+--   unit 3: Missing
+--   plus ONE deliberate stock mismatch so the Discrepancies section shows a row.
+-- Stops with a clear error if it is not safe to run.
 -- ============================================================================
-create temp table if not exists unit_demo_ids (unit_id uuid);
-
--- Flag first: create_unit refuses untracked products.
-update public.products p
-set unit_tracked = true
-where p.id = (
-  select p2.id from public.products p2
-  join public.companies c on c.id = p2.company_id
-  where (c.name ilike '%TBM%' or c.name ilike '%mattress%')
-    and (p2.item_name ilike '%mattress%' or p2.sku ilike '%matt%')
-  order by p2.created_at
-  limit 1);
-
-with co as (
-  select c.id
-  from public.companies c
-  where c.name ilike '%TBM%' or c.name ilike '%mattress%'
-  order by c.created_at
-  limit 1
-), prod as (
-  select p.id, p.company_id
-  from public.products p
-  join co on co.id = p.company_id
-  where p.item_name ilike '%mattress%' or p.sku ilike '%matt%'
-  order by p.created_at
-  limit 1
-), loc as (
-  select s.id
-  from public.stores s
-  join co on co.id = s.company_id
-  where s.location_type = 'WAREHOUSE' and s.is_active
-  order by s.created_at
-  limit 1
-)
-insert into unit_demo_ids (unit_id)
-select public.create_unit(
-  prod.company_id, prod.id, loc.id, 'Prime', null, null)
-from prod, loc
-union all
-select public.create_unit(
-  prod.company_id, prod.id, loc.id, 'Prime', null, null)
-from prod, loc
-union all
-select public.create_unit(
-  prod.company_id, prod.id, loc.id, 'Prime', null, null)
-from prod, loc;
-
--- Mirror the +3 into inventory_positions (the S2 receiving wrapper will own
--- this write; for the demo we do it by hand so units and stock agree).
-insert into public.inventory_positions
-  (variant_id, location_id, sublocation_id, disposition, on_hand_quantity, committed_quantity)
-select u.product_id, u.location_id, null, u.disposition, count(*), 0
-from public.units u
-join unit_demo_ids d on d.unit_id = u.id
-group by u.product_id, u.location_id, u.disposition
-on conflict (variant_id, location_id, sublocation_id, disposition)
-do update set on_hand_quantity =
-  inventory_positions.on_hand_quantity + excluded.on_hand_quantity;
-
--- One unit goes MISSING (move_unit takes 1 off the mirror itself).
-select public.move_unit(
-  (select unit_id from unit_demo_ids order by unit_id limit 1 offset 2),
-  'MISSING', null, '{"event_type":"UNIT_MISSING"}'::jsonb);
-
--- One unit RESERVED against an existing requirement if the company has one.
 do $$
 declare
-  v_req uuid;
-  v_unit uuid;
+  v_count int;
+  v_company uuid;
+  v_wh uuid;
+  v_store uuid;
+  v_prod uuid := gen_random_uuid();
+  v_cust uuid := gen_random_uuid();
+  v_journey uuid := gen_random_uuid();
+  v_req uuid := gen_random_uuid();
+  v_u1 uuid; v_u2 uuid; v_u3 uuid;
 begin
-  select jir.id into v_req
-  from public.journey_inventory_requirements jir
-  join public.units u on u.product_id = jir.variant_id
-  join unit_demo_ids d on d.unit_id = u.id
-  where jir.status = 'ready'
-  limit 1;
-  if v_req is not null then
-    select unit_id into v_unit
-    from unit_demo_ids order by unit_id limit 1 offset 1;
-    perform public.move_unit(v_unit, 'RESERVED', null,
-      jsonb_build_object('requirement_id', v_req));
+  select count(*) into v_count from public.companies;
+  if v_count <> 1 then
+    raise exception 'Expected exactly one company, found %. Stop and ask Claude.', v_count;
   end if;
+  select id into v_company from public.companies;
+
+  if exists (select 1 from public.products where sku = 'DEMO-UNIT-1') then
+    raise exception 'Demo data already exists. Run the cleanup first.';
+  end if;
+
+  select id into v_wh from public.stores
+  where company_id = v_company and location_type = 'WAREHOUSE' and is_active
+  order by name limit 1;
+  select id into v_store from public.stores
+  where company_id = v_company and location_type = 'STORE' and is_active
+  order by name limit 1;
+  if v_wh is null or v_store is null then
+    raise exception 'Need one active warehouse and one active store.';
+  end if;
+
+  insert into public.products (id, company_id, sku, item_name, price)
+  values (v_prod, v_company, 'DEMO-UNIT-1', 'DEMO Unit ID Mattress', 1.00);
+  update public.products set unit_tracked = true where id = v_prod;
+
+  v_u1 := public.create_unit(v_company, v_prod, v_wh, 'Prime', null, null);
+  v_u2 := public.create_unit(v_company, v_prod, v_wh, 'Prime', null, null);
+  v_u3 := public.create_unit(v_company, v_prod, v_wh, 'Prime', null, null);
+
+  -- Stock mirror: the receiving code will do this in S2; by hand for the demo.
+  insert into public.inventory_positions
+    (variant_id, location_id, sublocation_id, disposition, on_hand_quantity, committed_quantity)
+  values (v_prod, v_wh, null, 'Prime', 3, 0);
+
+  -- Unit 3 goes missing (move_unit takes 1 off stock itself).
+  perform public.move_unit(v_u3, 'MISSING', null, '{}'::jsonb);
+
+  -- Unit 2 is held for a demo customer.
+  insert into public.customers (id, first_name, last_name, phone, email, street_address, city, state, zip_code)
+  values (v_cust, 'DEMO', 'Customer', '555-0100', 'demo-unit@example.com', '1 Demo St', 'Denver', 'CO', '80202');
+  insert into public.sleep_journeys (id, store_id, customer_id, current_state, sale_kind)
+  values (v_journey, v_store, v_cust, 'Sleep Trial', 'STANDARD');
+  insert into public.journey_inventory_requirements (id, journey_id, variant_id, location_id, quantity_required, status)
+  values (v_req, v_journey, v_prod, v_wh, 1, 'ready');
+  perform public.move_unit(v_u2, 'RESERVED', null, jsonb_build_object('requirement_id', v_req));
+  update public.inventory_positions set committed_quantity = 1
+  where variant_id = v_prod and location_id = v_wh and disposition = 'Prime';
+
+  -- Deliberate mismatch: stock says one more than the units do.
+  update public.inventory_positions set on_hand_quantity = on_hand_quantity + 1
+  where variant_id = v_prod and location_id = v_wh and disposition = 'Prime';
 end $$;
 
-select u.id as demo_unit_id, u.unit_number, u.status
+select u.unit_number, u.status, p.sku,
+  (select on_hand_quantity from public.inventory_positions ip where ip.variant_id = p.id limit 1) as stock_says,
+  (select count(*) from public.units x where x.product_id = p.id and x.status in ('STOCK','RESERVED')) as units_say
 from public.units u
-join unit_demo_ids d on d.unit_id = u.id
+join public.products p on p.id = u.product_id
+where p.sku = 'DEMO-UNIT-1'
 order by u.unit_number;
