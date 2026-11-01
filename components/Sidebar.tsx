@@ -7,6 +7,7 @@ import {
   LayoutGrid,
   Calendar,
   Package,
+  Tag,
   Lightbulb,
   ChevronLeft,
   ChevronRight,
