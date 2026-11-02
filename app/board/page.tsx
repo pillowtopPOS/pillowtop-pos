@@ -1317,6 +1317,11 @@ function JourneyCard({
           ? `${journey.customer.first_name} ${journey.customer.last_name}`
           : "Unknown"}
       </p>
+      {journey.journey_number && (
+        <p className="truncate font-mono text-[10px] leading-tight text-slate-400">
+          {journey.journey_number}
+        </p>
+      )}
       <p className="truncate text-[10px] leading-tight text-slate-500">
         {journey.customer?.phone ?? "—"}
       </p>

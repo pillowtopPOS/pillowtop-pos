@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, MoreHorizontal, Trash2, X } from "lucide-react";
+import { Check, MoreHorizontal, Trash2, X, Copy,
+} from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { resolveLineItemLocation } from "@/lib/journeys/fulfillment";
 import {
@@ -232,6 +233,21 @@ function JourneyWorkspaceHeader({
           <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
             {journey.current_state}
           </span>
+          {journey.journey_number && (
+            <span className="inline-flex items-center gap-1 font-mono text-xs text-slate-500">
+              {journey.journey_number}
+              <button
+                type="button"
+                title="Copy journey number"
+                onClick={() =>
+                  navigator.clipboard?.writeText(journey.journey_number!)
+                }
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <Copy className="h-3.5 w-3.5" />
+              </button>
+            </span>
+          )}
           {journey.sale_kind === "EXCHANGE" && (
             <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
               Exchange

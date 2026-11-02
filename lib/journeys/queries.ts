@@ -6,6 +6,7 @@ import type { OpenExchangeWork } from "./exchange";
 export type JourneyWithDetails = {
   id: string;
   current_state: SleepJourneyState;
+  journey_number: string | null;
   product_summary: string | null;
   price: number | null;
   cancelled_at: string | null;
@@ -48,7 +49,7 @@ export type JourneyWithDetails = {
   } | null;
 };
 
-const JOURNEY_DETAIL_SELECT = `id, current_state, product_summary, price, cancelled_at, fulfillment_type, delivered_at, inventory_ready_notified_at, trial_length_nights, minimum_adjustment_nights, created_at, updated_at, store_id, assigned_employee_id, sale_kind, parent_journey_id, exchange_action_id,
+const JOURNEY_DETAIL_SELECT = `id, journey_number, current_state, product_summary, price, cancelled_at, fulfillment_type, delivered_at, inventory_ready_notified_at, trial_length_nights, minimum_adjustment_nights, created_at, updated_at, store_id, assigned_employee_id, sale_kind, parent_journey_id, exchange_action_id,
       customer:customers!customer_id ( id, first_name, last_name, phone, email, street_address, street_address_line_2, city, state, zip_code ),
       employee:employees!assigned_employee_id ( id, name ),
       store:stores!store_id ( id, name, trial_length_nights, minimum_adjustment_nights, trial_ending_warning_days )`;
@@ -223,7 +224,27 @@ export async function fetchJourneys(
 
   if (search?.trim()) {
     const term = search.trim().toLowerCase();
+    const raw = search.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const stripped = raw.replace(/^SJ/, "");
+    const numMatch = stripped.match(/^([A-Z]+[0-9]*?)([0-9]+)$/);
+    const digitsOnly = /^\d+$/.test(raw);
+    const numberCandidates = new Set<string>();
+    if (numMatch) {
+      const code = numMatch[1], digits = numMatch[2];
+      numberCandidates.add(`SJ-${code}${digits}`);
+      if (digits.length < 5)
+        numberCandidates.add(`SJ-${code}${digits.padStart(5, "0")}`);
+    } else if (digitsOnly) {
+      numberCandidates.add(raw.padStart(5, "0"));
+    }
     journeys = journeys.filter((j) => {
+      if (
+        j.journey_number &&
+        ((numMatch && numberCandidates.has(j.journey_number)) ||
+          (digitsOnly &&
+            j.journey_number.endsWith(raw.padStart(5, "0"))))
+      )
+        return true;
       const customer = j.customer;
       if (!customer) return false;
       return (
