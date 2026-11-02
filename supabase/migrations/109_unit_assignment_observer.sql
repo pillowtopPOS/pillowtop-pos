@@ -34,6 +34,11 @@ begin
   if new.assigned_requirement_id is null then
     return new;
   end if;
+  -- Only a real change to the assignment takes the requirement lock.
+  if tg_op = 'UPDATE'
+     and new.assigned_requirement_id is not distinct from old.assigned_requirement_id then
+    return new;
+  end if;
   select quantity_required into v_required
   from public.journey_inventory_requirements
   where id = new.assigned_requirement_id
@@ -128,12 +133,13 @@ begin
      or v_journey.cancelled_at is not null
      or v_journey.current_state = 'Quoted' then
     v_desired := 0;
-  elsif v_req.status in ('delivered', 'consumed') then
+  elsif v_req.status = 'fulfilled' then
     -- Delivery consumed the reservation: the assigned units leave with the
     -- order, they are not released back to stock.
     for v_unit in
       select id from public.units
-      where assigned_requirement_id = v_req.id and status = 'RESERVED'
+      where assigned_requirement_id = v_req.id
+        and status in ('RESERVED', 'STAGED')
     loop
       perform public.move_unit(v_unit, 'DELIVERED', null,
         jsonb_build_object('journey_id', v_req.journey_id));
@@ -178,7 +184,17 @@ begin
     -- Still short (stock predates unit tracking or is unlabeled): record it
     -- on the audit trail so the discrepancy is visible, then continue.
     v_shortfall := v_desired - v_count;
-    if v_shortfall > 0 then
+    -- One row per distinct shortfall, not one per call.
+    if v_shortfall > 0 and not exists (
+      select 1 from public.audit_events ae
+      where ae.entity_type = 'journey_inventory_requirement'
+        and ae.entity_id = v_req.id
+        and ae.event_type = 'UNIT_ASSIGNMENT_SHORTFALL'
+        and (ae.after->>'shortfall')::int = v_shortfall
+        and (ae.after->>'required')::int = v_desired
+      order by ae.occurred_at desc
+      limit 1
+    ) then
       insert into public.audit_events (
         company_id, actor_type, entity_type, entity_id, journey_id,
         event_type, after
@@ -213,16 +229,22 @@ begin
   begin
     perform public.reconcile_requirement_units(new.id);
   exception when others then
-    insert into public.audit_events (
-      company_id, actor_type, entity_type, entity_id, journey_id,
-      event_type, after
-    )
-    select s.company_id, 'SYSTEM', 'journey_inventory_requirement', new.id,
-      new.journey_id, 'UNIT_ASSIGNMENT_ERROR',
-      jsonb_build_object('error', sqlerrm)
-    from public.sleep_journeys sj
-    join public.stores s on s.id = sj.store_id
-    where sj.id = new.journey_id;
+    -- The audit write itself is guarded: a logging failure can never
+    -- fail a sale either.
+    begin
+      insert into public.audit_events (
+        company_id, actor_type, entity_type, entity_id, journey_id,
+        event_type, after
+      )
+      select s.company_id, 'SYSTEM', 'journey_inventory_requirement', new.id,
+        new.journey_id, 'UNIT_ASSIGNMENT_ERROR',
+        jsonb_build_object('error', sqlerrm)
+      from public.sleep_journeys sj
+      join public.stores s on s.id = sj.store_id
+      where sj.id = new.journey_id;
+    exception when others then
+      null;
+    end;
   end;
   return new;
 end;
@@ -254,14 +276,19 @@ begin
       begin
         perform public.reconcile_requirement_units(r.id);
       exception when others then
-        insert into public.audit_events (
-          company_id, actor_type, entity_type, entity_id, journey_id,
-          event_type, after
-        )
-        select s.company_id, 'SYSTEM', 'journey_inventory_requirement', r.id,
-          new.id, 'UNIT_ASSIGNMENT_ERROR',
-          jsonb_build_object('error', sqlerrm)
-        from public.stores s where s.id = new.store_id;
+        -- Guard the audit write itself: logging can never fail a sale.
+        begin
+          insert into public.audit_events (
+            company_id, actor_type, entity_type, entity_id, journey_id,
+            event_type, after
+          )
+          select s.company_id, 'SYSTEM', 'journey_inventory_requirement', r.id,
+            new.id, 'UNIT_ASSIGNMENT_ERROR',
+            jsonb_build_object('error', sqlerrm)
+          from public.stores s where s.id = new.store_id;
+        exception when others then
+          null;
+        end;
       end;
     end loop;
   end if;
@@ -307,11 +334,34 @@ begin
   if not found or v_unit.company_id <> v_company then
     raise exception 'That unit was not found.';
   end if;
+  -- Lock order everywhere is requirement first, then the unit, matching
+  -- the evaluator and the observer so concurrent paths cannot deadlock.
   select * into v_req
   from public.journey_inventory_requirements
-  where id = p_requirement_id;
+  where id = p_requirement_id
+  for update;
   if not found then
     raise exception 'That requirement was not found.';
+  end if;
+  if v_req.status not in ('pending', 'ready') then
+    raise exception 'This order is not waiting for stock.';
+  end if;
+  if exists (
+    select 1
+    from public.sleep_journeys sj
+    join public.stores st on st.id = sj.store_id
+    where sj.id = v_req.journey_id
+      and (sj.cancelled_at is not null
+           or sj.current_state = 'Quoted'
+           or st.company_id <> v_company)
+  ) then
+    raise exception 'That requirement was not found.';
+  end if;
+  if (
+    select count(*) from public.units
+    where assigned_requirement_id = p_requirement_id
+  ) >= least(v_req.quantity_reserved, v_req.quantity_required) then
+    raise exception 'This order''s reservation is already covered. Unassign a unit first.';
   end if;
   if v_unit.product_id <> v_req.variant_id then
     raise exception 'That unit is a different product.';
@@ -338,6 +388,7 @@ as $$
 declare
   v_company uuid;
   v_unit public.units%rowtype;
+  v_req uuid;
 begin
   if not public.has_permission('units.unassign') then
     raise exception 'You do not have permission to unassign units.';
@@ -346,6 +397,15 @@ begin
   from public.employees e
   join public.stores s on s.id = e.home_store_id
   where e.auth_user_id = auth.uid() and e.is_active;
+
+  -- Requirement first, then the unit: same lock order as the evaluator
+  -- and the observer so concurrent paths cannot deadlock.
+  select assigned_requirement_id into v_req
+  from public.units where id = p_unit_id;
+  if v_req is not null then
+    perform 1 from public.journey_inventory_requirements
+    where id = v_req for update;
+  end if;
 
   select * into v_unit from public.units where id = p_unit_id;
   if not found or v_unit.company_id <> v_company then
@@ -384,19 +444,24 @@ begin
     begin
       perform public.reconcile_requirement_units(r.id);
     exception when others then
-      insert into public.audit_events (
-        company_id, actor_type, entity_type, entity_id, journey_id,
-        event_type, after
-      )
-      select s.company_id, 'SYSTEM', 'journey_inventory_requirement', r.id,
-        (select journey_id from public.journey_inventory_requirements
-          where id = r.id),
-        'UNIT_ASSIGNMENT_ERROR',
-        jsonb_build_object('error', sqlerrm, 'phase', 'backfill')
-      from public.sleep_journeys sj
-      join public.stores s on s.id = sj.store_id
-      where sj.id = (select journey_id from public.journey_inventory_requirements
-        where id = r.id);
+      -- Guard the audit write itself: logging can never fail a sale.
+      begin
+        insert into public.audit_events (
+          company_id, actor_type, entity_type, entity_id, journey_id,
+          event_type, after
+        )
+        select s.company_id, 'SYSTEM', 'journey_inventory_requirement', r.id,
+          (select journey_id from public.journey_inventory_requirements
+            where id = r.id),
+          'UNIT_ASSIGNMENT_ERROR',
+          jsonb_build_object('error', sqlerrm, 'phase', 'backfill')
+        from public.sleep_journeys sj
+        join public.stores s on s.id = sj.store_id
+        where sj.id = (select journey_id from public.journey_inventory_requirements
+          where id = r.id);
+      exception when others then
+        null;
+      end;
     end;
   end loop;
 end $$;
