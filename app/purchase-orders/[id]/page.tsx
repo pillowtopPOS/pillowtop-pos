@@ -440,7 +440,7 @@ export default function PurchaseOrderDetailPage() {
                       <button
                         onClick={() =>
                           window.open(
-                            `/units/labels?numbers=${lineUnits[l.id].join(",")}`,
+                            `/units/labels/print?numbers=${lineUnits[l.id].join(",")}`,
                             "_blank"
                           )
                         }

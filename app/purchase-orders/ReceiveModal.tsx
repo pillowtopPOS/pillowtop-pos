@@ -78,7 +78,7 @@ export default function ReceiveModal({
   }
 
   function printLabels() {
-    window.open(`/units/labels?numbers=${unitNumbers.join(",")}`, "_blank");
+    window.open(`/units/labels/print?numbers=${unitNumbers.join(",")}`, "_blank");
   }
 
   return (

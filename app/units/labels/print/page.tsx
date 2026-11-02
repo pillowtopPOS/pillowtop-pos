@@ -13,10 +13,13 @@ type State =
   | { kind: "failed"; message: string }
   | { kind: "ready"; units: LabelUnit[]; missing: number[] };
 
+// Route ends in /print so Sidebar renders it bare (Sidebar.tsx checks
+// pathname.endsWith("/print")). The layout prints one 4x6 label per page
+// with no page margin.
 function StockLabel({ u }: { u: LabelUnit }) {
   return (
     <div
-      className="label-sheet relative box-border"
+      className="label-sheet relative box-border overflow-hidden"
       style={{ width: "4in", height: "6in" }}
     >
       <div
@@ -44,8 +47,15 @@ function StockLabel({ u }: { u: LabelUnit }) {
           <div className="mt-0.5 px-2 text-[14px]">{u.description}</div>
         )}
         <div className="mt-auto px-2 pb-2">
-          <Code128Barcode value={String(u.unit_number)} height="1in" width="100%" />
-          <div className="mt-1 text-center text-[20px]" style={{ letterSpacing: "6px" }}>
+          <Code128Barcode
+            value={String(u.unit_number)}
+            height="1in"
+            width="100%"
+          />
+          <div
+            className="mt-1 text-center text-[20px]"
+            style={{ letterSpacing: "6px" }}
+          >
             {u.unit_number}
           </div>
         </div>
@@ -58,7 +68,8 @@ function LabelsInner() {
   const params = useSearchParams();
   const [state, setState] = useState<State>({ kind: "loading" });
   const [logNote, setLogNote] = useState<string | null>(null);
-  const printedRef = useRef<string | null>(null);
+  const lastLogAt = useRef(0);
+  const unitsRef = useRef<LabelUnit[]>([]);
 
   const numbers = (params.get("numbers") ?? "")
     .split(",")
@@ -78,8 +89,10 @@ function LabelsInner() {
     }
     fetchUnitsForLabels(numbers)
       .then((r) => {
-        if (!cancelled)
+        if (!cancelled) {
+          unitsRef.current = r.units;
           setState({ kind: "ready", units: r.units, missing: r.missing });
+        }
       })
       .catch((e) => {
         if (!cancelled)
@@ -91,13 +104,15 @@ function LabelsInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Registered once. Skips a second afterprint that arrives within 2s of the
+  // last log (some browsers fire it twice); every real print still logs.
   useEffect(() => {
     function afterPrint() {
-      if (state.kind !== "ready" || state.units.length === 0) return;
-      const stamp = `${Date.now()}`;
-      if (printedRef.current === stamp) return;
-      printedRef.current = stamp;
-      const ids = state.units.map((u) => u.id);
+      const now = Date.now();
+      if (now - lastLogAt.current < 2000) return;
+      if (unitsRef.current.length === 0) return;
+      lastLogAt.current = now;
+      const ids = unitsRef.current.map((u) => u.id);
       const s = createClient();
       s.rpc("record_unit_labels_printed", {
         p_unit_ids: ids,
@@ -112,19 +127,27 @@ function LabelsInner() {
     }
     window.addEventListener("afterprint", afterPrint);
     return () => window.removeEventListener("afterprint", afterPrint);
-  }, [state]);
+  }, []);
 
   return (
-    <main className="p-4">
+    <main>
       <style>{`
         @page { size: 4in 6in; margin: 0 }
-        .label-sheet { page-break-after: always }
+        .label-sheet { break-after: page; page-break-after: always }
+        .labels:last-child .label-sheet:last-child,
+        .label-sheet:last-child { break-after: auto; page-break-after: auto }
         @media print {
+          html, body { margin: 0; padding: 0; background: #fff }
           .no-print { display: none !important }
-          body { margin: 0 }
+          .labels { display: block; gap: 0; padding: 0; margin: 0 }
+          .label-sheet { box-shadow: none !important; margin: 0 !important }
+        }
+        @media screen {
+          .labels { display: flex; flex-wrap: wrap; gap: 16px; padding: 16px }
+          .label-sheet { box-shadow: 0 1px 4px rgba(0,0,0,.25) }
         }
       `}</style>
-      <div className="no-print mx-auto mb-4 flex max-w-2xl items-center gap-4">
+      <div className="no-print mx-auto flex max-w-2xl items-center gap-4 p-4">
         <Link href="/units" className="text-sm text-brand-600 hover:underline">
           Back
         </Link>
@@ -146,41 +169,39 @@ function LabelsInner() {
       </div>
 
       {state.kind === "badparam" && (
-        <p className="text-sm text-slate-600">
-          Give unit numbers in the address like /units/labels?numbers=1001,1002
-          (digits, comma separated, at most 500).
+        <p className="no-print p-4 text-sm text-slate-600">
+          Give unit numbers in the address like
+          /units/labels/print?numbers=1001,1002 (digits, comma separated, at
+          most 500).
         </p>
       )}
       {state.kind === "failed" && (
-        <p className="text-sm text-red-600">{state.message}</p>
+        <p className="no-print p-4 text-sm text-red-600">{state.message}</p>
       )}
       {state.kind === "loading" && (
-        <p className="text-sm text-slate-500">Loading labels...</p>
+        <p className="no-print p-4 text-sm text-slate-500">
+          Loading labels...
+        </p>
       )}
       {state.kind === "ready" && (
-        <div className="flex flex-wrap gap-4">
+        <>
           {state.missing.length > 0 && (
-            <p className="no-print w-full text-sm text-amber-700">
+            <p className="no-print px-4 text-sm text-amber-700">
               No unit found for: {state.missing.join(", ")}
             </p>
           )}
-          {state.units.map((u) => (
-            <div key={u.id} className="no-print shadow">
-              <StockLabel u={u} />
-            </div>
-          ))}
-          {state.units.map((u) => (
-            <div key={`print-${u.id}`} className="hidden print:block">
-              <StockLabel u={u} />
-            </div>
-          ))}
-        </div>
+          <div className="labels">
+            {state.units.map((u) => (
+              <StockLabel key={u.id} u={u} />
+            ))}
+          </div>
+        </>
       )}
     </main>
   );
 }
 
-export default function UnitLabelsPage() {
+export default function UnitLabelsPrintPage() {
   return (
     <Suspense>
       <LabelsInner />

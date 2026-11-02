@@ -460,7 +460,7 @@ export default function UnitsPage() {
             <button
               onClick={() =>
                 window.open(
-                  `/units/labels?numbers=${unit.unit_number}`,
+                  `/units/labels/print?numbers=${unit.unit_number}`,
                   "_blank"
                 )
               }
