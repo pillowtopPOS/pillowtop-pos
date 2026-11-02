@@ -9,6 +9,8 @@ export default function LineEditor({
   onCost,
   onBlurCommit,
   onRemove,
+  received,
+  unitNumbers,
 }: {
   name: string;
   quantity: number;
@@ -18,6 +20,8 @@ export default function LineEditor({
   onCost: (v: number) => void;
   onBlurCommit?: () => void;
   onRemove?: () => void;
+  received?: number;
+  unitNumbers?: number[];
 }) {
   return (
     <div className="grid grid-cols-[1fr_4.5rem_6rem_auto] items-end gap-2 border-t pt-2 text-sm">
@@ -54,7 +58,22 @@ export default function LineEditor({
           Remove
         </button>
       ) : (
-        <span className="pb-1.5 text-xs text-slate-400">Received</span>
+        <span className="pb-1.5 text-xs text-slate-400">
+          Received: {received ?? 0}
+          {(unitNumbers?.length ?? 0) > 0 && (
+            <>
+              {" · "}
+              <a
+                href={`/units/labels/print?numbers=${unitNumbers!.join(",")}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-brand-600 hover:underline"
+              >
+                Unit labels ({unitNumbers!.length})
+              </a>
+            </>
+          )}
+        </span>
       )}
     </div>
   );

@@ -457,17 +457,14 @@ export default function UnitsPage() {
           </dl>
 
           {unit.status !== "VOID" && (
-            <button
-              onClick={() =>
-                window.open(
-                  `/units/labels/print?numbers=${unit.unit_number}`,
-                  "_blank"
-                )
-              }
-              className="mt-3 rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+            <a
+              href={`/units/labels/print?numbers=${unit.unit_number}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 inline-block rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
             >
               Reprint label
-            </button>
+            </a>
           )}
 
           <h2 className="mt-5 text-sm font-semibold text-slate-900">

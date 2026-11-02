@@ -77,9 +77,7 @@ export default function ReceiveModal({
     await onDone();
   }
 
-  function printLabels() {
-    window.open(`/units/labels/print?numbers=${unitNumbers.join(",")}`, "_blank");
-  }
+
 
   return (
     <Modal
@@ -147,13 +145,15 @@ export default function ReceiveModal({
         <div className="mt-5 flex justify-end gap-2">
           {received && unitNumbers.length > 0 ? (
             <>
-              <button
-                onClick={printLabels}
+              <a
+                href={`/units/labels/print?numbers=${unitNumbers.join(",")}`}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="rounded bg-brand-600 px-4 py-1.5 text-sm text-white"
               >
                 Print {unitNumbers.length} label
                 {unitNumbers.length === 1 ? "" : "s"}
-              </button>
+              </a>
               <button
                 onClick={onClose}
                 className="rounded border px-3 py-1.5 text-sm"

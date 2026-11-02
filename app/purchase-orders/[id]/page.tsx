@@ -414,6 +414,8 @@ export default function PurchaseOrderDetailPage() {
                 quantity={lineEditValue(l, "quantity_ordered")}
                 unitCost={lineEditValue(l, "unit_cost")}
                 minQty={Math.max(1, l.quantity_received)}
+                received={l.quantity_received}
+                unitNumbers={lineUnits[l.id]}
                 onQuantity={(v) => stageLineEdit(l, "quantity_ordered", v)}
                 onCost={(v) => stageLineEdit(l, "unit_cost", v)}
                 onBlurCommit={() => void commitLineEdit(l)}
@@ -437,17 +439,14 @@ export default function PurchaseOrderDetailPage() {
                   {(lineUnits[l.id]?.length ?? 0) > 0 && (
                     <>
                       {" · "}
-                      <button
-                        onClick={() =>
-                          window.open(
-                            `/units/labels/print?numbers=${lineUnits[l.id].join(",")}`,
-                            "_blank"
-                          )
-                        }
+                      <a
+                        href={`/units/labels/print?numbers=${lineUnits[l.id].join(",")}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         className="text-brand-600 hover:underline"
                       >
                         Unit labels ({lineUnits[l.id].length})
-                      </button>
+                      </a>
                     </>
                   )}
                 </span>
