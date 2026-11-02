@@ -344,7 +344,13 @@ export default function UnitsPage() {
 
   return (
     <main className="mx-auto max-w-2xl p-6">
-      <h1 className="text-xl font-semibold text-slate-900">Units</h1>
+      <Link
+        href="/inventory"
+        className="text-sm text-brand-600 hover:underline"
+      >
+        &larr; Inventory
+      </Link>
+      <h1 className="mt-1 text-xl font-semibold text-slate-900">Units</h1>
       <p className="mt-1 text-sm text-slate-500">
         Look up a unit by its number or scan its label.
       </p>

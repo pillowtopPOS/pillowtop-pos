@@ -504,6 +504,12 @@ export default function InventoryPage() {
             Counts
           </Link>
           <Link
+            href="/units"
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Units
+          </Link>
+          <Link
             href="/board"
             className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >

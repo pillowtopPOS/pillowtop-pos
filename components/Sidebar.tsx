@@ -7,7 +7,6 @@ import {
   LayoutGrid,
   Calendar,
   Package,
-  Tag,
   Lightbulb,
   ChevronLeft,
   ChevronRight,
@@ -33,7 +32,6 @@ const NAV = [
   { href: "/board", label: "Board", icon: LayoutGrid },
   { href: "/my-work", label: "My Work", icon: Calendar },
   { href: "/inventory", label: "Inventory", icon: Package },
-  { href: "/units", label: "Units", icon: Tag },
   { href: "/opportunities", label: "Opportunities", icon: Lightbulb },
 ];
 
@@ -205,7 +203,11 @@ export default function Sidebar({
           {[...NAV, ...(isAdmin ? [{ href: "/settings", label: "Settings", icon: SettingsIcon }] : [])].map((item) => {
             const Icon = item.icon;
             const isActive =
-              pathname === item.href || pathname.startsWith(`${item.href}/`);
+              item.href === "/inventory"
+                ? ["/inventory", "/units", "/purchase-orders", "/transfers", "/counts"].some(
+                    (p) => pathname === p || pathname.startsWith(`${p}/`)
+                  )
+                : pathname === item.href || pathname.startsWith(`${item.href}/`);
             return (
               <Link
                 key={item.href}
