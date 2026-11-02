@@ -47,16 +47,17 @@ begin
     return new;
   end if;
 
-  if new.journey_number is null then
-    v_code := upper(public.ensure_store_code(new.store_id));
-    select s.company_id into v_company
-    from public.stores s where s.id = new.store_id;
-    v_n := public.next_document_number(v_company, new.store_id, 'sleep_journey');
-    new.journey_number := 'SJ-' || v_code || lpad(v_n::text, 5, '0');
-  end if;
+  -- Always assign: a caller-supplied number is ignored, the counter owns it.
+  v_code := upper(public.ensure_store_code(new.store_id));
+  select s.company_id into v_company
+  from public.stores s where s.id = new.store_id;
+  v_n := public.next_document_number(v_company, new.store_id, 'sleep_journey');
+  new.journey_number := 'SJ-' || v_code || lpad(v_n::text, 5, '0');
   return new;
 end;
 $$;
+
+revoke execute on function public.assign_journey_number() from public, anon;
 
 drop trigger if exists trg_sleep_journeys_number on public.sleep_journeys;
 create trigger trg_sleep_journeys_number
@@ -110,38 +111,18 @@ immutable
 as $$
 declare
   v text;
-  v_code text;
-  v_num text;
 begin
   if p_input is null then
     return null;
   end if;
   v := upper(regexp_replace(p_input, '[^A-Za-z0-9]', '', 'g'));
   v := regexp_replace(v, '^SJ', '');
-  if v !~ '^[A-Z]+[0-9]*[0-9]+$' then
+  if v !~ '^[A-Z]+[0-9]+$' then
     return null;
   end if;
-  -- letters (plus optional store-code digits) first, then the trailing
-  -- numeric counter; ambiguity between code digits and counter digits is
-  -- resolved by taking the last 5+ digits as the counter when possible.
-  v_code := substring(v from '^[A-Z]+[0-9]*?(?=[0-9]{5,}$)');
-  if v_code is null then
-    v_code := substring(v from '^[A-Z]+[0-9]*');
-    v_num := substring(v from '[0-9]+$');
-    if v_code is null or v_num is null or v_code = '' or length(v_num) = 0 then
-      return null;
-    end if;
-    -- store code must keep at least one letter
-    v_code := substring(v from 1 for length(v) - length(v_num));
-  else
-    v_num := substring(v from length(v_code) + 1);
-  end if;
-  if v_code !~ '[A-Z]' or v_num is null or v_num = '' then
-    return null;
-  end if;
-  return 'SJ-' || v_code || v_num;
+  return 'SJ-' || v;
 end;
-$$;
+$$$$;
 
 grant execute on function public.normalize_journey_number(text) to authenticated;
 revoke execute on function public.normalize_journey_number(text) from public, anon;
@@ -150,4 +131,5 @@ revoke execute on function public.normalize_journey_number(text) from public, an
 select
   (select count(*) from public.sleep_journeys where journey_number is null) as missing,
   (select count(*) from public.sleep_journeys where journey_number is not null) as numbered,
-  public.normalize_journey_number('sj ms 00042') as normalize_sample;
+  public.normalize_journey_number('sj ms 00042') as normalize_sample,
+  public.normalize_journey_number('00042') as normalize_digits_only;
