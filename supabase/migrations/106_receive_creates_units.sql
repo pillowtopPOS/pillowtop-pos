@@ -88,3 +88,4 @@ comment on function public.receive_purchase_order_line(uuid, integer) is
    empty arrays.';
 
 grant execute on function public.receive_purchase_order_line(uuid, integer) to authenticated;
+revoke execute on function public.receive_purchase_order_line(uuid, integer) from public, anon;
