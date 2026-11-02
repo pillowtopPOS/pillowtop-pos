@@ -122,7 +122,7 @@ begin
   end if;
   return 'SJ-' || v;
 end;
-$$$$;
+$$;
 
 grant execute on function public.normalize_journey_number(text) to authenticated;
 revoke execute on function public.normalize_journey_number(text) from public, anon;
