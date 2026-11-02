@@ -232,7 +232,7 @@ export default function NewPurchaseOrderPage() {
                 <input
                   value={journeyQuery}
                   onChange={(e) => setJourneyQuery(e.target.value)}
-                  placeholder="Link a customer journey (optional) — search by name…"
+                  placeholder="Link a customer journey (optional) — search by name or SJ number…"
                   className="w-full rounded border px-3 py-2 text-sm"
                 />
                 {journeyQuery.trim() && journeyOptions.length > 0 && (
