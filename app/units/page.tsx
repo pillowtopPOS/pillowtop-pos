@@ -456,6 +456,20 @@ export default function UnitsPage() {
             )}
           </dl>
 
+          {unit.status !== "VOID" && (
+            <button
+              onClick={() =>
+                window.open(
+                  `/units/labels?numbers=${unit.unit_number}`,
+                  "_blank"
+                )
+              }
+              className="mt-3 rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+            >
+              Reprint label
+            </button>
+          )}
+
           <h2 className="mt-5 text-sm font-semibold text-slate-900">
             History
           </h2>

@@ -69,6 +69,7 @@ export default function PurchaseOrderDetailPage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [shipOpen, setShipOpen] = useState(false);
   const [canReceive, setCanReceive] = useState(false);
+  const [lineUnits, setLineUnits] = useState<Record<string, number[]>>({});
   const [tracking, setTracking] = useState("");
   const [shipping, setShipping] = useState(false);
 
@@ -104,6 +105,27 @@ export default function PurchaseOrderDetailPage() {
     setProducts(pr);
     setPO(p);
     setEvents(ev);
+    if (p) {
+      const receivedLineIds = p.lines
+        .filter((l) => l.quantity_received > 0)
+        .map((l) => l.id);
+      if (receivedLineIds.length > 0) {
+        const { data: unitRows } = await createClient()
+          .from("units")
+          .select("purchase_order_line_item_id, unit_number")
+          .in("purchase_order_line_item_id", receivedLineIds)
+          .order("unit_number");
+        const map: Record<string, number[]> = {};
+        (unitRows ?? []).forEach((u: any) => {
+          const k = u.purchase_order_line_item_id;
+          map[k] = map[k] ?? [];
+          map[k].push(u.unit_number);
+        });
+        setLineUnits(map);
+      } else {
+        setLineUnits({});
+      }
+    }
     setLoading(false);
   }, [poId]);
 
@@ -412,6 +434,22 @@ export default function PurchaseOrderDetailPage() {
                 <span className="text-slate-500">
                   Ordered: {l.quantity_ordered} · Received:{" "}
                   {l.quantity_received}
+                  {(lineUnits[l.id]?.length ?? 0) > 0 && (
+                    <>
+                      {" · "}
+                      <button
+                        onClick={() =>
+                          window.open(
+                            `/units/labels?numbers=${lineUnits[l.id].join(",")}`,
+                            "_blank"
+                          )
+                        }
+                        className="text-brand-600 hover:underline"
+                      >
+                        Unit labels ({lineUnits[l.id].length})
+                      </button>
+                    </>
+                  )}
                 </span>
               </div>
             ),
