@@ -554,6 +554,15 @@ export default function JourneyWorkspace({
 
   const [lineItems, setLineItems] = useState<JourneyLineItem[]>([]);
   const [lineItemsLoading, setLineItemsLoading] = useState(false);
+  const [journeyUnits, setJourneyUnits] = useState<
+    {
+      requirement_id: string | null;
+      variant_id: string;
+      unit_id: string;
+      unit_number: number;
+      status: string;
+    }[]
+  >([]);
   const [reassignMode, setReassignMode] = useState<"choose" | "store" | "employee" | null>(null);
   const [reassignTarget, setReassignTarget] = useState("");
   const [reassignReason, setReassignReason] = useState("");
@@ -809,6 +818,11 @@ export default function JourneyWorkspace({
       setLineItems(items);
       setLineItemsLoading(false);
     });
+    Promise.resolve(
+      createClient().rpc("get_journey_units", { p_journey_id: journey.id })
+    )
+      .then(({ data }) => setJourneyUnits((data ?? []) as any))
+      .catch(() => setJourneyUnits([]));
     if (journey.customer) {
       fetchCustomerContacts(journey.customer.id).then(setCustomerContacts);
     } else {
@@ -1374,8 +1388,50 @@ export default function JourneyWorkspace({
                       <div className="mt-0.5 text-xs text-slate-500">
                         Qty {item.quantity} · ${item.unit_price.toFixed(2)}
                       </div>
+                      {item.product_id &&
+                        journeyUnits.some(
+                          (u) =>
+                            u.requirement_id && u.variant_id === item.product_id
+                        ) && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {journeyUnits
+                              .filter(
+                                (u) =>
+                                  u.requirement_id &&
+                                  u.variant_id === item.product_id
+                              )
+                              .map((u) => (
+                                <span
+                                  key={u.unit_id}
+                                  title={u.status}
+                                  className="rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 font-mono text-[10px] text-indigo-700"
+                                >
+                                  Unit {u.unit_number}
+                                </span>
+                              ))}
+                          </div>
+                        )}
                     </div>
                   ))}
+                </div>
+              )}
+
+              {journeyUnits.some((u) => u.requirement_id === null) && (
+                <div className="mt-2 text-xs text-slate-500">
+                  <span className="font-medium text-slate-700">
+                    Delivered units:
+                  </span>{" "}
+                  {journeyUnits
+                    .filter((u) => u.requirement_id === null)
+                    .map((u) => (
+                      <span
+                        key={u.unit_id}
+                        title="Delivered"
+                        className="mr-1 inline-block rounded border border-slate-300 bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-600"
+                      >
+                        Unit {u.unit_number}
+                      </span>
+                    ))}
                 </div>
               )}
 

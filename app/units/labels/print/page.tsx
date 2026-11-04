@@ -78,6 +78,207 @@ function StockLabel({ u, rotate }: { u: LabelUnit; rotate: "cw" | "ccw" }) {
   );
 }
 
+type CustomerRow = {
+  unit_id: string;
+  unit_number: number;
+  journey_id: string;
+  journey_number: string | null;
+  customer_name: string | null;
+  requirement_id: string;
+};
+
+// Customer-order label: same sheet, margin, rotation and barcode module
+// size as the stock label so scanning finds the same unit.
+function CustomerLabel({
+  u,
+  rotate,
+}: {
+  u: CustomerRow;
+  rotate: "cw" | "ccw";
+}) {
+  const name = u.customer_name ?? u.journey_number ?? "?";
+  const nameSize = name.length > 24 ? "28px" : name.length > 14 ? "38px" : "48px";
+  return (
+    <div className="sheet">
+      <div className={`land ${rotate}`}>
+        <div
+          className="absolute flex flex-col"
+          style={{
+            inset: "0.14in",
+            border: "2px solid black",
+            padding: "0.10in",
+          }}
+        >
+          <div className="flex items-start justify-between">
+            <span
+              className="text-[14px] font-bold"
+              style={{
+                letterSpacing: "1px",
+                border: "2px solid black",
+                padding: "3px 10px",
+              }}
+            >
+              CUSTOMER ORDER
+            </span>
+            <span
+              className="text-[96px] font-extrabold"
+              style={{ lineHeight: 1, letterSpacing: "-1px" }}
+            >
+              {u.unit_number}
+            </span>
+          </div>
+          <div
+            className="mt-1 font-extrabold leading-tight"
+            style={{ fontSize: nameSize }}
+          >
+            {name}
+          </div>
+          {u.journey_number && (
+            <div className="mt-0.5 font-mono text-[24px]">{u.journey_number}</div>
+          )}
+          <div className="mt-auto">
+            <Code128Barcode
+              value={String(u.unit_number)}
+              height="0.85in"
+              width="100%"
+            />
+            <div
+              className="mt-1 text-center text-[22px]"
+              style={{ letterSpacing: "6px" }}
+            >
+              {u.unit_number}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// mode=customer: same sheet mechanics, labels from get_unit_customer_labels.
+// Returns no UI for unassigned units; logs 'customer' prints the same way.
+function CustomerLabelsInner({ rotate }: { rotate: "cw" | "ccw" }) {
+  const params = useSearchParams();
+  const [state, setState] = useState<
+    | { kind: "loading" }
+    | { kind: "badparam" }
+    | { kind: "failed"; message: string }
+    | { kind: "ready"; rows: CustomerRow[] }
+  >({ kind: "loading" });
+  const [logNote, setLogNote] = useState<string | null>(null);
+  const lastLogAt = useRef(0);
+  const rowsRef = useRef<CustomerRow[]>([]);
+
+  const unitIds = (params.get("units") ?? "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter((x) => /^[0-9a-fA-F-]{36}$/.test(x));
+
+  useEffect(() => {
+    let cancelled = false;
+    if (unitIds.length === 0 || unitIds.length > 500) {
+      setState({ kind: "badparam" });
+      return;
+    }
+    const s = createClient();
+    Promise.resolve(
+      s.rpc("get_unit_customer_labels", { p_unit_ids: unitIds })
+    )
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          setState({ kind: "failed", message: error.message });
+          return;
+        }
+        const rows = (data ?? []) as CustomerRow[];
+        rowsRef.current = rows;
+        setState({ kind: "ready", rows });
+      })
+      .catch((e: unknown) => {
+        if (!cancelled)
+          setState({
+            kind: "failed",
+            message: e instanceof Error ? e.message : "Load failed",
+          });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    function afterPrint() {
+      const now = Date.now();
+      if (now - lastLogAt.current < 2000) return;
+      if (rowsRef.current.length === 0) return;
+      lastLogAt.current = now;
+      const ids = rowsRef.current.map((r) => r.unit_id);
+      const s = createClient();
+      s.rpc("record_unit_labels_printed", {
+        p_unit_ids: ids,
+        p_label_kind: "customer",
+      }).then(({ error }) => {
+        setLogNote(
+          error
+            ? `Print log failed: ${error.message}`
+            : `Print logged for ${ids.length} label${ids.length === 1 ? "" : "s"}.`
+        );
+      });
+    }
+    window.addEventListener("afterprint", afterPrint);
+    return () => window.removeEventListener("afterprint", afterPrint);
+  }, []);
+
+  return (
+    <>
+      <div className="no-print mx-auto flex max-w-2xl items-center gap-4 p-4">
+        <Link href="/units" className="text-sm text-brand-600 hover:underline">
+          Back
+        </Link>
+        {state.kind === "ready" && state.rows.length > 0 && (
+          <>
+            <span className="text-sm text-slate-600">
+              {state.rows.length} label{state.rows.length === 1 ? "" : "s"}
+            </span>
+            <button
+              onClick={() => window.print()}
+              className="rounded bg-brand-600 px-4 py-1.5 text-sm text-white"
+            >
+              Print
+            </button>
+          </>
+        )}
+        {logNote && <span className="text-xs text-slate-500">{logNote}</span>}
+      </div>
+      {state.kind === "badparam" && (
+        <p className="no-print p-4 text-sm text-slate-600">
+          Give unit ids in the address like
+          /units/labels/print?mode=customer&amp;units=&lt;id&gt;,&lt;id&gt;.
+        </p>
+      )}
+      {state.kind === "failed" && (
+        <p className="no-print p-4 text-sm text-red-600">{state.message}</p>
+      )}
+      {state.kind === "loading" && (
+        <p className="no-print p-4 text-sm text-slate-500">Loading labels...</p>
+      )}
+      {state.kind === "ready" && state.rows.length === 0 && (
+        <p className="no-print p-4 text-sm text-slate-600">
+          These units are not assigned to a customer order.
+        </p>
+      )}
+      {state.kind === "ready" && state.rows.length > 0 && (
+        <div className="labels">
+          {state.rows.map((u) => (
+            <CustomerLabel key={u.unit_id} u={u} rotate={rotate} />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 function LabelsInner() {
   const params = useSearchParams();
   const [state, setState] = useState<State>({ kind: "loading" });
@@ -85,6 +286,7 @@ function LabelsInner() {
   const lastLogAt = useRef(0);
   const unitsRef = useRef<LabelUnit[]>([]);
   const rotate = params.get("rotate") === "cw" ? "cw" : "ccw";
+  const mode = params.get("mode") === "customer" ? "customer" : "stock";
 
   const numbers = (params.get("numbers") ?? "")
     .split(",")
@@ -177,6 +379,10 @@ function LabelsInner() {
           .sheet { width: 6in; height: 4in; box-shadow: 0 1px 4px rgba(0,0,0,.25) }
         }
       `}</style>
+      {mode === "customer" ? (
+        <CustomerLabelsInner rotate={rotate} />
+      ) : (
+        <>
       <div className="no-print mx-auto flex max-w-2xl items-center gap-4 p-4">
         <Link href="/units" className="text-sm text-brand-600 hover:underline">
           Back
@@ -225,6 +431,8 @@ function LabelsInner() {
               <StockLabel key={u.id} u={u} rotate={rotate} />
             ))}
           </div>
+        </>
+      )}
         </>
       )}
     </main>
