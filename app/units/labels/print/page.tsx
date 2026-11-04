@@ -25,9 +25,9 @@ function StockLabel({ u, rotate }: { u: LabelUnit; rotate: "cw" | "ccw" }) {
         <div
           className="absolute flex flex-col"
           style={{
-            inset: "0.04in",
+            inset: "0.14in",
             border: "2px solid black",
-            padding: "0.2in 0.25in",
+            padding: "0.10in",
           }}
         >
           <div className="flex items-start justify-between">
@@ -84,7 +84,7 @@ function LabelsInner() {
   const [logNote, setLogNote] = useState<string | null>(null);
   const lastLogAt = useRef(0);
   const unitsRef = useRef<LabelUnit[]>([]);
-  const rotate = params.get("rotate") === "ccw" ? "ccw" : "cw";
+  const rotate = params.get("rotate") === "cw" ? "cw" : "ccw";
 
   const numbers = (params.get("numbers") ?? "")
     .split(",")
