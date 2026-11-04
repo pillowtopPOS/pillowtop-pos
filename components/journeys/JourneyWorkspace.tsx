@@ -818,16 +818,25 @@ export default function JourneyWorkspace({
       setLineItems(items);
       setLineItemsLoading(false);
     });
+    setJourneyUnits([]);
+    let unitsCancelled = false;
     Promise.resolve(
       createClient().rpc("get_journey_units", { p_journey_id: journey.id })
     )
-      .then(({ data }) => setJourneyUnits((data ?? []) as any))
-      .catch(() => setJourneyUnits([]));
+      .then(({ data }) => {
+        if (!unitsCancelled) setJourneyUnits((data ?? []) as any);
+      })
+      .catch(() => {
+        if (!unitsCancelled) setJourneyUnits([]);
+      });
     if (journey.customer) {
       fetchCustomerContacts(journey.customer.id).then(setCustomerContacts);
     } else {
       setCustomerContacts([]);
     }
+    return () => {
+      unitsCancelled = true;
+    };
   }, [journey.id, events]);
 
   useEffect(() => {
@@ -1388,6 +1397,9 @@ export default function JourneyWorkspace({
                       <div className="mt-0.5 text-xs text-slate-500">
                         Qty {item.quantity} · ${item.unit_price.toFixed(2)}
                       </div>
+                      {/* Two lines with the same product share one
+                          requirement, so both lines show that product's
+                          chips here. */}
                       {item.product_id &&
                         journeyUnits.some(
                           (u) =>
