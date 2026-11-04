@@ -88,7 +88,7 @@ begin
         'unit_number', u.unit_number,
         'journey_id', jir.journey_id,
         'journey_number', sj.journey_number,
-        'customer_name', trim(c.first_name || ' ' || c.last_name),
+        'customer_name', nullif(trim(concat_ws(' ', c.first_name, c.last_name)), ''),
         'requirement_id', jir.id
       ) order by u.unit_number), '[]'::jsonb)
     into v_assignments
@@ -146,7 +146,7 @@ begin
 
   return query
   select u.id, u.unit_number, jir.journey_id, sj.journey_number,
-    trim(c.first_name || ' ' || c.last_name), jir.id
+    nullif(trim(concat_ws(' ', c.first_name, c.last_name)), ''), jir.id
   from public.units u
   join public.journey_inventory_requirements jir
     on jir.id = u.assigned_requirement_id
@@ -154,6 +154,10 @@ begin
   join public.customers c on c.id = sj.customer_id
   where u.id = any(p_unit_ids)
     and u.company_id = v_company
+    -- Receivers get names for the orders they just filled; everyone else
+    -- only sees names on journeys they could already open.
+    and (public.has_permission('inventory.receive_po')
+         or public.is_journey_visible(jir.journey_id))
   order by u.unit_number;
 end;
 $$;
@@ -183,12 +187,19 @@ begin
     raise exception 'Journey not found.';
   end if;
 
+  -- move_unit clears assigned_requirement_id on DELIVERED, so delivered
+  -- units are joined through delivered_journey_id instead. Union keeps
+  -- both sets with no duplicates (a unit is in exactly one).
   return query
   select jir.id, jir.variant_id, u.id, u.unit_number, u.status::text
   from public.journey_inventory_requirements jir
   join public.units u on u.assigned_requirement_id = jir.id
   where jir.journey_id = p_journey_id
-  order by jir.id, u.unit_number;
+  union all
+  select null, u.product_id, u.id, u.unit_number, u.status::text
+  from public.units u
+  where u.delivered_journey_id = p_journey_id
+  order by 4;
 end;
 $$;
 
