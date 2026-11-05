@@ -347,6 +347,10 @@ export default function UnitsPage() {
 
   const unit = lookup.kind === "found" ? lookup.unit : null;
 
+  useEffect(() => {
+    if (unit) window.scrollTo({ top: 0 });
+  }, [unit]);
+
   // One call per looked-up unit, not per render. No client-side permission
   // logic: the rpc decides and returns nothing for units we cannot label.
   useEffect(() => {
@@ -393,6 +397,8 @@ export default function UnitsPage() {
       <Suspense>
         <UnitsList
           locations={stores}
+          statusLabel={STATUS_LABEL}
+          hidden={unit != null}
           onOpenUnit={(n) => {
             setQuery(String(n));
             setSearched(String(n));

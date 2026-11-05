@@ -46,9 +46,13 @@ const COLS: { label: string; sort: string }[] = [
 
 export default function UnitsList({
   locations,
+  statusLabel,
+  hidden,
   onOpenUnit,
 }: {
   locations: { id: string; name: string }[];
+  statusLabel: Record<string, string>;
+  hidden: boolean;
   onOpenUnit: (unitNumber: number) => void;
 }) {
   const params = useSearchParams();
@@ -56,11 +60,14 @@ export default function UnitsList({
   const pathname = usePathname();
 
   const q = params.get("q") ?? "";
-  const status = params.get("status") ?? "";
+  const rawStatus = params.get("status") ?? "";
+  const status = STATUSES.includes(rawStatus) ? rawStatus : "";
   const loc = params.get("loc") ?? "";
   const held = params.get("held") === "1";
   const showVoid = params.get("void") === "1";
-  const sort = params.get("sort") ?? "unit_number";
+  const VALID_SORTS = COLS.map((c) => c.sort);
+  const rawSort = params.get("sort") ?? "unit_number";
+  const sort = VALID_SORTS.includes(rawSort) ? rawSort : "unit_number";
   const dir = params.get("dir") === "asc" ? "asc" : "desc";
   const page = Math.max(1, Number(params.get("page") ?? "1") || 1);
   const pageSizeRaw = Number(params.get("pageSize") ?? "50") || 50;
@@ -71,9 +78,14 @@ export default function UnitsList({
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [retryTick, setRetryTick] = useState(0);
   const seq = useRef(0);
+  const lastPushedQ = useRef(q);
+  const pendingDigitOpen = useRef<number | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   function setParams(next: Record<string, string>) {
+    if ("q" in next) lastPushedQ.current = next.q;
     const p = new URLSearchParams(params.toString());
     for (const [k, v] of Object.entries(next)) {
       if (v === "" || v === null) p.delete(k);
@@ -85,15 +97,33 @@ export default function UnitsList({
   // Debounced search draft -> URL q, resetting to page 1.
   useEffect(() => {
     if (draft === q) return;
-    const t = window.setTimeout(
-      () => setParams({ q: draft, page: "1" }),
-      300
-    );
+    const t = window.setTimeout(applySearch, 300);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft]);
-  // External q changes (back/forward) refill the box.
-  useEffect(() => setDraft(q), [q]);
+
+  // Only an outside q change (Back/Forward) refills the box; our own
+  // pushes never eat keystrokes typed between debounce and apply.
+  useEffect(() => {
+    if (q !== lastPushedQ.current) {
+      lastPushedQ.current = q;
+      setDraft(q);
+    }
+  }, [q]);
+
+  function applySearch() {
+    // A pure-digit search wants the matching unit opened when it lands.
+    pendingDigitOpen.current = /^\d+$/.test(draft.trim())
+      ? Number(draft.trim())
+      : null;
+    setParams({ q: draft, page: "1" });
+  }
+
+  // Warehouse scanners type digits and press Enter.
+  useEffect(() => {
+    searchRef.current?.focus();
+    searchRef.current?.select();
+  }, []);
 
   useEffect(() => {
     const my = ++seq.current;
@@ -123,13 +153,20 @@ export default function UnitsList({
       setRows(list);
       const t = list.length > 0 ? Number(list[0].total_count) : 0;
       setTotal(t);
+      if (pendingDigitOpen.current != null) {
+        const hit = list.find(
+          (r) => r.unit_number === pendingDigitOpen.current
+        );
+        pendingDigitOpen.current = null;
+        if (hit) onOpenUnit(hit.unit_number);
+      }
       // Offset past the end: return to page 1 once.
       if (list.length === 0 && page > 1) {
         setParams({ page: "1" });
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, status, loc, held, showVoid, sort, dir, page, pageSize]);
+  }, [q, status, loc, held, showVoid, sort, dir, page, pageSize, retryTick]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
@@ -149,10 +186,18 @@ export default function UnitsList({
   }
 
   return (
-    <section className="mt-6 max-w-6xl">
+    <section className={`mt-6 max-w-6xl ${hidden ? "hidden" : ""}`}>
       <input
+        ref={searchRef}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
+        onFocus={(e) => e.target.select()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            applySearch();
+          }
+        }}
         placeholder="Search SKU, item name, customer, SJ number, unit number, or unit id"
         className="w-full rounded-md border border-slate-300 px-4 py-2.5 text-sm"
       />
@@ -166,7 +211,7 @@ export default function UnitsList({
           <option value="">All statuses</option>
           {STATUSES.map((st) => (
             <option key={st} value={st}>
-              {st}
+              {statusLabel[st] ?? st}
             </option>
           ))}
         </select>
@@ -208,7 +253,7 @@ export default function UnitsList({
         <div className="mt-4">
           <p className="text-sm text-red-600">{error}</p>
           <button
-            onClick={() => setParams({})}
+            onClick={() => setRetryTick((n) => n + 1)}
             className="mt-2 rounded-md border border-slate-300 px-3 py-1 text-sm"
           >
             Retry
@@ -258,7 +303,9 @@ export default function UnitsList({
                 <td className="px-2 py-2">{u.sku}</td>
                 <td className="px-2 py-2">{u.item_name}</td>
                 <td className="px-2 py-2">{u.location_name}</td>
-                <td className="px-2 py-2">{u.status}</td>
+                <td className="px-2 py-2">
+                  {statusLabel[u.status] ?? u.status}
+                </td>
                 <td className="px-2 py-2">
                   {new Date(u.created_at).toLocaleDateString()}
                 </td>
