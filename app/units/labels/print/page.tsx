@@ -49,23 +49,29 @@ function UnitLabel({
   const name = u.customer_name ?? null;
   const nameSize = !name
     ? "44px"
-    : name.length > 24
-      ? "26px"
-      : name.length > 14
-        ? "36px"
-        : "44px";
-  const skuLen = (u.sku ?? "").length;
-  const skuSize = compact
-    ? skuLen > 22
-      ? "22px"
-      : skuLen > 14
+    : name.length > 30
+      ? "24px"
+      : name.length > 24
         ? "26px"
-        : "30px"
-    : skuLen > 22
-      ? "26px"
-      : skuLen > 14
-        ? "32px"
-        : "42px";
+        : name.length > 14
+          ? "36px"
+          : "44px";
+  const skuLen = (u.sku ?? "").length;
+  const itemLen = (u.item_name ?? "").length;
+  // Item name is the big line on both labels; the SKU line under it is
+  // smaller, nowrap, and steps down once past 22 characters.
+  const itemSize = compact
+    ? itemLen > 50
+      ? "16px"
+      : itemLen > 30
+        ? "18px"
+        : "22px"
+    : itemLen > 40
+      ? "24px"
+      : itemLen > 20
+        ? "30px"
+        : "36px";
+  const skuSize = skuLen > 22 ? (compact ? "12px" : "14px") : compact ? "16px" : "20px";
   return (
     <div className="sheet">
       <div className={`land ${rotate}`}>
@@ -117,25 +123,25 @@ function UnitLabel({
               {name ?? u.journey_number ?? "?"}
             </div>
           )}
-          {u.sku && (
-            <div
-              className="mt-0.5 shrink-0 whitespace-nowrap font-extrabold leading-tight"
-              style={{ fontSize: skuSize }}
-            >
-              {u.sku}
-            </div>
-          )}
           {u.item_name && (
             <div
-              className="mt-0.5 shrink-0 overflow-hidden leading-snug"
+              className="mt-0.5 shrink-0 overflow-hidden font-bold leading-tight"
               style={{
-                fontSize: compact ? "16px" : "20px",
+                fontSize: itemSize,
                 display: "-webkit-box",
                 WebkitBoxOrient: "vertical",
                 WebkitLineClamp: 2,
               }}
             >
-              <span className="font-bold">Item:</span> {u.item_name}
+              {u.item_name}
+            </div>
+          )}
+          {u.sku && (
+            <div
+              className="mt-0.5 shrink-0 whitespace-nowrap leading-tight"
+              style={{ fontSize: skuSize }}
+            >
+              <span className="font-bold">SKU:</span> {u.sku}
             </div>
           )}
           <div className="mt-auto shrink-0">
