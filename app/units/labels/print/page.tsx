@@ -155,6 +155,106 @@ function CustomerLabel({
   );
 }
 
+type LogState =
+  | { kind: "idle" }
+  | { kind: "logging" }
+  | { kind: "ok"; count: number }
+  | { kind: "failed"; message: string };
+
+// The real Edge/Chrome print dialog freezes the page around the afterprint
+// event, which kills an in-flight RPC ("The provided callback is no longer
+// runnable"). So the log waits for the dialog to release the page, then
+// retries twice. A log failure must never block printing or crash the page.
+function useLabelPrintLog(getIds: () => string[], kind: "stock" | "customer") {
+  const [log, setLog] = useState<LogState>({ kind: "idle" });
+  const lastLogAt = useRef(0);
+  const pendingIds = useRef<string[]>([]);
+  const getIdsRef = useRef(getIds);
+  getIdsRef.current = getIds;
+
+  const attempt = (tryIndex: number) => {
+    const ids = pendingIds.current;
+    const delays = [0, 2000, 5000];
+    setLog({ kind: "logging" });
+    window.setTimeout(() => {
+      const s = createClient();
+      Promise.resolve(
+        s.rpc("record_unit_labels_printed", {
+          p_unit_ids: ids,
+          p_label_kind: kind,
+        })
+      )
+        .then(({ error }) => {
+          if (error) {
+            if (tryIndex < delays.length - 1) {
+              attempt(tryIndex + 1);
+            } else {
+              setLog({ kind: "failed", message: error.message });
+            }
+          } else {
+            setLog({ kind: "ok", count: ids.length });
+          }
+        })
+        .catch((e: unknown) => {
+          const msg = e instanceof Error ? e.message : "log failed";
+          if (tryIndex < delays.length - 1) {
+            attempt(tryIndex + 1);
+          } else {
+            setLog({ kind: "failed", message: msg });
+          }
+        });
+    }, delays[tryIndex]);
+  };
+
+  useEffect(() => {
+    function afterPrint() {
+      const now = Date.now();
+      if (now - lastLogAt.current < 2000) return;
+      const ids = getIdsRef.current();
+      if (ids.length === 0) return;
+      lastLogAt.current = now;
+      pendingIds.current = ids;
+      // Give the print dialog time to release the page before calling out.
+      window.setTimeout(() => attempt(0), 800);
+    }
+    window.addEventListener("afterprint", afterPrint);
+    return () => window.removeEventListener("afterprint", afterPrint);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const retry = () => {
+    if (pendingIds.current.length > 0) attempt(0);
+  };
+
+  return { log, retry };
+}
+
+function PrintLogNote({
+  log,
+  retry,
+}: {
+  log: LogState;
+  retry: () => void;
+}) {
+  if (log.kind === "idle") return null;
+  if (log.kind === "logging")
+    return <span className="text-xs text-slate-500">Logging print...</span>;
+  if (log.kind === "ok")
+    return (
+      <span className="text-xs text-slate-500">
+        Print logged for {log.count} label{log.count === 1 ? "" : "s"}.
+      </span>
+    );
+  return (
+    <span className="text-xs text-red-600">
+      Print log failed: {log.message}{" "}
+      <button onClick={retry} className="underline">
+        Retry log
+      </button>
+    </span>
+  );
+}
+
 // mode=customer: same sheet mechanics, labels from get_unit_customer_labels.
 // Returns no UI for unassigned units; logs 'customer' prints the same way.
 function CustomerLabelsInner({ rotate }: { rotate: "cw" | "ccw" }) {
@@ -165,8 +265,6 @@ function CustomerLabelsInner({ rotate }: { rotate: "cw" | "ccw" }) {
     | { kind: "failed"; message: string }
     | { kind: "ready"; rows: CustomerRow[] }
   >({ kind: "loading" });
-  const [logNote, setLogNote] = useState<string | null>(null);
-  const lastLogAt = useRef(0);
   const rowsRef = useRef<CustomerRow[]>([]);
 
   const unitIds = (params.get("units") ?? "")
@@ -207,28 +305,10 @@ function CustomerLabelsInner({ rotate }: { rotate: "cw" | "ccw" }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    function afterPrint() {
-      const now = Date.now();
-      if (now - lastLogAt.current < 2000) return;
-      if (rowsRef.current.length === 0) return;
-      lastLogAt.current = now;
-      const ids = rowsRef.current.map((r) => r.unit_id);
-      const s = createClient();
-      s.rpc("record_unit_labels_printed", {
-        p_unit_ids: ids,
-        p_label_kind: "customer",
-      }).then(({ error }) => {
-        setLogNote(
-          error
-            ? `Print log failed: ${error.message}`
-            : `Print logged for ${ids.length} label${ids.length === 1 ? "" : "s"}.`
-        );
-      });
-    }
-    window.addEventListener("afterprint", afterPrint);
-    return () => window.removeEventListener("afterprint", afterPrint);
-  }, []);
+  const { log, retry } = useLabelPrintLog(
+    () => rowsRef.current.map((r) => r.unit_id),
+    "customer"
+  );
 
   return (
     <>
@@ -249,7 +329,7 @@ function CustomerLabelsInner({ rotate }: { rotate: "cw" | "ccw" }) {
             </button>
           </>
         )}
-        {logNote && <span className="text-xs text-slate-500">{logNote}</span>}
+        <PrintLogNote log={log} retry={retry} />
       </div>
       {state.kind === "badparam" && (
         <p className="no-print p-4 text-sm text-slate-600">
@@ -282,8 +362,6 @@ function CustomerLabelsInner({ rotate }: { rotate: "cw" | "ccw" }) {
 function LabelsInner() {
   const params = useSearchParams();
   const [state, setState] = useState<State>({ kind: "loading" });
-  const [logNote, setLogNote] = useState<string | null>(null);
-  const lastLogAt = useRef(0);
   const unitsRef = useRef<LabelUnit[]>([]);
   const rotate = params.get("rotate") === "cw" ? "cw" : "ccw";
   const mode = params.get("mode") === "customer" ? "customer" : "stock";
@@ -321,28 +399,10 @@ function LabelsInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    function afterPrint() {
-      const now = Date.now();
-      if (now - lastLogAt.current < 2000) return;
-      if (unitsRef.current.length === 0) return;
-      lastLogAt.current = now;
-      const ids = unitsRef.current.map((u) => u.id);
-      const s = createClient();
-      s.rpc("record_unit_labels_printed", {
-        p_unit_ids: ids,
-        p_label_kind: "stock",
-      }).then(({ data, error }) => {
-        setLogNote(
-          error
-            ? `Print log failed: ${error.message}`
-            : `Print logged for ${ids.length} label${ids.length === 1 ? "" : "s"}.`
-        );
-      });
-    }
-    window.addEventListener("afterprint", afterPrint);
-    return () => window.removeEventListener("afterprint", afterPrint);
-  }, []);
+  const { log, retry } = useLabelPrintLog(
+    () => unitsRef.current.map((u) => u.id),
+    "stock"
+  );
 
   return (
     <main>
@@ -401,7 +461,7 @@ function LabelsInner() {
             </button>
           </>
         )}
-        {logNote && <span className="text-xs text-slate-500">{logNote}</span>}
+        <PrintLogNote log={log} retry={retry} />
       </div>
 
       {state.kind === "badparam" && (
