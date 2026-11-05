@@ -49,11 +49,13 @@ export default function UnitsList({
   statusLabel,
   hidden,
   onOpenUnit,
+  onCloseDetail,
 }: {
   locations: { id: string; name: string }[];
   statusLabel: Record<string, string>;
   hidden: boolean;
   onOpenUnit: (unitNumber: number) => void;
+  onCloseDetail: () => void;
 }) {
   const params = useSearchParams();
   const router = useRouter();
@@ -97,7 +99,7 @@ export default function UnitsList({
   // Debounced search draft -> URL q, resetting to page 1.
   useEffect(() => {
     if (draft === q) return;
-    const t = window.setTimeout(applySearch, 300);
+    const t = window.setTimeout(() => applySearch(false), 300);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft]);
@@ -111,11 +113,20 @@ export default function UnitsList({
     }
   }, [q]);
 
-  function applySearch() {
-    // A pure-digit search wants the matching unit opened when it lands.
-    pendingDigitOpen.current = /^\d+$/.test(draft.trim())
-      ? Number(draft.trim())
-      : null;
+  function applySearch(fromEnter: boolean) {
+    // Only an Enter keypress arms the unit opener: slow typing must
+    // filter the list without ever opening a detail mid-type. A non-digit
+    // Enter clears any armed opener so it can never fire later.
+    pendingDigitOpen.current =
+      fromEnter && /^\d+$/.test(draft.trim()) ? Number(draft.trim()) : null;
+    if (fromEnter && draft === q) {
+      // Same search: the URL does not change, so force a refetch.
+      setRetryTick((n) => n + 1);
+      return;
+    }
+    // A changed search while a detail is open goes back to the list;
+    // an armed digit opener still lands on its unit below.
+    if (hidden && draft !== q) onCloseDetail();
     setParams({ q: draft, page: "1" });
   }
 
@@ -124,6 +135,9 @@ export default function UnitsList({
     searchRef.current?.focus();
     searchRef.current?.select();
   }, []);
+  useEffect(() => {
+    if (!hidden) searchRef.current?.focus();
+  }, [hidden]);
 
   useEffect(() => {
     const my = ++seq.current;
@@ -146,6 +160,7 @@ export default function UnitsList({
       if (my !== seq.current) return;
       setLoading(false);
       if (err) {
+        pendingDigitOpen.current = null;
         setError(err.message);
         return;
       }
@@ -158,7 +173,11 @@ export default function UnitsList({
           (r) => r.unit_number === pendingDigitOpen.current
         );
         pendingDigitOpen.current = null;
-        if (hit) onOpenUnit(hit.unit_number);
+        if (hit) {
+          onOpenUnit(hit.unit_number);
+          searchRef.current?.focus();
+          searchRef.current?.select();
+        }
       }
       // Offset past the end: return to page 1 once.
       if (list.length === 0 && page > 1) {
@@ -186,7 +205,7 @@ export default function UnitsList({
   }
 
   return (
-    <section className={`mt-6 max-w-6xl ${hidden ? "hidden" : ""}`}>
+    <section className="mt-6 max-w-6xl">
       <input
         ref={searchRef}
         value={draft}
@@ -195,13 +214,14 @@ export default function UnitsList({
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.preventDefault();
-            applySearch();
+            applySearch(true);
           }
         }}
         placeholder="Search SKU, item name, customer, SJ number, unit number, or unit id"
         className="w-full rounded-md border border-slate-300 px-4 py-2.5 text-sm"
       />
 
+      <div className={hidden ? "hidden" : ""}>
       <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
         <select
           value={status}
@@ -342,6 +362,7 @@ export default function UnitsList({
         <span>
           Showing {from} to {to} of {total}
         </span>
+      </div>
       </div>
     </section>
   );

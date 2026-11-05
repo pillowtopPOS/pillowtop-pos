@@ -403,6 +403,11 @@ export default function UnitsPage() {
             setQuery(String(n));
             setSearched(String(n));
           }}
+          onCloseDetail={() => {
+            setLookup({ kind: "idle" });
+            setQuery("");
+            setSearched("");
+          }}
         />
       </Suspense>
 
