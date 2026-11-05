@@ -84,6 +84,7 @@ export default function UnitsList({
   const seq = useRef(0);
   const lastPushedQ = useRef(q);
   const pendingDigitOpen = useRef<number | null>(null);
+  const debounceTimer = useRef<number | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   function setParams(next: Record<string, string>) {
@@ -96,11 +97,24 @@ export default function UnitsList({
     router.replace(`${pathname}?${p.toString()}`, { scroll: false });
   }
 
-  // Debounced search draft -> URL q, resetting to page 1.
+  // Debounced search draft -> URL q, resetting to page 1. The timer
+  // lives in a ref so an Enter keypress can cancel it. It only filters:
+  // pendingDigitOpen is never touched here, and if the draft already
+  // equals the last pushed q there is nothing to do.
   useEffect(() => {
-    if (draft === q) return;
-    const t = window.setTimeout(() => applySearch(false), 300);
-    return () => window.clearTimeout(t);
+    if (debounceTimer.current != null)
+      window.clearTimeout(debounceTimer.current);
+    debounceTimer.current = window.setTimeout(() => {
+      debounceTimer.current = null;
+      if (draft === lastPushedQ.current) return;
+      applySearch(false);
+    }, 300);
+    return () => {
+      if (debounceTimer.current != null) {
+        window.clearTimeout(debounceTimer.current);
+        debounceTimer.current = null;
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft]);
 
@@ -114,15 +128,21 @@ export default function UnitsList({
   }, [q]);
 
   function applySearch(fromEnter: boolean) {
-    // Only an Enter keypress arms the unit opener: slow typing must
-    // filter the list without ever opening a detail mid-type. A non-digit
-    // Enter clears any armed opener so it can never fire later.
-    pendingDigitOpen.current =
-      fromEnter && /^\d+$/.test(draft.trim()) ? Number(draft.trim()) : null;
-    if (fromEnter && draft === q) {
-      // Same search: the URL does not change, so force a refetch.
-      setRetryTick((n) => n + 1);
-      return;
+    if (fromEnter) {
+      // Cancel a pending debounce so it cannot disarm the opener after
+      // Enter has armed it.
+      if (debounceTimer.current != null) {
+        window.clearTimeout(debounceTimer.current);
+        debounceTimer.current = null;
+      }
+      pendingDigitOpen.current = /^\d+$/.test(draft.trim())
+        ? Number(draft.trim())
+        : null;
+      if (draft === q) {
+        // Same search: the URL does not change, so force a refetch.
+        setRetryTick((n) => n + 1);
+        return;
+      }
     }
     // A changed search while a detail is open goes back to the list;
     // an armed digit opener still lands on its unit below.
@@ -209,7 +229,16 @@ export default function UnitsList({
       <input
         ref={searchRef}
         value={draft}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={(e) => {
+          const v = e.target.value;
+          setDraft(v);
+          if (
+            pendingDigitOpen.current != null &&
+            v.trim() !== String(pendingDigitOpen.current)
+          ) {
+            pendingDigitOpen.current = null;
+          }
+        }}
         onFocus={(e) => e.target.select()}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
