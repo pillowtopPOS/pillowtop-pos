@@ -207,8 +207,9 @@ export default function UnitsPage() {
     }
   }
 
-  async function runLookup() {
-    const digits = query.replace(/\D/g, "");
+  async function runLookup(n?: number) {
+    const digits =
+      n != null ? String(n) : query.replace(/\D/g, "");
     if (!digits) return;
     const seq = ++lookupSeq.current;
     setSearched(digits);
@@ -401,9 +402,10 @@ export default function UnitsPage() {
           hidden={unit != null}
           onOpenUnit={(n) => {
             setQuery(String(n));
-            setSearched(String(n));
+            void runLookup(n);
           }}
           onCloseDetail={() => {
+            lookupSeq.current++;
             setLookup({ kind: "idle" });
             setQuery("");
             setSearched("");
