@@ -18,6 +18,11 @@ type State =
 // box is rotated inside it ONLY in print. contain:strict on the sheet is
 // required: the 6in-wide box otherwise overflows before rotation and
 // Chrome shrinks the whole page to 2/3 size.
+
+
+// One layout for both label types: tag + big unit number, optional customer
+// block, SKU, item, location, barcode with digits. The customer variant
+// uses smaller secondary text so everything still fits in the border.
 type LabelView = {
   tag: "STOCK" | "CUSTOMER ORDER";
   unit_number: number;
@@ -28,9 +33,10 @@ type LabelView = {
   location_name?: string | null;
 };
 
-// One layout for both label types: tag + big unit number, optional customer
-// block, SKU, item, location, barcode with digits. The customer variant
-// uses smaller secondary text so everything still fits in the border.
+// One layout for both label types. The left column stacks tag, SJ number
+// and location under the big unit number so nothing crowds the text below.
+// Every block is shrink-0: content that cannot fit must be visible
+// overflow, never silently hidden.
 function UnitLabel({
   u,
   rotate,
@@ -48,7 +54,18 @@ function UnitLabel({
       : name.length > 14
         ? "36px"
         : "44px";
-  const skuSize = compact ? "30px" : "42px";
+  const skuLen = (u.sku ?? "").length;
+  const skuSize = compact
+    ? skuLen > 22
+      ? "22px"
+      : skuLen > 14
+        ? "26px"
+        : "30px"
+    : skuLen > 22
+      ? "26px"
+      : skuLen > 14
+        ? "32px"
+        : "42px";
   return (
     <div className="sheet">
       <div className={`land ${rotate}`}>
@@ -60,17 +77,31 @@ function UnitLabel({
             padding: "0.10in",
           }}
         >
-          <div className="flex items-start justify-between">
-            <span
-              className="text-[14px] font-bold"
-              style={{
-                letterSpacing: "1px",
-                border: "2px solid black",
-                padding: "3px 10px",
-              }}
-            >
-              {u.tag}
-            </span>
+          <div className="flex shrink-0 items-start justify-between">
+            <div className="flex flex-col">
+              <span
+                className="self-start text-[14px] font-bold"
+                style={{
+                  letterSpacing: "1px",
+                  border: "2px solid black",
+                  padding: "3px 10px",
+                }}
+              >
+                {u.tag}
+              </span>
+              {u.tag === "CUSTOMER ORDER" && u.journey_number && (
+                <span className="mt-1 font-mono text-[18px]">
+                  {u.journey_number}
+                </span>
+              )}
+              <span
+                className="mt-1"
+                style={{ fontSize: compact ? "16px" : "20px" }}
+              >
+                <span className="font-bold">Location:</span>{" "}
+                {u.location_name ?? "?"}
+              </span>
+            </div>
             <span
               className="text-[96px] font-extrabold"
               style={{ lineHeight: 1, letterSpacing: "-1px" }}
@@ -79,23 +110,16 @@ function UnitLabel({
             </span>
           </div>
           {u.tag === "CUSTOMER ORDER" && (
-            <>
-              <div
-                className="mt-1 font-extrabold leading-tight"
-                style={{ fontSize: nameSize }}
-              >
-                {name ?? u.journey_number ?? "?"}
-              </div>
-              {u.journey_number && (
-                <div className="mt-0.5 font-mono text-[20px]">
-                  {u.journey_number}
-                </div>
-              )}
-            </>
+            <div
+              className="mt-0.5 shrink-0 font-extrabold leading-tight"
+              style={{ fontSize: nameSize }}
+            >
+              {name ?? u.journey_number ?? "?"}
+            </div>
           )}
           {u.sku && (
             <div
-              className="mt-0.5 font-extrabold leading-tight"
+              className="mt-0.5 shrink-0 whitespace-nowrap font-extrabold leading-tight"
               style={{ fontSize: skuSize }}
             >
               {u.sku}
@@ -103,8 +127,9 @@ function UnitLabel({
           )}
           {u.item_name && (
             <div
-              className="mt-0.5 overflow-hidden text-[16px] leading-snug"
+              className="mt-0.5 shrink-0 overflow-hidden leading-snug"
               style={{
+                fontSize: compact ? "16px" : "20px",
                 display: "-webkit-box",
                 WebkitBoxOrient: "vertical",
                 WebkitLineClamp: 2,
@@ -113,11 +138,7 @@ function UnitLabel({
               <span className="font-bold">Item:</span> {u.item_name}
             </div>
           )}
-          <div className="mt-0.5 text-[16px]">
-            <span className="font-bold">Location:</span>{" "}
-            {u.location_name ?? "?"}
-          </div>
-          <div className="mt-auto">
+          <div className="mt-auto shrink-0">
             <Code128Barcode
               value={String(u.unit_number)}
               height={compact ? "0.65in" : "0.85in"}
@@ -250,8 +271,6 @@ type CustomerRow = {
   location_name?: string | null;
 };
 
-// mode=customer: same sheet mechanics, labels from get_unit_customer_labels.
-// Returns no UI for unassigned units; logs 'customer' prints the same way.
 function CustomerLabelsInner({ rotate }: { rotate: "cw" | "ccw" }) {
   const params = useSearchParams();
   const [state, setState] = useState<
