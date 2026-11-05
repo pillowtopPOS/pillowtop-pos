@@ -442,7 +442,6 @@ export default function PurchaseOrderDetailPage() {
                       <a
                         href={`/units/labels/print?numbers=${lineUnits[l.id].join(",")}`}
                         target="pillowtop-labels"
-                        rel="noopener noreferrer"
                         className="text-brand-600 hover:underline"
                       >
                         Unit labels ({lineUnits[l.id].length})

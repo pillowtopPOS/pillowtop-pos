@@ -195,7 +195,6 @@ export default function ReceiveModal({
                 <a
                   href={`/units/labels/print?mode=customer&units=${assignments.map((a) => a.unit_id).join(",")}`}
                   target="pillowtop-labels"
-                  rel="noopener noreferrer"
                   className="rounded bg-brand-600 px-4 py-1.5 text-sm text-white"
                 >
                   Print customer labels ({assignments.length})
@@ -209,7 +208,6 @@ export default function ReceiveModal({
                     )
                     .join(",")}`}
                   target="pillowtop-labels"
-                  rel="noopener noreferrer"
                   className="rounded border border-brand-600 px-4 py-1.5 text-sm text-brand-700"
                 >
                   Print stock labels ({unitNumbers.length - assignments.length})

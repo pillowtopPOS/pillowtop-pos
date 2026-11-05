@@ -501,7 +501,6 @@ export default function UnitsPage() {
               <a
                 href={`/units/labels/print?numbers=${unit.unit_number}`}
                 target="pillowtop-labels"
-                rel="noopener noreferrer"
                 className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
               >
                 Reprint label
@@ -510,7 +509,6 @@ export default function UnitsPage() {
                 <a
                   href={`/units/labels/print?mode=customer&units=${unit.id}`}
                   target="pillowtop-labels"
-                  rel="noopener noreferrer"
                   className="rounded-md border border-indigo-300 px-3 py-1.5 text-sm text-indigo-700 hover:bg-indigo-50"
                 >
                   Reprint customer label
