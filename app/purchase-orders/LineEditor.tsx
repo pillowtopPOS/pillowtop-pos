@@ -65,7 +65,7 @@ export default function LineEditor({
               {" · "}
               <a
                 href={`/units/labels/print?numbers=${unitNumbers!.join(",")}`}
-                target="_blank"
+                target="pillowtop-labels"
                 rel="noopener noreferrer"
                 className="text-brand-600 hover:underline"
               >

@@ -237,6 +237,54 @@ function useLabelPrintLog(getIds: () => string[], kind: "stock" | "customer") {
   return { log, retry };
 }
 
+function CloseButton({ log }: { log: LogState }) {
+  const ref = useRef<HTMLButtonElement>(null);
+  const logRef = useRef(log);
+  logRef.current = log;
+  // Move focus here when the log finishes so Enter closes the tab.
+  useEffect(() => {
+    if (log.kind === "ok") ref.current?.focus();
+  }, [log.kind]);
+  const label =
+    log.kind === "logging"
+      ? "Finishing..."
+      : log.kind === "failed"
+        ? "Close anyway"
+        : "Close";
+  function close() {
+    const fallback = () => {
+      window.close();
+      window.setTimeout(() => {
+        window.location.href = "/units";
+      }, 300);
+    };
+    if (logRef.current.kind === "logging") {
+      // Wait for the log write to settle before closing, max 8 seconds.
+      const start = Date.now();
+      const t = window.setInterval(() => {
+        if (
+          logRef.current.kind !== "logging" ||
+          Date.now() - start > 8000
+        ) {
+          window.clearInterval(t);
+          fallback();
+        }
+      }, 250);
+      return;
+    }
+    fallback();
+  }
+  return (
+    <button
+      ref={ref}
+      onClick={close}
+      className="rounded border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+    >
+      {label}
+    </button>
+  );
+}
+
 function PrintLogNote({
   log,
   retry,
@@ -353,9 +401,7 @@ function CustomerLabelsInner({ rotate }: { rotate: "cw" | "ccw" }) {
   return (
     <>
       <div className="no-print mx-auto flex max-w-2xl items-center gap-4 p-4">
-        <Link href="/units" className="text-sm text-brand-600 hover:underline">
-          Back
-        </Link>
+        <CloseButton log={log} />
         {state.kind === "ready" && state.rows.length > 0 && (
           <>
             <span className="text-sm text-slate-600">
@@ -497,9 +543,7 @@ function LabelsInner() {
       ) : (
         <>
       <div className="no-print mx-auto flex max-w-2xl items-center gap-4 p-4">
-        <Link href="/units" className="text-sm text-brand-600 hover:underline">
-          Back
-        </Link>
+        <CloseButton log={log} />
         {state.kind === "ready" && state.units.length > 0 && (
           <>
             <span className="text-sm text-slate-600">
