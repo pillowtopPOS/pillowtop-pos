@@ -20,6 +20,16 @@ export default function ReceiveModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [unitNumbers, setUnitNumbers] = useState<number[]>([]);
+  const [assignments, setAssignments] = useState<
+    {
+      unit_id: string;
+      unit_number: number;
+      journey_id: string;
+      journey_number: string | null;
+      customer_name: string | null;
+      requirement_id: string;
+    }[]
+  >([]);
   const [received, setReceived] = useState(false);
 
   async function recordReceipt() {
@@ -67,6 +77,20 @@ export default function ReceiveModal({
       }
       const nums = (r.data as any)?.unit_numbers;
       if (Array.isArray(nums)) created.push(...nums.map(Number));
+      const rows = (r.data as any)?.assignments;
+      if (Array.isArray(rows)) {
+        setAssignments((a) => [
+          ...a,
+          ...rows.map((x: any) => ({
+            unit_id: x.unit_id,
+            unit_number: Number(x.unit_number),
+            journey_id: x.journey_id,
+            journey_number: x.journey_number ?? null,
+            customer_name: x.customer_name ?? null,
+            requirement_id: x.requirement_id,
+          })),
+        ]);
+      }
     }
     setUnitNumbers(created);
     setReceived(true);
@@ -142,18 +166,55 @@ export default function ReceiveModal({
             Received. {unitNumbers.length} units created.
           </div>
         )}
+        {received && assignments.length > 0 && (
+          <div className="mt-3 rounded-md border border-indigo-200 bg-indigo-50 p-3">
+            <p className="text-sm font-medium text-indigo-900">
+              Waiting customer orders filled
+            </p>
+            <ul className="mt-1.5 space-y-0.5 text-sm text-indigo-800">
+              {assignments.map((a) => (
+                <li key={a.unit_id} className="flex justify-between gap-3">
+                  <span className="font-mono">{a.unit_number}</span>
+                  <span className="truncate">
+                    {a.customer_name ?? a.journey_number}
+                    {a.journey_number && a.customer_name && (
+                      <span className="ml-1 font-mono text-xs text-indigo-600">
+                        {a.journey_number}
+                      </span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         <div className="mt-5 flex justify-end gap-2">
           {received && unitNumbers.length > 0 ? (
             <>
-              <a
-                href={`/units/labels/print?numbers=${unitNumbers.join(",")}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rounded bg-brand-600 px-4 py-1.5 text-sm text-white"
-              >
-                Print {unitNumbers.length} label
-                {unitNumbers.length === 1 ? "" : "s"}
-              </a>
+              {assignments.length > 0 && (
+                <a
+                  href={`/units/labels/print?mode=customer&units=${assignments.map((a) => a.unit_id).join(",")}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded bg-brand-600 px-4 py-1.5 text-sm text-white"
+                >
+                  Print customer labels ({assignments.length})
+                </a>
+              )}
+              {unitNumbers.length - assignments.length > 0 && (
+                <a
+                  href={`/units/labels/print?numbers=${unitNumbers
+                    .filter(
+                      (n) => !assignments.some((a) => a.unit_number === n)
+                    )
+                    .join(",")}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded border border-brand-600 px-4 py-1.5 text-sm text-brand-700"
+                >
+                  Print stock labels ({unitNumbers.length - assignments.length})
+                </a>
+              )}
               <button
                 onClick={onClose}
                 className="rounded border px-3 py-1.5 text-sm"

@@ -110,6 +110,10 @@ export default function UnitsPage() {
   const [canSeeDiscrepancies, setCanSeeDiscrepancies] = useState(false);
 
   const [query, setQuery] = useState("");
+  const [assignedOrder, setAssignedOrder] = useState<{
+    journey_number: string | null;
+    customer_name: string | null;
+  } | null>(null);
   const [searched, setSearched] = useState("");
   const [lookup, setLookup] = useState<LookupState>({ kind: "idle" });
   const [events, setEvents] = useState<UnitEvent[]>([]);
@@ -342,6 +346,36 @@ export default function UnitsPage() {
 
   const unit = lookup.kind === "found" ? lookup.unit : null;
 
+  // One call per looked-up unit, not per render. No client-side permission
+  // logic: the rpc decides and returns nothing for units we cannot label.
+  useEffect(() => {
+    if (lookup.kind !== "found") {
+      setAssignedOrder(null);
+      return;
+    }
+    let cancelled = false;
+    const supabase = createClient();
+    Promise.resolve(
+      supabase.rpc("get_unit_customer_labels", {
+        p_unit_ids: [lookup.unit.id],
+      })
+    ).then(({ data }) => {
+      if (cancelled) return;
+      const row = (data ?? [])[0];
+      setAssignedOrder(
+        row
+          ? {
+              journey_number: row.journey_number ?? null,
+              customer_name: row.customer_name ?? null,
+            }
+          : null
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [lookup]);
+
   return (
     <main className="mx-auto max-w-2xl p-6">
       <Link
@@ -463,14 +497,26 @@ export default function UnitsPage() {
           </dl>
 
           {unit.status !== "VOID" && (
-            <a
-              href={`/units/labels/print?numbers=${unit.unit_number}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-3 inline-block rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
-            >
-              Reprint label
-            </a>
+            <div className="mt-3 flex gap-2">
+              <a
+                href={`/units/labels/print?numbers=${unit.unit_number}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Reprint label
+              </a>
+              {assignedOrder && (
+                <a
+                  href={`/units/labels/print?mode=customer&units=${unit.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-md border border-indigo-300 px-3 py-1.5 text-sm text-indigo-700 hover:bg-indigo-50"
+                >
+                  Reprint customer label
+                </a>
+              )}
+            </div>
           )}
 
           <h2 className="mt-5 text-sm font-semibold text-slate-900">
