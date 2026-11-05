@@ -96,7 +96,10 @@ begin
   -- No per-journey visibility gate by product decision: all employees of
   -- the company may see customer names. The journey's store scopes the
   -- customer to the same company.
-  left join public.sleep_journeys sj on sj.id = jir.journey_id
+  -- Delivered units resolve their customer through delivered_journey_id so
+  -- staff can find who received a unit.
+  left join public.sleep_journeys sj
+    on sj.id = coalesce(jir.journey_id, u.delivered_journey_id)
   left join public.stores js on js.id = sj.store_id and js.company_id = v_company
   left join public.customers c on c.id = sj.customer_id and js.id is not null
   where u.company_id = v_company
