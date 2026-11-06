@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, MoreHorizontal, Trash2, X, Copy,
+import { Check, MoreHorizontal, Trash2, Truck, X, Copy,
 } from "lucide-react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { resolveLineItemLocation } from "@/lib/journeys/fulfillment";
 import {
@@ -341,6 +342,7 @@ function JourneyStateSummaryBar({
   journey,
   nextFollowUp,
   stateDetail,
+  transferNote,
   attentionItems,
   transitions,
   exchangeAwaitingPayment,
@@ -349,6 +351,7 @@ function JourneyStateSummaryBar({
   journey: JourneyWithDetails;
   nextFollowUp: FollowUp | undefined;
   stateDetail: string | null;
+  transferNote: { kind: "requested" | "scheduled" | "shipped"; text: string; requestId: string } | null;
   attentionItems: AttentionItem[];
   transitions: { label: string; event: JourneyEventType }[];
   // EB-3a: an exchange child sitting in Quoted with a positive balance is
@@ -372,6 +375,22 @@ function JourneyStateSummaryBar({
         {stateDetail && (
           <span className="block text-xs font-normal text-slate-500">
             {stateDetail}
+          </span>
+        )}
+        {transferNote && (
+          <span className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-amber-700">
+            <Truck className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span>
+              {transferNote.text}
+              {transferNote.kind === "requested" && (
+                <>
+                  {" "}
+                  <Link href="/transfers" className="underline hover:text-amber-800">
+                    View request
+                  </Link>
+                </>
+              )}
+            </span>
           </span>
         )}
       </SummaryCell>
@@ -563,6 +582,23 @@ export default function JourneyWorkspace({
       status: string;
     }[]
   >([]);
+  const [journeyTransfers, setJourneyTransfers] = useState<
+    {
+      id: string;
+      status: string;
+      quantity: number;
+      origin_location_id: string;
+      destination_location_id: string;
+      transfer_id: string | null;
+      transfers: {
+        status: string;
+        scheduled_date: string;
+        in_transit_at: string | null;
+        finalized_at: string | null;
+      } | null;
+    }[]
+  >([]);
+  const [unitLocations, setUnitLocations] = useState<Record<string, string>>({});
   const [reassignMode, setReassignMode] = useState<"choose" | "store" | "employee" | null>(null);
   const [reassignTarget, setReassignTarget] = useState("");
   const [reassignReason, setReassignReason] = useState("");
@@ -824,10 +860,45 @@ export default function JourneyWorkspace({
       createClient().rpc("get_journey_units", { p_journey_id: journey.id })
     )
       .then(({ data }) => {
-        if (!unitsCancelled) setJourneyUnits((data ?? []) as any);
+        if (unitsCancelled) return;
+        const rows = (data ?? []) as any[];
+        setJourneyUnits(rows);
+        const ids = rows.map((r) => r.unit_id).filter(Boolean);
+        if (ids.length === 0) {
+          setUnitLocations({});
+          return;
+        }
+        createClient()
+          .from("units")
+          .select("id, location_id")
+          .in("id", ids)
+          .then(({ data: locs }) => {
+            if (unitsCancelled) return;
+            setUnitLocations(
+              Object.fromEntries(
+                ((locs ?? []) as any[]).map((l) => [l.id, l.location_id])
+              )
+            );
+          });
       })
       .catch(() => {
         if (!unitsCancelled) setJourneyUnits([]);
+      });
+    Promise.resolve(
+      createClient()
+        .from("transfer_requests")
+        .select(
+          "id, status, quantity, origin_location_id, destination_location_id, transfer_id, transfers!transfer_id ( status, scheduled_date, in_transit_at, finalized_at )"
+        )
+        .eq("source_type", "journey_mismatch")
+        .eq("source_reference_id", journey.id)
+        .in("status", ["pending_approval", "approved", "consolidated"])
+    )
+      .then(({ data }) => {
+        if (!unitsCancelled) setJourneyTransfers((data ?? []) as any);
+      })
+      .catch(() => {
+        if (!unitsCancelled) setJourneyTransfers([]);
       });
     if (journey.customer) {
       fetchCustomerContacts(journey.customer.id).then(setCustomerContacts);
@@ -1097,6 +1168,83 @@ export default function JourneyWorkspace({
       tone: "amber",
     });
 
+  // Journey-mismatch transfer stage for the header strip and Order card.
+  // Furthest-along open stage wins; a finalized (arrived) transfer shows
+  // nothing. Display only — no state changes.
+  const nextScheduleLabel = (dow: number) => {
+    const d = new Date();
+    let add = (dow - d.getDay() + 7) % 7;
+    if (add === 0) add = 7;
+    d.setDate(d.getDate() + add);
+    return d.toLocaleDateString(undefined, {
+      weekday: "long",
+      month: "short",
+      day: "numeric",
+    });
+  };
+  const transferNote = (() => {
+    const open = journeyTransfers.filter(
+      (r) =>
+        !(
+          r.status === "consolidated" &&
+          r.transfers &&
+          (r.transfers.finalized_at || r.transfers.status === "finalized")
+        )
+    );
+    if (open.length === 0) return null;
+    const row =
+      open.find((r) => r.transfers?.status === "in_transit") ??
+      open.find(
+        (r) => r.status === "consolidated" && r.transfers && !r.transfers.in_transit_at
+      ) ??
+      open.find((r) => r.status !== "consolidated");
+    if (!row) return null;
+    const origin = stores.find((s) => s.id === row.origin_location_id);
+    const dest = stores.find((s) => s.id === row.destination_location_id);
+    if (row.transfers?.status === "in_transit") {
+      return {
+        kind: "shipped" as const,
+        text: `In transit, shipped ${shortDate(
+          (row.transfers.in_transit_at ?? "").slice(0, 10)
+        )}`,
+        requestId: row.id,
+      };
+    }
+    if (row.status === "consolidated" && row.transfers) {
+      return {
+        kind: "scheduled" as const,
+        text: `Transfer scheduled ${shortDate(row.transfers.scheduled_date)} — ${
+          origin?.name ?? "?"
+        } to ${dest?.name ?? "?"}`,
+        requestId: row.id,
+      };
+    }
+    let text = "Transfer requested. Date not set yet.";
+    if (dest?.transfer_schedule_day != null) {
+      text += ` Next transfer day: ${nextScheduleLabel(dest.transfer_schedule_day)}.`;
+    }
+    return { kind: "requested" as const, text, requestId: row.id };
+  })();
+
+  // Units assigned to this order but held at a different location.
+  const remoteUnitsByVariant = (variantId: string, locationId: string) =>
+    journeyUnits.filter(
+      (u) =>
+        u.requirement_id &&
+        u.variant_id === variantId &&
+        unitLocations[u.unit_id] &&
+        unitLocations[u.unit_id] !== locationId
+    );
+  const remoteLocationNames = (variantId: string, locationId: string) =>
+    Array.from(
+      new Set(
+        remoteUnitsByVariant(variantId, locationId).map(
+          (u) =>
+            stores.find((s) => s.id === unitLocations[u.unit_id])?.name ?? "another location"
+        )
+      )
+    ).join(", ");
+
   // Secondary line under Current State — only where the spec defines one.
   const outstandingItems = lineItems.filter(
     (i) => i.product_id != null && (lineAvailability[i.id] ?? 0) < i.quantity
@@ -1169,6 +1317,7 @@ export default function JourneyWorkspace({
             journey={journey}
             nextFollowUp={nextFollowUp}
             stateDetail={stateDetail}
+            transferNote={transferNote}
             attentionItems={attentionItems}
             transitions={transitions}
             exchangeAwaitingPayment={exchangeAwaitingPayment}
@@ -1423,6 +1572,18 @@ export default function JourneyWorkspace({
                               ))}
                           </div>
                         )}
+                      {item.product_id &&
+                        (() => {
+                          const loc = resolveLineItemLocation(item, journey, stores);
+                          const remote = remoteUnitsByVariant(item.product_id, loc);
+                          if (remote.length === 0) return null;
+                          return (
+                            <div className="mt-0.5 text-xs font-medium text-amber-700">
+                              {remote.length} unit{remote.length === 1 ? "" : "s"} reserved
+                              at {remoteLocationNames(item.product_id, loc)}
+                            </div>
+                          );
+                        })()}
                     </div>
                   ))}
                 </div>
@@ -1532,6 +1693,23 @@ export default function JourneyWorkspace({
 
               {journey.current_state === "Waiting for Inventory" && (
                 <p className="mt-2 text-xs text-slate-500">Waiting for inventory</p>
+              )}
+
+              {transferNote && (
+                <p className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-amber-700">
+                  <Truck className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  <span>
+                    {transferNote.text}
+                    {transferNote.kind === "requested" && (
+                      <>
+                        {" "}
+                        <Link href="/transfers" className="underline hover:text-amber-800">
+                          View request
+                        </Link>
+                      </>
+                    )}
+                  </span>
+                </p>
               )}
 
               <div className="mt-2 flex items-center justify-between">
