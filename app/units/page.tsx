@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -10,6 +10,7 @@ import {
   type Store,
 } from "@/lib/journeys/queries";
 import { hasPermission } from "@/lib/inventory/queries";
+import UnitsList from "@/components/units/UnitsList";
 
 // Statuses are stored as codes; the page always shows plain English.
 const STATUS_LABEL: Record<string, string> = {
@@ -206,8 +207,9 @@ export default function UnitsPage() {
     }
   }
 
-  async function runLookup() {
-    const digits = query.replace(/\D/g, "");
+  async function runLookup(n?: number) {
+    const digits =
+      n != null ? String(n) : query.replace(/\D/g, "");
     if (!digits) return;
     const seq = ++lookupSeq.current;
     setSearched(digits);
@@ -346,6 +348,10 @@ export default function UnitsPage() {
 
   const unit = lookup.kind === "found" ? lookup.unit : null;
 
+  useEffect(() => {
+    if (unit) window.scrollTo({ top: 0 });
+  }, [unit]);
+
   // One call per looked-up unit, not per render. No client-side permission
   // logic: the rpc decides and returns nothing for units we cannot label.
   useEffect(() => {
@@ -377,7 +383,7 @@ export default function UnitsPage() {
   }, [lookup]);
 
   return (
-    <main className="mx-auto max-w-2xl p-6">
+    <main className="mx-auto max-w-6xl p-6">
       <Link
         href="/inventory"
         className="text-sm text-brand-600 hover:underline"
@@ -389,24 +395,23 @@ export default function UnitsPage() {
         Look up a unit by its number or scan its label.
       </p>
 
-      <form
-        className="mt-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void runLookup();
-        }}
-      >
-        <input
-          ref={inputRef}
-          inputMode="numeric"
-          maxLength={15}
-          onFocus={(e) => e.target.select()}
-          value={query}
-          onChange={(e) => setQuery(e.target.value.replace(/\D/g, ""))}
-          placeholder="Unit number"
-          className="w-full rounded-md border border-slate-300 px-4 py-3 text-lg"
+      <Suspense>
+        <UnitsList
+          locations={stores}
+          statusLabel={STATUS_LABEL}
+          hidden={unit != null}
+          onOpenUnit={(n) => {
+            setQuery(String(n));
+            void runLookup(n);
+          }}
+          onCloseDetail={() => {
+            lookupSeq.current++;
+            setLookup({ kind: "idle" });
+            setQuery("");
+            setSearched("");
+          }}
         />
-      </form>
+      </Suspense>
 
       {lookup.kind === "loading" && (
         <p key="lookup-loading" className="mt-4 text-sm text-slate-500">
@@ -432,6 +437,16 @@ export default function UnitsPage() {
 
       {unit && (
         <div key="unit-card" className="mt-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <button
+            onClick={() => {
+              setLookup({ kind: "idle" });
+              setQuery("");
+              setSearched("");
+            }}
+            className="mb-3 text-sm text-brand-600 hover:underline"
+          >
+            &larr; Back to list
+          </button>
           <div className="flex items-start justify-between gap-3">
             <p className="text-3xl font-bold text-slate-900">
               #{unit.unit_number}
