@@ -288,7 +288,7 @@ create or replace function public.assign_received_units_to_orders(
   p_receive_location_id uuid,
   p_company_id uuid
 )
-returns void
+returns uuid[]
 language plpgsql
 security definer
 set search_path = public
@@ -300,10 +300,11 @@ declare
   v_count integer;
   v_pool integer;
   v_is_warehouse boolean;
+  v_assigned uuid[] := '{}';
   i integer;
 begin
   if p_unit_ids is null or p_unit_ids = '{}' then
-    return;
+    return '{}'::uuid[];
   end if;
 
   select (location_type = 'WAREHOUSE') into v_is_warehouse
@@ -370,6 +371,7 @@ begin
       exit when v_unit is null;
       perform public.move_unit(v_unit, 'RESERVED', null,
         jsonb_build_object('requirement_id', v_req.id));
+      v_assigned := v_assigned || v_unit;
     end loop;
 
     -- Cross-location fill: keep the journey's transfer request in sync.
@@ -379,6 +381,7 @@ begin
         p_receive_location_id, v_req.location_id);
     end if;
   end loop;
+  return v_assigned;
 end;
 $$;
 
@@ -568,6 +571,7 @@ declare
   v_unit_numbers bigint[] := '{}';
   v_assignments jsonb := '[]'::jsonb;
   v_assign_failed boolean := false;
+  v_assigned_ids uuid[] := '{}';
   v_new_unit uuid;
   i integer;
 begin
@@ -615,8 +619,9 @@ begin
   -- fill syncs a journey_mismatch transfer and its origin hold.
   if v_unit_ids <> '{}' then
     begin
-      perform public.assign_received_units_to_orders(
-        v_unit_ids, v_line.variant_id, v_po.destination_location_id, v_company_id);
+      select public.assign_received_units_to_orders(
+        v_unit_ids, v_line.variant_id, v_po.destination_location_id,
+        v_company_id) into v_assigned_ids;
     exception when others then
       v_assign_failed := true;
       insert into public.audit_events (
@@ -645,7 +650,7 @@ begin
       on jir.id = u.assigned_requirement_id
     join public.sleep_journeys sj on sj.id = jir.journey_id
     join public.customers c on c.id = sj.customer_id
-    where u.id = any(v_unit_ids);
+    where u.id = any(v_unit_ids || v_assigned_ids);
   end if;
   return jsonb_build_object(
     'unit_ids', v_unit_ids,

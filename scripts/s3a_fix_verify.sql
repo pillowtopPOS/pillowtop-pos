@@ -198,6 +198,24 @@ begin
   perform assign_received_units_to_orders(array[v_u],v_p,v_x,v_c1);
   perform pg_temp.chk('T9 cross-company never assigned',
     (select assigned_requirement_id from units where id=v_u) is null);
+  -- T10 older warehouse stock in assignments --------------------------------
+  update journey_inventory_requirements set status='cancelled'
+    where variant_id=v_p;
+  insert into sleep_journeys(id,customer_id,store_id,current_state)
+    values (gen_random_uuid(),v_cust,v_a,v_state) returning id into v_j4;
+  insert into journey_inventory_requirements
+    (journey_id,variant_id,location_id,quantity_required,status)
+    values (v_j4,v_p,v_a,1,'pending') returning id into v_r4;
+  v_u := public.create_unit(v_c1,v_p,v_w,'Prime',null,v_emp); -- older unit
+  insert into purchase_order_line_items(id,purchase_order_id,variant_id,
+    quantity_ordered,unit_cost) values (gen_random_uuid(),v_po,v_p,1,0)
+    returning id into v_line;
+  v_ret := public.receive_purchase_order_line(v_line,1);
+  perform pg_temp.chk('T10a older unit assigned', (select
+    assigned_requirement_id from units where id=v_u)=v_r4);
+  perform pg_temp.chk('T10b assignments has exactly that unit',
+    jsonb_array_length(v_ret->'assignments')=1
+    and (v_ret->'assignments'->0->>'unit_id')::uuid=v_u);
 end $$;
 
 select name, case when ok then 'PASS' else 'FAIL' end as result
