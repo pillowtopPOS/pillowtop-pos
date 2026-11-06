@@ -44,11 +44,12 @@ export function encodeCode128(value: string): { codes: number[]; widths: string 
 export function Code128Barcode({
   value,
   height = "1in",
-  width = "100%",
+  moduleWidth = 0.02,
 }: {
   value: string;
   height?: string;
-  width?: string;
+  // inches per module; the symbol keeps a 10 module quiet zone per side
+  moduleWidth?: number;
 }) {
   const { widths } = encodeCode128(value);
   // widths digits alternate bar/space starting with a bar.
@@ -67,12 +68,13 @@ export function Code128Barcode({
     x += w;
     bar = !bar;
   }
+  const width = `${(modules * moduleWidth).toFixed(4)}in`;
   return (
     <svg
       viewBox={`0 0 ${modules} 1`}
       preserveAspectRatio="none"
       shapeRendering="crispEdges"
-      style={{ display: "block", width, height }}
+      style={{ display: "block", width, height, margin: "0 auto" }}
       role="img"
       aria-label={`barcode ${value}`}
     >
