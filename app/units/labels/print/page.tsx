@@ -144,14 +144,14 @@ function UnitLabel({
               className="shrink-0"
               style={{
                 borderTop: "2px solid black",
-                marginTop: "4px",
-                marginBottom: "6px",
+                marginTop: "8px",
+                marginBottom: "10px",
               }}
             />
           )}
           {u.item_name && (
             <div
-              className="mt-0.5 shrink-0 overflow-hidden leading-tight"
+              className={`${compact ? "mt-1" : "mt-1.5"} shrink-0 overflow-hidden leading-tight`}
               style={{
                 fontWeight: u.tag === "CUSTOMER ORDER" ? 600 : 700,
                 fontSize: itemSize,
@@ -165,43 +165,46 @@ function UnitLabel({
           )}
           {u.sku && (
             <div
-              className="mt-0.5 shrink-0 whitespace-nowrap leading-tight"
+              className={`${compact ? "mt-1" : "mt-1.5"} shrink-0 whitespace-nowrap leading-tight`}
               style={{ fontSize: skuSize }}
             >
               <span className="font-bold">SKU:</span> {u.sku}
             </div>
           )}
           {u.tag === "CUSTOMER ORDER" && (
-            <div className="mt-0.5 shrink-0 whitespace-nowrap text-[16px] leading-tight">
+            <div className="mt-1 shrink-0 whitespace-nowrap text-[16px] leading-tight">
               <span className="font-bold">Location:</span>{" "}
               {u.location_name ?? "?"}
             </div>
           )}
-          <div className="mt-auto shrink-0">
+          <div className="mt-auto shrink-0" style={{ paddingTop: "8px" }}>
             <Code128Barcode
               value={String(u.unit_number)}
-              height={compact ? "0.65in" : "0.85in"}
-              width="100%"
+              height="0.50in"
+              moduleWidth={0.02}
             />
             <div
-              className="mt-1 grid items-end text-[16px]"
-              style={{ gridTemplateColumns: "1fr auto 1fr" }}
+              className="mt-1 text-center text-[20px]"
+              style={{ letterSpacing: "6px" }}
             >
-              <span className="text-left leading-none">
-                {u.created_at &&
-                !Number.isNaN(new Date(u.created_at).getTime())
-                  ? `Rcvd ${new Date(u.created_at).toLocaleDateString("en-US")}`
-                  : ""}
-              </span>
-              <span
-                className="text-center text-[20px]"
-                style={{ letterSpacing: "6px" }}
-              >
-                {u.unit_number}
-              </span>
-              <span />
+              {u.unit_number}
             </div>
           </div>
+          {u.created_at &&
+            !Number.isNaN(new Date(u.created_at).getTime()) && (
+              <span
+                style={{
+                  position: "absolute",
+                  left: "6px",
+                  bottom: "4px",
+                  fontSize: "12px",
+                  fontWeight: 400,
+                  lineHeight: 1,
+                }}
+              >
+                Rcvd {new Date(u.created_at).toLocaleDateString("en-US")}
+              </span>
+            )}
         </div>
       </div>
     </div>
