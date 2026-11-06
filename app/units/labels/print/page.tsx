@@ -133,7 +133,7 @@ function UnitLabel({
           </div>
           {u.tag === "CUSTOMER ORDER" && (
             <div
-              className="mt-0.5 shrink-0 font-extrabold leading-tight"
+              className="shrink-0 font-extrabold leading-tight"
               style={{ fontSize: nameSize }}
             >
               {name ?? u.journey_number ?? "?"}
@@ -144,15 +144,16 @@ function UnitLabel({
               className="shrink-0"
               style={{
                 borderTop: "2px solid black",
-                marginTop: "8px",
-                marginBottom: "10px",
+                marginTop: "6px",
+                marginBottom: "8px",
               }}
             />
           )}
           {u.item_name && (
             <div
-              className={`${compact ? "mt-1" : "mt-1.5"} shrink-0 overflow-hidden leading-tight`}
+              className={`${compact ? "" : "mt-1.5"} shrink-0 overflow-hidden leading-tight`}
               style={{
+                marginTop: compact ? "3px" : undefined,
                 fontWeight: u.tag === "CUSTOMER ORDER" ? 600 : 700,
                 fontSize: itemSize,
                 display: "-webkit-box",
@@ -165,14 +166,14 @@ function UnitLabel({
           )}
           {u.sku && (
             <div
-              className={`${compact ? "mt-1" : "mt-1.5"} shrink-0 whitespace-nowrap leading-tight`}
-              style={{ fontSize: skuSize }}
+              className={`${compact ? "" : "mt-1.5"} shrink-0 whitespace-nowrap leading-tight`}
+              style={{ fontSize: skuSize, marginTop: compact ? "3px" : undefined }}
             >
               <span className="font-bold">SKU:</span> {u.sku}
             </div>
           )}
           {u.tag === "CUSTOMER ORDER" && (
-            <div className="mt-1 shrink-0 whitespace-nowrap text-[16px] leading-tight">
+            <div className="shrink-0 whitespace-nowrap text-[16px] leading-tight" style={{ marginTop: "3px" }}>
               <span className="font-bold">Location:</span>{" "}
               {u.location_name ?? "?"}
             </div>
