@@ -124,7 +124,7 @@ function UnitLabel({
               className="shrink-0 font-extrabold"
               style={{
                 fontSize: unitNumSize(String(u.unit_number).length),
-                lineHeight: 1,
+                lineHeight: 0.85,
                 letterSpacing: "-1px",
               }}
             >
@@ -144,8 +144,8 @@ function UnitLabel({
               className="shrink-0"
               style={{
                 borderTop: "2px solid black",
-                marginTop: "6px",
-                marginBottom: "8px",
+                marginTop: "8px",
+                marginBottom: "10px",
               }}
             />
           )}
@@ -153,7 +153,7 @@ function UnitLabel({
             <div
               className={`${compact ? "" : "mt-1.5"} shrink-0 overflow-hidden leading-tight`}
               style={{
-                marginTop: compact ? "3px" : undefined,
+                marginTop: compact ? "6px" : undefined,
                 fontWeight: u.tag === "CUSTOMER ORDER" ? 600 : 700,
                 fontSize: itemSize,
                 display: "-webkit-box",
@@ -173,12 +173,15 @@ function UnitLabel({
             </div>
           )}
           {u.tag === "CUSTOMER ORDER" && (
-            <div className="shrink-0 whitespace-nowrap text-[16px] leading-tight" style={{ marginTop: "3px" }}>
+            <div className="shrink-0 whitespace-nowrap text-[16px] leading-tight" style={{ marginTop: "6px" }}>
               <span className="font-bold">Location:</span>{" "}
               {u.location_name ?? "?"}
             </div>
           )}
-          <div className="mt-auto shrink-0" style={{ paddingTop: "8px" }}>
+          <div
+            className="mt-auto shrink-0"
+            style={{ paddingTop: compact ? "12px" : "8px" }}
+          >
             <Code128Barcode
               value={String(u.unit_number)}
               height="0.50in"
