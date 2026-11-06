@@ -153,7 +153,7 @@ function UnitLabel({
             <div
               className="mt-0.5 shrink-0 overflow-hidden leading-tight"
               style={{
-                fontWeight: u.tag === "CUSTOMER ORDER" ? 600 : 800,
+                fontWeight: u.tag === "CUSTOMER ORDER" ? 600 : 700,
                 fontSize: itemSize,
                 display: "-webkit-box",
                 WebkitBoxOrient: "vertical",
