@@ -31,6 +31,7 @@ type LabelView = {
   sku?: string | null;
   item_name?: string | null;
   location_name?: string | null;
+  created_at?: string | null;
 };
 
 // One layout for both label types. The left column stacks tag, SJ number
@@ -100,13 +101,15 @@ function UnitLabel({
                   {u.journey_number}
                 </span>
               )}
-              <span
-                className="mt-1"
-                style={{ fontSize: compact ? "16px" : "20px" }}
-              >
-                <span className="font-bold">Location:</span>{" "}
-                {u.location_name ?? "?"}
-              </span>
+              {u.tag !== "CUSTOMER ORDER" && (
+                <span
+                  className="mt-1"
+                  style={{ fontSize: compact ? "16px" : "20px" }}
+                >
+                  <span className="font-bold">Location:</span>{" "}
+                  {u.location_name ?? "?"}
+                </span>
+              )}
             </div>
             <span
               className="text-[96px] font-extrabold"
@@ -123,10 +126,21 @@ function UnitLabel({
               {name ?? u.journey_number ?? "?"}
             </div>
           )}
+          {u.tag === "CUSTOMER ORDER" && (
+            <div
+              className="shrink-0"
+              style={{
+                borderTop: "2px solid black",
+                marginTop: "4px",
+                marginBottom: "6px",
+              }}
+            />
+          )}
           {u.item_name && (
             <div
-              className="mt-0.5 shrink-0 overflow-hidden font-bold leading-tight"
+              className="mt-0.5 shrink-0 overflow-hidden leading-tight"
               style={{
+                fontWeight: u.tag === "CUSTOMER ORDER" ? 600 : 800,
                 fontSize: itemSize,
                 display: "-webkit-box",
                 WebkitBoxOrient: "vertical",
@@ -144,6 +158,12 @@ function UnitLabel({
               <span className="font-bold">SKU:</span> {u.sku}
             </div>
           )}
+          {u.tag === "CUSTOMER ORDER" && (
+            <div className="mt-0.5 shrink-0 whitespace-nowrap text-[16px] leading-tight">
+              <span className="font-bold">Location:</span>{" "}
+              {u.location_name ?? "?"}
+            </div>
+          )}
           <div className="mt-auto shrink-0">
             <Code128Barcode
               value={String(u.unit_number)}
@@ -151,10 +171,22 @@ function UnitLabel({
               width="100%"
             />
             <div
-              className="mt-1 text-center text-[20px]"
-              style={{ letterSpacing: "6px" }}
+              className="mt-1 grid items-end text-[16px]"
+              style={{ gridTemplateColumns: "1fr auto 1fr" }}
             >
-              {u.unit_number}
+              <span className="text-left leading-none">
+                {u.created_at &&
+                !Number.isNaN(new Date(u.created_at).getTime())
+                  ? `Rcvd ${new Date(u.created_at).toLocaleDateString("en-US")}`
+                  : ""}
+              </span>
+              <span
+                className="text-center text-[20px]"
+                style={{ letterSpacing: "6px" }}
+              >
+                {u.unit_number}
+              </span>
+              <span />
             </div>
           </div>
         </div>
@@ -323,6 +355,7 @@ type CustomerRow = {
   sku?: string | null;
   item_name?: string | null;
   location_name?: string | null;
+  created_at?: string | null;
 };
 
 function CustomerLabelsInner({ rotate }: { rotate: "cw" | "ccw" }) {
@@ -360,6 +393,7 @@ function CustomerLabelsInner({ rotate }: { rotate: "cw" | "ccw" }) {
           sku?: string | null;
           item_name?: string | null;
           location_name?: string | null;
+          created_at?: string | null;
         })[];
         // One batched lookup adds SKU, item and location to every row.
         // If it fails the labels still print with the customer fields.
@@ -373,6 +407,7 @@ function CustomerLabelsInner({ rotate }: { rotate: "cw" | "ccw" }) {
             r.sku = d?.sku ?? null;
             r.item_name = d?.item_name ?? null;
             r.location_name = d?.location_name ?? null;
+            r.created_at = d?.created_at ?? null;
           });
         } catch {
           // labels still render without product/location lines
@@ -447,6 +482,7 @@ function CustomerLabelsInner({ rotate }: { rotate: "cw" | "ccw" }) {
                 sku: u.sku,
                 item_name: u.item_name,
                 location_name: u.location_name,
+                created_at: u.created_at,
               }}
               rotate={rotate}
               compact
@@ -593,6 +629,7 @@ function LabelsInner() {
                   sku: u.sku,
                   item_name: u.item_name,
                   location_name: u.location_name,
+                  created_at: u.created_at,
                 }}
                 rotate={rotate}
                 compact={false}

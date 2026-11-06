@@ -8,6 +8,7 @@ export type LabelUnit = {
   item_name: string | null;
   description: string | null;
   location_name: string | null;
+  created_at: string | null;
 };
 
 export async function fetchUnitsForLabels(numbers: number[]): Promise<{
@@ -17,7 +18,7 @@ export async function fetchUnitsForLabels(numbers: number[]): Promise<{
   const supabase = createClient();
   const { data: units, error } = await supabase
     .from("units")
-    .select("id, unit_number, product_id, location_id")
+    .select("id, unit_number, product_id, location_id, created_at")
     .in("unit_number", numbers);
   if (error) throw new Error(error.message);
   const rows = units ?? [];
@@ -54,6 +55,7 @@ export async function fetchUnitsForLabels(numbers: number[]): Promise<{
       item_name: prodMap.get(r.product_id)?.item_name ?? null,
       description: null, // products_public has no description column
       location_name: r.location_id ? locMap.get(r.location_id) ?? null : null,
+      created_at: r.created_at ?? null,
     }));
   return { units: ordered, missing };
 }
