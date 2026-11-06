@@ -38,6 +38,15 @@ type LabelView = {
 // and location under the big unit number so nothing crowds the text below.
 // Every block is shrink-0: content that cannot fit must be visible
 // overflow, never silently hidden.
+// Unit number size by digit count so long numbers never crowd the
+// top-left block. 9+ digits clamp at 56px.
+function unitNumSize(digits: number): string {
+  if (digits <= 4) return "96px";
+  if (digits === 5) return "80px";
+  if (digits === 6) return "68px";
+  return "56px";
+}
+
 function UnitLabel({
   u,
   rotate,
@@ -85,7 +94,7 @@ function UnitLabel({
           }}
         >
           <div className="flex shrink-0 items-start justify-between">
-            <div className="flex flex-col">
+            <div className="flex min-w-0 flex-1 flex-col pr-2">
               <span
                 className="self-start text-[14px] font-bold"
                 style={{
@@ -112,8 +121,12 @@ function UnitLabel({
               )}
             </div>
             <span
-              className="text-[96px] font-extrabold"
-              style={{ lineHeight: 1, letterSpacing: "-1px" }}
+              className="shrink-0 font-extrabold"
+              style={{
+                fontSize: unitNumSize(String(u.unit_number).length),
+                lineHeight: 1,
+                letterSpacing: "-1px",
+              }}
             >
               {u.unit_number}
             </span>
