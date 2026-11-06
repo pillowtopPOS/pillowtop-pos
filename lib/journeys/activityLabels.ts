@@ -53,7 +53,7 @@ function paymentTitle(e: JourneyEvent): string {
 // Whitelisted event titles. The default case is deliberately safe:
 // an unmapped type renders "Journey updated" and warns in
 // development — never the raw event_type.
-export function activityEventTitle(e: JourneyEvent): string {
+export function activityEventTitle(e: JourneyEvent, pickupName?: string | null): string {
   const data = e.event_data ?? {};
   if (e.event_type === "deposit_received" || e.event_type === "payment_completed") {
     return paymentTitle(e);
@@ -77,7 +77,7 @@ export function activityEventTitle(e: JourneyEvent): string {
       return "Inventory ready";
     case "inventory_required":
       return `Waiting: ${data.item_name ?? "Stock"} is not at ${
-        data.location_name ?? data.store_name ?? "the pickup store"
+        data.location_name ?? data.store_name ?? pickupName ?? "the pickup store"
       } yet`;
     case "line_item_added":
       return `Item added: ${data.item_name ?? "Item"}${

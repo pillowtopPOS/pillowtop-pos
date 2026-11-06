@@ -261,23 +261,50 @@ export default function JourneyActivity({
       employees.find((e) => e.id === id)?.name ?? "System";
     (async () => {
       const lines: { at: string; text: string; actor: string }[] = [];
-      const { data: uev } = await supabase
-        .from("unit_events")
-        .select(
-          "id, event_type, actor_id, from_status, to_status, from_location_id, to_location_id, created_at, units!unit_id ( unit_number )"
-        )
-        .eq("journey_id", journey.id)
-        .order("created_at", { ascending: true });
-      for (const e of (uev ?? []) as any[]) {
-        lines.push({
-          at: e.created_at,
-          text: unitActivitySentence(e, {
-            unitNumber: e.units?.unit_number ?? null,
-            locName,
-            forJourney: true,
-          }),
-          actor: e.actor_id ? empName(e.actor_id) : "System",
-        });
+      // unit_events.journey_id is only stamped when the caller passes it —
+      // RECEIVED/RESERVED writes leave it null. Find the journey's units
+      // first, then pull their events by unit_id. Per unit: UNIT_CREATED
+      // plus events from its most recent transition to RESERVED onward, so
+      // a reused unit never leaks another order's history.
+      const { data: ju } = await supabase.rpc("get_journey_units", {
+        p_journey_id: journey.id,
+      });
+      const unitIds = ((ju ?? []) as any[]).map((u) => u.unit_id);
+      if (unitIds.length > 0) {
+        const { data: uev } = await supabase
+          .from("unit_events")
+          .select(
+            "id, unit_id, event_type, actor_id, from_status, to_status, from_location_id, to_location_id, created_at, units!unit_id ( unit_number )"
+          )
+          .in("unit_id", unitIds)
+          .order("created_at", { ascending: true });
+        const byUnit = new Map<string, any[]>();
+        for (const e of (uev ?? []) as any[]) {
+          byUnit.set(e.unit_id, [...(byUnit.get(e.unit_id) ?? []), e]);
+        }
+        for (const evs of Array.from(byUnit.values())) {
+          let start = -1;
+          for (let i = evs.length - 1; i >= 0; i--) {
+            if (evs[i].to_status === "RESERVED" && evs[i].from_status !== "RESERVED") {
+              start = i;
+              break;
+            }
+          }
+          for (let idx = 0; idx < evs.length; idx++) {
+            const e = evs[idx];
+            if (e.event_type !== "UNIT_CREATED" && (start < 0 || idx < start))
+              continue;
+            lines.push({
+              at: e.created_at,
+              text: unitActivitySentence(e, {
+                unitNumber: e.units?.unit_number ?? null,
+                locName,
+                forJourney: true,
+              }),
+              actor: e.actor_id ? empName(e.actor_id) : "System",
+            });
+          }
+        }
       }
       const { data: reqs } = await supabase
         .from("transfer_requests")
@@ -600,7 +627,7 @@ export default function JourneyActivity({
                       : "text-slate-500"
                   }`}
                 >
-                  {activityEventTitle(e)}
+                  {activityEventTitle(e, journey.store?.name)}
                 </p>
                 {detail && <p className="text-xs text-slate-500">{detail}</p>}
                 <p className="text-xs text-slate-400">
