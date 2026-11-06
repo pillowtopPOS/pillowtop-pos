@@ -41,6 +41,10 @@ import {
   type RestockGenerationMode,
   type ReceiptLineReport,
 } from "@/lib/transfers/queries";
+import {
+  requestSourceLabel,
+  requestWhyWhen,
+} from "@/components/transfers/requestWording";
 
 const RECEIPT_REASON_LABELS: Record<string, string> = {
   missing: "Missing / not on truck",
@@ -618,7 +622,12 @@ export default function TransfersPage() {
         <td className="px-3 py-2">
           {r.origin?.name ?? "?"} → {r.destination?.name ?? "?"}
         </td>
-        <td className="px-3 py-2">{r.source_type}</td>
+        <td className="px-3 py-2">
+          <div>{requestSourceLabel(r.source_type)}</div>
+          <div className="mt-0.5 text-xs text-slate-500">
+            {requestWhyWhen({ sourceType: r.source_type, scheduleDay: r.destination?.transfer_schedule_day })}
+          </div>
+        </td>
         <td className="px-3 py-2">{statusBadge(r.status)}</td>
         <td className="px-3 py-2">
           <div className="flex items-center gap-2">
@@ -760,7 +769,12 @@ export default function TransfersPage() {
         <td className="px-3 py-2">
           {members[0].origin?.name ?? "?"} → {members[0].destination?.name ?? "?"}
         </td>
-        <td className="px-3 py-2">{members[0].source_type}</td>
+        <td className="px-3 py-2">
+          <div>{requestSourceLabel(members[0].source_type)}</div>
+          <div className="mt-0.5 text-xs text-slate-500">
+            {requestWhyWhen({ sourceType: members[0].source_type, scheduleDay: members[0].destination?.transfer_schedule_day })}
+          </div>
+        </td>
         <td className="px-3 py-2">
           {status === "mixed" ? (
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
@@ -1215,7 +1229,8 @@ export default function TransfersPage() {
               </select>
               <div className="ml-auto flex items-center gap-3">
                 <span className="text-xs text-slate-500">
-                  Last consolidation run:{" "}
+                  Shipments are created automatically on each store&apos;s
+                  transfer day. Last created:{" "}
                   {lastConsolidationRun ? relativeTime(lastConsolidationRun) : "never"}
                 </span>
                 {(employee?.role === "owner" || employee?.role === "admin") && (
@@ -1224,7 +1239,7 @@ export default function TransfersPage() {
                     disabled={runningConsolidation}
                     className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                   >
-                    {runningConsolidation ? "Running…" : "Run consolidation now"}
+                    {runningConsolidation ? "Creating…" : "Create shipments now"}
                   </button>
                 )}
               </div>

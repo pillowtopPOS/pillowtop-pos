@@ -76,13 +76,19 @@ export function activityEventTitle(e: JourneyEvent): string {
     case "inventory_received":
       return "Inventory ready";
     case "inventory_required":
-      return "Waiting for inventory";
+      return `Waiting: ${data.item_name ?? "Stock"} is not at ${
+        data.location_name ?? data.store_name ?? "the pickup store"
+      } yet`;
     case "line_item_added":
-      return `Added to order${data.item_name ? `: ${data.item_name}` : ""}`;
+      return `Item added: ${data.item_name ?? "Item"}${
+        typeof data.quantity === "number" ? `, qty ${data.quantity}` : ""
+      }`;
     case "line_item_updated":
-      return `Updated in order${data.item_name ? `: ${data.item_name}` : ""}`;
+      return `Item changed: ${data.item_name ?? "Item"}${
+        typeof data.quantity === "number" ? `, now qty ${data.quantity}` : ""
+      }${typeof data.unit_price === "number" ? ` at ${money(data.unit_price)}` : ""}`;
     case "line_item_removed":
-      return `Removed from order${data.item_name ? `: ${data.item_name}` : ""}`;
+      return `Item removed: ${data.item_name ?? "Item"}`;
     case "quote_created":
       return "Quote created";
     case "quote_sent":
@@ -148,8 +154,13 @@ export function activityEventAuthor(
   employees: Employee[]
 ): string {
   if (triggeredBy === "system") return "System";
+  // triggered_by carries an employee id on order/line writes (DB
+  // functions pass v_emp_id) and an auth user id on client writes — a
+  // mismatch here is why line events used to render "Unknown".
   return (
-    employees.find((e) => e.auth_user_id === triggeredBy)?.name ?? "Unknown"
+    employees.find(
+      (e) => e.id === triggeredBy || e.auth_user_id === triggeredBy
+    )?.name ?? "Unknown"
   );
 }
 
@@ -191,4 +202,118 @@ export function interactionSummaryText(i: JourneyInteraction): string {
     const label = EXCEPTION_TYPE_LABELS[code] ?? code;
     return label.endsWith("exception") ? label : `${label} exception`;
   });
+}
+
+// ============================================================
+// Unit + transfer activity wording — ONE formatter shared by the
+// order activity feed and the unit history page so the two can
+// never drift. Display only.
+// ============================================================
+
+export type UnitActivityEvent = {
+  event_type: string;
+  from_status: string | null;
+  to_status: string | null;
+  from_location_id: string | null;
+  to_location_id: string | null;
+  data?: Record<string, unknown> | null;
+};
+
+export function unitActivitySentence(
+  e: UnitActivityEvent,
+  ctx: {
+    unitNumber?: number | null;
+    locName: (id: string | null) => string;
+    // "SJ-MS00123 (Ann Lee)" on the unit page; "this order" in the feed.
+    orderLabel?: string | null;
+    forJourney?: boolean;
+    poNumber?: string | null;
+  }
+): string {
+  const n = ctx.unitNumber != null ? `Unit ${ctx.unitNumber}` : "Unit";
+  const at = (id: string | null) => (id ? ` at ${ctx.locName(id)}` : "");
+  if (e.event_type === "UNIT_CREATED") {
+    return `Received${at(e.to_location_id)}${
+      ctx.poNumber ? ` on ${ctx.poNumber}` : ""
+    }${ctx.forJourney && ctx.unitNumber != null ? ` (unit ${ctx.unitNumber})` : ""}`;
+  }
+  if (e.event_type === "UNIT_VOIDED" || e.to_status === "VOID") {
+    return `Voided`;
+  }
+  if (e.to_status === "RESERVED" && e.from_status !== "RESERVED") {
+    return ctx.forJourney
+      ? `${n} reserved for this order${at(e.to_location_id)}`
+      : `Reserved for order ${ctx.orderLabel ?? "—"}${at(e.to_location_id)}`;
+  }
+  if (e.to_status === "STOCK" && e.from_status === "RESERVED") {
+    return `Released back to stock`;
+  }
+  if (e.to_status === "DELIVERED") {
+    return `Delivered to ${ctx.orderLabel ?? "the customer"}`;
+  }
+  if (e.to_status === "IN_TRANSIT") {
+    return `In transit to ${ctx.locName(e.to_location_id)}`;
+  }
+  if (
+    e.from_location_id &&
+    e.to_location_id &&
+    e.from_location_id !== e.to_location_id
+  ) {
+    return ctx.forJourney
+      ? `${n} arrived at ${ctx.locName(e.to_location_id)}`
+      : `Moved to ${ctx.locName(e.to_location_id)}`;
+  }
+  if (e.from_status !== e.to_status && e.to_status) {
+    return `${e.from_status ?? "?"} to ${e.to_status}${at(e.to_location_id)}`;
+  }
+  return `Updated${at(e.to_location_id)}`;
+}
+
+// One feed line per transfer stage, in plain language.
+export function transferStageLines(
+  r: {
+    created_at: string;
+    originName: string;
+    destName: string;
+    requestedByName?: string | null;
+    transfer?: {
+      created_at?: string | null;
+      scheduled_date?: string | null;
+      in_transit_at?: string | null;
+      finalized_at?: string | null;
+    } | null;
+  },
+  shortDate: (iso: string) => string
+): { at: string; text: string; actor: string }[] {
+  const out: { at: string; text: string; actor: string }[] = [
+    {
+      at: r.created_at,
+      text: `Transfer requested: ${r.originName} to ${r.destName}`,
+      actor: r.requestedByName ?? "System",
+    },
+  ];
+  const t = r.transfer;
+  if (!t) return out;
+  if (t.scheduled_date) {
+    out.push({
+      at: t.created_at ?? r.created_at,
+      text: `Transfer scheduled for ${shortDate(t.scheduled_date)}`,
+      actor: "System",
+    });
+  }
+  if (t.in_transit_at) {
+    out.push({
+      at: t.in_transit_at,
+      text: `Shipped from ${r.originName}`,
+      actor: "System",
+    });
+  }
+  if (t.finalized_at) {
+    out.push({
+      at: t.finalized_at,
+      text: `Arrived at ${r.destName}`,
+      actor: "System",
+    });
+  }
+  return out;
 }

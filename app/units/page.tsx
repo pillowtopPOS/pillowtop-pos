@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { unitActivitySentence } from "@/lib/journeys/activityLabels";
 import { createClient } from "@/lib/supabase/client";
 import {
   fetchCurrentEmployee,
@@ -74,29 +75,21 @@ type LookupState =
 function eventLine(
   e: UnitEvent,
   locName: (id: string | null) => string,
-  actorName: (id: string | null) => string
-): string {
-  const who = e.actor_id ? ` by ${actorName(e.actor_id)}` : "";
-  const to = e.to_status ? STATUS_LABEL[e.to_status] ?? e.to_status : "?";
-  const from = e.from_status
-    ? STATUS_LABEL[e.from_status] ?? e.from_status
-    : null;
-  const dest = e.to_location_id ? ` at ${locName(e.to_location_id)}` : "";
-  switch (e.event_type) {
-    case "UNIT_CREATED":
-      return `Received into stock${dest}${who}`;
-    case "UNIT_MOVED":
-      if (e.from_status === e.to_status) {
-        return `Condition or version changed${dest}${who}`;
-      }
-      return `${from ?? "?"} to ${to}${dest}${who}`;
-    case "UNIT_VOIDED":
-      return `Voided${who}`;
-    case "UNIT_RECLASSIFIED":
-      return `Condition changed${dest}${who}`;
-    default:
-      return `${e.event_type}${who}`;
+  actorName: (id: string | null) => string,
+  ctx: {
+    unitNumber?: number | null;
+    orderLabel?: string | null;
+    poNumber?: string | null;
   }
+): string {
+  // Shared with the order activity feed — one formatter, no drift.
+  const who = e.actor_id ? ` by ${actorName(e.actor_id)}` : "";
+  return unitActivitySentence(e, {
+    unitNumber: ctx.unitNumber,
+    locName,
+    orderLabel: ctx.orderLabel,
+    poNumber: ctx.poNumber,
+  }) + who;
 }
 
 export default function UnitsPage() {
@@ -128,6 +121,7 @@ export default function UnitsPage() {
   } | null>(null);
   const [journeyInfo, setJourneyInfo] = useState<{
     journeyId: string;
+    journeyNumber: string | null;
     customerName: string | null;
   } | null>(null);
   const [poId, setPoId] = useState<string | null>(null);
@@ -180,8 +174,8 @@ export default function UnitsPage() {
         "id, event_type, actor_id, journey_id, from_status, to_status, from_location_id, to_location_id, created_at"
       )
       .eq("unit_id", unitId)
-      .order("created_at", { ascending: true })
-      .order("id", { ascending: true });
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false });
     if (seq !== lookupSeq.current || !mounted.current) return;
     if (error) {
       setEventsState("failed");
@@ -267,7 +261,7 @@ export default function UnitsPage() {
       if (journeyId && mounted.current) {
         const { data: j } = await supabase
           .from("sleep_journeys")
-          .select("id, customers(first_name, last_name)")
+          .select("id, journey_number, customers(first_name, last_name)")
           .eq("id", journeyId)
           .maybeSingle();
         if (seq !== lookupSeq.current || !mounted.current) return;
@@ -275,6 +269,7 @@ export default function UnitsPage() {
           const c = (j as any).customers;
           setJourneyInfo({
             journeyId: j.id,
+            journeyNumber: (j as any).journey_number ?? null,
             customerName: c ? `${c.first_name} ${c.last_name}` : null,
           });
         }
@@ -567,7 +562,24 @@ export default function UnitsPage() {
                   <span className="text-slate-400">
                     {new Date(e.created_at).toLocaleString()}
                   </span>{" "}
-                  {eventLine(e, locName, actorName)}
+                  {eventLine(e, locName, actorName, {
+                    unitNumber:
+                      lookup.kind === "found" ? lookup.unit.unit_number : null,
+                    orderLabel: journeyInfo
+                      ? `${journeyInfo.journeyNumber ?? "order"}${
+                          journeyInfo.customerName
+                            ? ` (${journeyInfo.customerName})`
+                            : ""
+                        }`
+                      : assignedOrder
+                      ? `${assignedOrder.journey_number ?? "order"}${
+                          assignedOrder.customer_name
+                            ? ` (${assignedOrder.customer_name})`
+                            : ""
+                        }`
+                      : null,
+                    poNumber: poId,
+                  })}
                 </li>
               ))}
             </ul>

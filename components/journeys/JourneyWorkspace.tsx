@@ -351,7 +351,7 @@ function JourneyStateSummaryBar({
   journey: JourneyWithDetails;
   nextFollowUp: FollowUp | undefined;
   stateDetail: string | null;
-  transferNote: { kind: "requested" | "scheduled" | "shipped"; text: string; requestId: string } | null;
+  transferNote: { kind: "requested" | "scheduled" | "shipped"; text: string; requestId: string; destName?: string | null } | null;
   attentionItems: AttentionItem[];
   transitions: { label: string; event: JourneyEventType }[];
   // EB-3a: an exchange child sitting in Quoted with a positive balance is
@@ -415,7 +415,13 @@ function JourneyStateSummaryBar({
             </span>
           )
         ) : journey.current_state === "Waiting for Inventory" ? (
-          <span key="na-inventory">Call customer when inventory arrives</span>
+          <span key="na-inventory">
+            {transferNote
+              ? `Wait for transfer. Call customer when it arrives at ${
+                  transferNote.destName ?? "the pickup store"
+                }.`
+              : "Call customer when inventory arrives"}
+          </span>
         ) : transitions.find((t) => t.event !== "trial_completed") ? (
           // trial_completed stays excluded: Sleep Trial → Completed is
           // ungated, so "Complete Trial" must never read as the default
@@ -1208,6 +1214,7 @@ export default function JourneyWorkspace({
           (row.transfers.in_transit_at ?? "").slice(0, 10)
         )}`,
         requestId: row.id,
+        destName: dest?.name ?? null,
       };
     }
     if (row.status === "consolidated" && row.transfers) {
@@ -1217,13 +1224,19 @@ export default function JourneyWorkspace({
           origin?.name ?? "?"
         } to ${dest?.name ?? "?"}`,
         requestId: row.id,
+        destName: dest?.name ?? null,
       };
     }
     let text = "Transfer requested. Date not set yet.";
     if (dest?.transfer_schedule_day != null) {
       text += ` Next transfer day: ${nextScheduleLabel(dest.transfer_schedule_day)}.`;
     }
-    return { kind: "requested" as const, text, requestId: row.id };
+    return {
+      kind: "requested" as const,
+      text,
+      requestId: row.id,
+      destName: dest?.name ?? null,
+    };
   })();
 
   // Units assigned to this order but held at a different location.
@@ -1246,17 +1259,35 @@ export default function JourneyWorkspace({
     ).join(", ");
 
   // Secondary line under Current State — only where the spec defines one.
-  const outstandingItems = lineItems.filter(
+  const outstandingLines = lineItems.filter(
     (i) => i.product_id != null && (lineAvailability[i.id] ?? 0) < i.quantity
+  );
+  const remoteOutstanding = outstandingLines.filter(
+    (i) =>
+      i.product_id != null &&
+      remoteUnitsByVariant(
+        i.product_id,
+        resolveLineItemLocation(i, journey, stores)
+      ).length > 0
   ).length;
+  const noStockCount = outstandingLines.length - remoteOutstanding;
   const stateDetail =
     journey.current_state === "Sleep Trial" &&
     urgentTrial?.display.night != null &&
     urgentTrial.display.length_nights != null
       ? `Night ${urgentTrial.display.night} of ${urgentTrial.display.length_nights}`
       : journey.current_state === "Waiting for Inventory" &&
-        outstandingItems > 0
-      ? `${outstandingItems} item${outstandingItems === 1 ? "" : "s"} outstanding`
+        outstandingLines.length > 0
+      ? [
+          remoteOutstanding > 0
+            ? `${remoteOutstanding} item${remoteOutstanding === 1 ? "" : "s"} at another location`
+            : null,
+          noStockCount > 0
+            ? `${noStockCount} item${noStockCount === 1 ? "" : "s"} not in stock`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" · ")
       : null;
 
   // Rarely used / destructive actions live in the header "..." menu.
@@ -1412,6 +1443,7 @@ export default function JourneyWorkspace({
               events={events}
               followUps={followUps}
               employees={employees}
+              stores={stores}
               currentEmployee={currentEmployee}
               canModerate={canReconcile}
               onChanged={handlePanelRefresh}

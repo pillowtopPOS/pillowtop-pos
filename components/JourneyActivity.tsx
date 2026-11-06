@@ -29,10 +29,14 @@ import {
   type WaitingOn,
 } from "@/lib/journeys/interactions";
 import { localTodayISO } from "@/lib/dates";
+import { createClient } from "@/lib/supabase/client";
 import {
   activityEventAuthor,
   activityEventDetail,
   activityEventTitle,
+  activityShortDate,
+  transferStageLines,
+  unitActivitySentence,
   interactionBadgeLabel,
   interactionSummaryText,
 } from "@/lib/journeys/activityLabels";
@@ -58,6 +62,7 @@ import type {
 // ============================================================
 
 type FeedItem =
+  | { kind: "line"; at: string; text: string; actor: string }
   | { kind: "event"; at: string; event: JourneyEvent }
   | { kind: "interaction"; at: string; interaction: JourneyInteraction }
   | { kind: "follow_up"; at: string; followUp: FollowUp };
@@ -176,8 +181,10 @@ export default function JourneyActivity({
   onChanged,
   refreshKey = 0,
   onDirtyChange,
+  stores = [],
 }: {
   journey: JourneyWithDetails;
+  stores?: { id: string; name: string }[];
   events: JourneyEvent[];
   followUps: FollowUp[];
   employees: Employee[];
@@ -188,6 +195,9 @@ export default function JourneyActivity({
   onDirtyChange?: (state: { dirty: boolean; saving: boolean }) => void;
 }) {
   const [interactions, setInteractions] = useState<JourneyInteraction[]>([]);
+  const [extraLines, setExtraLines] = useState<
+    { at: string; text: string; actor: string }[]
+  >([]);
   const [contacts, setContacts] = useState<CustomerContact[]>([]);
   const [filter, setFilter] = useState<FeedFilter>("all");
   const [showAddUpdate, setShowAddUpdate] = useState(false);
@@ -240,8 +250,74 @@ export default function JourneyActivity({
     }
   }, [journey.id, customerId, refreshKey]);
 
+  // Unit + transfer events for this journey, written in the same plain
+  // language as the unit page (shared formatter, activityLabels.ts).
+  useEffect(() => {
+    let cancelled = false;
+    const supabase = createClient();
+    const locName = (id: string | null) =>
+      stores.find((s) => s.id === id)?.name ?? "another location";
+    const empName = (id: string | null) =>
+      employees.find((e) => e.id === id)?.name ?? "System";
+    (async () => {
+      const lines: { at: string; text: string; actor: string }[] = [];
+      const { data: uev } = await supabase
+        .from("unit_events")
+        .select(
+          "id, event_type, actor_id, from_status, to_status, from_location_id, to_location_id, created_at, units!unit_id ( unit_number )"
+        )
+        .eq("journey_id", journey.id)
+        .order("created_at", { ascending: true });
+      for (const e of (uev ?? []) as any[]) {
+        lines.push({
+          at: e.created_at,
+          text: unitActivitySentence(e, {
+            unitNumber: e.units?.unit_number ?? null,
+            locName,
+            forJourney: true,
+          }),
+          actor: e.actor_id ? empName(e.actor_id) : "System",
+        });
+      }
+      const { data: reqs } = await supabase
+        .from("transfer_requests")
+        .select(
+          "id, created_at, requested_by, origin_location_id, destination_location_id, transfers!transfer_id ( created_at, scheduled_date, in_transit_at, finalized_at )"
+        )
+        .eq("source_type", "journey_mismatch")
+        .eq("source_reference_id", journey.id);
+      for (const r of (reqs ?? []) as any[]) {
+        lines.push(
+          ...transferStageLines(
+            {
+              created_at: r.created_at,
+              originName: locName(r.origin_location_id),
+              destName: locName(r.destination_location_id),
+              requestedByName: r.requested_by ? empName(r.requested_by) : null,
+              transfer: Array.isArray(r.transfers)
+                ? r.transfers[0]
+                : r.transfers,
+            },
+            activityShortDate
+          )
+        );
+      }
+      if (!cancelled) setExtraLines(lines);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [journey.id, refreshKey, events.length]);
+
   const items = useMemo<FeedItem[]>(() => {
     const merged: FeedItem[] = [
+      ...extraLines.map((l) => ({
+        kind: "line" as const,
+        at: l.at,
+        text: l.text,
+        actor: l.actor,
+      })),
       ...events.map((e) => ({ kind: "event" as const, at: e.created_at, event: e })),
       ...interactions.map((i) => ({
         kind: "interaction" as const,
@@ -256,11 +332,12 @@ export default function JourneyActivity({
     ];
     merged.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
     return merged;
-  }, [events, interactions, followUps]);
+  }, [events, interactions, followUps, extraLines]);
 
   const filtered = useMemo(() => {
     if (filter === "all") return items;
     return items.filter((item) => {
+      if (item.kind === "line") return filter === "fulfillment" || filter === "orders";
       if (item.kind === "event") return eventCategory(item.event) === filter;
       if (item.kind === "interaction")
         return interactionCategory(item.interaction) === filter;
@@ -491,6 +568,16 @@ export default function JourneyActivity({
         )}
 
         {filtered.map((item) => {
+          if (item.kind === "line") {
+            return (
+              <div key={`l-${item.at}-${item.text}`} className="px-1 py-1">
+                <p className="text-sm text-slate-500">{item.text}</p>
+                <p className="text-xs text-slate-400">
+                  {item.actor} · {new Date(item.at).toLocaleString()}
+                </p>
+              </div>
+            );
+          }
           if (item.kind === "event") {
             const e = item.event;
             const detail = activityEventDetail(e);

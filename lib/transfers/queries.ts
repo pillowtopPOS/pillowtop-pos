@@ -18,7 +18,7 @@ export type TransferRequestWithDetails = {
   transfer_id: string | null;
   created_at: string;
   origin: { id: string; name: string } | null;
-  destination: { id: string; name: string } | null;
+  destination: { id: string; name: string; transfer_schedule_day?: number | null } | null;
   variant: { id: string; item_name: string } | null;
   requester: { id: string; name: string } | null;
   approver: { id: string; name: string } | null;
@@ -36,7 +36,7 @@ export type TransferWithDetails = {
   finalized_at: string | null;
   finalized_by: string | null;
   origin: { id: string; name: string } | null;
-  destination: { id: string; name: string } | null;
+  destination: { id: string; name: string; transfer_schedule_day?: number | null } | null;
   line_items: TransferLineItem[];
 };
 
@@ -90,7 +90,7 @@ export async function fetchTransferRequests(
     .select(
       `*,
       origin:stores!origin_location_id ( id, name ),
-      destination:stores!destination_location_id ( id, name ),
+      destination:stores!destination_location_id ( id, name, transfer_schedule_day ),
       variant:products!variant_id ( id, item_name ),
       requester:employees!requested_by ( id, name ),
       approver:employees!approved_by ( id, name )`
@@ -114,7 +114,7 @@ export async function fetchTransfers(
     .select(
       `*,
       origin:stores!origin_location_id ( id, name ),
-      destination:stores!destination_location_id ( id, name ),
+      destination:stores!destination_location_id ( id, name, transfer_schedule_day ),
       line_items:transfer_line_items!transfer_id (
         id, transfer_id, variant_id, quantity_requested, quantity_shipped, quantity_received,
         reported_quantity_received, reported_reason, reported_note, reported_by, reported_at,
