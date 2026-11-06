@@ -31,12 +31,22 @@ type LabelView = {
   sku?: string | null;
   item_name?: string | null;
   location_name?: string | null;
+  created_at?: string | null;
 };
 
 // One layout for both label types. The left column stacks tag, SJ number
 // and location under the big unit number so nothing crowds the text below.
 // Every block is shrink-0: content that cannot fit must be visible
 // overflow, never silently hidden.
+// Unit number size by digit count so long numbers never crowd the
+// top-left block. 9+ digits clamp at 56px.
+function unitNumSize(digits: number): string {
+  if (digits <= 4) return "96px";
+  if (digits === 5) return "80px";
+  if (digits === 6) return "68px";
+  return "56px";
+}
+
 function UnitLabel({
   u,
   rotate,
@@ -84,7 +94,7 @@ function UnitLabel({
           }}
         >
           <div className="flex shrink-0 items-start justify-between">
-            <div className="flex flex-col">
+            <div className="flex min-w-0 flex-1 flex-col pr-2">
               <span
                 className="self-start text-[14px] font-bold"
                 style={{
@@ -100,33 +110,51 @@ function UnitLabel({
                   {u.journey_number}
                 </span>
               )}
-              <span
-                className="mt-1"
-                style={{ fontSize: compact ? "16px" : "20px" }}
-              >
-                <span className="font-bold">Location:</span>{" "}
-                {u.location_name ?? "?"}
-              </span>
+              {u.tag !== "CUSTOMER ORDER" && (
+                <span
+                  className="mt-1"
+                  style={{ fontSize: compact ? "16px" : "20px" }}
+                >
+                  <span className="font-bold">Location:</span>{" "}
+                  {u.location_name ?? "?"}
+                </span>
+              )}
             </div>
             <span
-              className="text-[96px] font-extrabold"
-              style={{ lineHeight: 1, letterSpacing: "-1px" }}
+              className="shrink-0 font-extrabold"
+              style={{
+                fontSize: unitNumSize(String(u.unit_number).length),
+                lineHeight: 0.85,
+                letterSpacing: "-1px",
+              }}
             >
               {u.unit_number}
             </span>
           </div>
           {u.tag === "CUSTOMER ORDER" && (
             <div
-              className="mt-0.5 shrink-0 font-extrabold leading-tight"
+              className="shrink-0 font-extrabold leading-tight"
               style={{ fontSize: nameSize }}
             >
               {name ?? u.journey_number ?? "?"}
             </div>
           )}
+          {u.tag === "CUSTOMER ORDER" && (
+            <div
+              className="shrink-0"
+              style={{
+                borderTop: "2px solid black",
+                marginTop: "8px",
+                marginBottom: "10px",
+              }}
+            />
+          )}
           {u.item_name && (
             <div
-              className="mt-0.5 shrink-0 overflow-hidden font-bold leading-tight"
+              className={`${compact ? "" : "mt-1.5"} shrink-0 overflow-hidden leading-tight`}
               style={{
+                marginTop: compact ? "6px" : undefined,
+                fontWeight: u.tag === "CUSTOMER ORDER" ? 600 : 700,
                 fontSize: itemSize,
                 display: "-webkit-box",
                 WebkitBoxOrient: "vertical",
@@ -138,17 +166,26 @@ function UnitLabel({
           )}
           {u.sku && (
             <div
-              className="mt-0.5 shrink-0 whitespace-nowrap leading-tight"
-              style={{ fontSize: skuSize }}
+              className={`${compact ? "" : "mt-1.5"} shrink-0 whitespace-nowrap leading-tight`}
+              style={{ fontSize: skuSize, marginTop: compact ? "3px" : undefined }}
             >
               <span className="font-bold">SKU:</span> {u.sku}
             </div>
           )}
-          <div className="mt-auto shrink-0">
+          {u.tag === "CUSTOMER ORDER" && (
+            <div className="shrink-0 whitespace-nowrap text-[16px] leading-tight" style={{ marginTop: "6px" }}>
+              <span className="font-bold">Location:</span>{" "}
+              {u.location_name ?? "?"}
+            </div>
+          )}
+          <div
+            className="mt-auto shrink-0"
+            style={{ paddingTop: compact ? "12px" : "8px" }}
+          >
             <Code128Barcode
               value={String(u.unit_number)}
-              height={compact ? "0.65in" : "0.85in"}
-              width="100%"
+              height="0.50in"
+              moduleWidth={0.02}
             />
             <div
               className="mt-1 text-center text-[20px]"
@@ -157,6 +194,21 @@ function UnitLabel({
               {u.unit_number}
             </div>
           </div>
+          {u.created_at &&
+            !Number.isNaN(new Date(u.created_at).getTime()) && (
+              <span
+                style={{
+                  position: "absolute",
+                  left: "6px",
+                  bottom: "4px",
+                  fontSize: "12px",
+                  fontWeight: 400,
+                  lineHeight: 1,
+                }}
+              >
+                Rcvd {new Date(u.created_at).toLocaleDateString("en-US")}
+              </span>
+            )}
         </div>
       </div>
     </div>
@@ -323,6 +375,7 @@ type CustomerRow = {
   sku?: string | null;
   item_name?: string | null;
   location_name?: string | null;
+  created_at?: string | null;
 };
 
 function CustomerLabelsInner({ rotate }: { rotate: "cw" | "ccw" }) {
@@ -360,6 +413,7 @@ function CustomerLabelsInner({ rotate }: { rotate: "cw" | "ccw" }) {
           sku?: string | null;
           item_name?: string | null;
           location_name?: string | null;
+          created_at?: string | null;
         })[];
         // One batched lookup adds SKU, item and location to every row.
         // If it fails the labels still print with the customer fields.
@@ -373,6 +427,7 @@ function CustomerLabelsInner({ rotate }: { rotate: "cw" | "ccw" }) {
             r.sku = d?.sku ?? null;
             r.item_name = d?.item_name ?? null;
             r.location_name = d?.location_name ?? null;
+            r.created_at = d?.created_at ?? null;
           });
         } catch {
           // labels still render without product/location lines
@@ -447,6 +502,7 @@ function CustomerLabelsInner({ rotate }: { rotate: "cw" | "ccw" }) {
                 sku: u.sku,
                 item_name: u.item_name,
                 location_name: u.location_name,
+                created_at: u.created_at,
               }}
               rotate={rotate}
               compact
@@ -593,6 +649,7 @@ function LabelsInner() {
                   sku: u.sku,
                   item_name: u.item_name,
                   location_name: u.location_name,
+                  created_at: u.created_at,
                 }}
                 rotate={rotate}
                 compact={false}
