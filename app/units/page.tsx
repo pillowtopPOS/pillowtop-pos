@@ -515,8 +515,7 @@ export default function UnitsPage() {
             <div className="mt-3 flex gap-2">
               <a
                 href={`/units/labels/print?numbers=${unit.unit_number}`}
-                target="_blank"
-                rel="noopener noreferrer"
+                target="pillowtop-labels"
                 className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
               >
                 Reprint label
@@ -524,8 +523,7 @@ export default function UnitsPage() {
               {assignedOrder && (
                 <a
                   href={`/units/labels/print?mode=customer&units=${unit.id}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  target="pillowtop-labels"
                   className="rounded-md border border-indigo-300 px-3 py-1.5 text-sm text-indigo-700 hover:bg-indigo-50"
                 >
                   Reprint customer label
