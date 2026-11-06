@@ -73,7 +73,10 @@ begin
     and jir.location_id = p_destination_location_id
     and jir.status in ('pending', 'ready');
 
-  v_target := greatest(0, v_need - v_consolidated) + v_shortfall;
+  -- Total still needed from elsewhere = units riding + uncovered quantity,
+  -- minus what consolidated transfers already cover (no duplicate request
+  -- or second hold once the cron has turned a request into a transfer).
+  v_target := greatest(0, v_need + v_shortfall - v_consolidated);
 
   select * into v_open
   from public.transfer_requests
@@ -171,6 +174,7 @@ declare
   v_journey public.sleep_journeys%rowtype;
   v_origin uuid;
   v_shortfall integer;
+  v_consolidated integer;
 begin
   select * into v_req
   from public.journey_inventory_requirements
@@ -219,6 +223,15 @@ begin
     and jir.variant_id = v_req.variant_id
     and jir.location_id = v_req.location_id
     and jir.status in ('pending', 'ready');
+
+  select coalesce(sum(quantity), 0) into v_consolidated
+  from public.transfer_requests
+  where source_type = 'journey_mismatch'
+    and source_reference_id = v_req.journey_id
+    and variant_id = v_req.variant_id
+    and destination_location_id = v_req.location_id
+    and status = 'consolidated';
+  v_shortfall := greatest(0, v_shortfall - v_consolidated);
 
   if v_shortfall > 0 and not exists (
     select 1 from public.transfer_requests

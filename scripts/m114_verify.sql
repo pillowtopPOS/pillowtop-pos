@@ -17,7 +17,7 @@ declare
   v_r uuid := gen_random_uuid();
   v_req uuid; v_n int; v_cw int;
 begin
-  insert into companies(id,name) values (v_c,'C');
+  insert into companies(id,name,business_timezone) values (v_c,'C','America/Denver');
   insert into stores(id,company_id,name,location_type,is_active) values
     (v_w,v_c,'W','WAREHOUSE',true),(v_a,v_c,'A','STORE',true),
     (v_x,v_c,'X','STORE',true);
@@ -25,8 +25,8 @@ begin
     values (v_emp,v_auth,v_w,'owner',true);
   insert into products(id,company_id,item_name,unit_tracked,sku) values
     (v_p,v_c,'T114',true,'T114-P'),(v_pu,v_c,'T114U',false,'T114-U');
-  insert into customers(id,company_id,first_name,last_name)
-    values (v_cust,v_c,'T','U');
+  insert into customers(id,first_name,last_name)
+    values (v_cust,'T','U');
   insert into inventory_positions(variant_id,location_id,disposition,
     on_hand_quantity,committed_quantity) values
     (v_p,v_w,'Prime',5,0),(v_p,v_x,'Prime',5,0),(v_pu,v_w,'Prime',5,0);
@@ -121,10 +121,29 @@ begin
       where variant_id=v_pu and location_id=v_w and disposition='Prime')=1);
   update sleep_journeys set cancelled_at=now() where id=v_j;
 
+  -- T9 (Claude) consolidated request must not be duplicated by a later touch
+  v_j := gen_random_uuid(); v_r := gen_random_uuid();
+  insert into sleep_journeys(id,customer_id,store_id,current_state)
+    values (v_j,v_cust,v_a,'Sold');
+  insert into journey_inventory_requirements
+    (id,journey_id,variant_id,location_id,quantity_required,status)
+    values (v_r,v_j,v_p,v_a,2,'pending');
+  select id into v_req from transfer_requests where source_reference_id=v_j and status='approved';
+  perform pg_temp.chk('T9a request qty2 created', v_req is not null);
+  update transfer_requests set status='consolidated', transfer_id=gen_random_uuid() where id=v_req;
+  perform public.reconcile_requirement_units(v_r);
+  update journey_inventory_requirements set status='pending' where id=v_r;
+  select count(*) into v_n from transfer_requests where source_reference_id=v_j and status not in ('cancelled','rejected');
+  perform pg_temp.chk('T9b after consolidation + touch: still ONE request (no duplicate)', v_n=1);
+  select committed_quantity into v_cw from inventory_positions where variant_id=v_p and location_id=v_w and disposition='Prime';
+  perform pg_temp.chk('T9c no second hold (committed 2)', v_cw=2);
+  update sleep_journeys set cancelled_at=now() where id=v_j;
+
   -- T8 failure path: audit row, order save still succeeds -------------------
-  create or replace function public.create_journey_mismatch_transfer(uuid,uuid,integer,uuid)
-    returns uuid language plpgsql as $$ begin
-      raise exception 'forced test failure'; end $$;
+  execute $q$create or replace function public.create_journey_mismatch_transfer(p_journey_id uuid,p_variant_id uuid,p_quantity integer,p_fulfillment_location_id uuid)
+    returns uuid language plpgsql as $f$ begin
+      raise exception 'forced test failure'; end $f$
+    $q$;
   v_j := gen_random_uuid(); v_r := gen_random_uuid();
   insert into sleep_journeys(id,customer_id,store_id,current_state)
     values (v_j,v_cust,v_a,'Sold');
