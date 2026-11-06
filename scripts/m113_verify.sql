@@ -153,6 +153,58 @@ begin
          where variant_id=v_p and location_id=v_w and disposition='Prime')
     or (select held_quantity from transfer_requests where id=v_req)=0);
 
+  -- T9 qty reduction KEEPS (shrinks) the request ---------------------------
+  insert into sleep_journeys(id,customer_id,store_id,current_state)
+    values (gen_random_uuid(),v_cust,v_a,v_state) returning id into v_j1;
+  insert into journey_inventory_requirements
+    (id,journey_id,variant_id,location_id,quantity_required,status)
+    values (gen_random_uuid(),v_j1,v_p,v_a,3,'pending') returning id into v_r1;
+  v_req := public.create_journey_mismatch_transfer(v_j1,v_p,3,v_a);
+  update journey_inventory_requirements set quantity_required=2 where id=v_r1;
+  perform reconcile_requirement_units(v_r1);
+  perform pg_temp.chk('T9 shrink keeps request: qty2 held2 approved',
+    (select quantity from transfer_requests where id=v_req)=2
+    and (select held_quantity from transfer_requests where id=v_req)=2
+    and (select status from transfer_requests where id=v_req)='approved');
+
+  -- T10 manual approved request: trigger sets held, cancel releases -------
+  select committed_quantity into v_cw from inventory_positions
+    where variant_id=v_p and location_id=v_w and disposition='Prime';
+  update inventory_positions set committed_quantity=committed_quantity+2
+    where variant_id=v_p and location_id=v_w and disposition='Prime';
+  insert into transfer_requests(origin_location_id,
+    destination_location_id,variant_id,quantity,source_type,status)
+    values (v_w,v_a,v_p,2,'manager_requested','approved')
+    returning id into v_req;
+  perform pg_temp.chk('T10a approve trigger records held_quantity=2',
+    (select held_quantity from transfer_requests where id=v_req)=2);
+  perform cancel_transfer_request(v_req,v_emp);
+  perform pg_temp.chk('T10b cancel releases its hold',
+    (select committed_quantity from inventory_positions
+      where variant_id=v_p and location_id=v_w and disposition='Prime')=v_cw);
+
+  -- T11 cron guard leaves NO empty transfer ---------------------------------
+  insert into sleep_journeys(id,customer_id,store_id,current_state,
+    cancelled_at) values (gen_random_uuid(),v_cust,v_a,v_state,now())
+    returning id into v_j1;
+  insert into transfer_requests(origin_location_id,
+    destination_location_id,variant_id,quantity,held_quantity,
+    source_type,source_reference_id,status)
+    values (v_w,v_a,v_p,1,0,'journey_mismatch',v_j1,'approved')
+    returning id into v_req;
+  insert into transfers(id,origin_location_id,destination_location_id,
+    scheduled_date,status) values (gen_random_uuid(),v_w,v_a,
+    current_date+1,'pending') returning id into v_req2;
+  insert into transfer_line_items(transfer_id,variant_id,quantity_requested)
+    values (v_req2,v_p,1);
+  update transfer_requests set status='consolidated', transfer_id=v_req2
+    where id=v_req;
+  perform pg_temp.chk('T11 guard deletes empty transfer',
+    (select status from transfer_requests where id=v_req)='cancelled'
+    and not exists(select 1 from transfers where id=v_req2)
+    and not exists(select 1 from transfer_line_items
+      where transfer_id=v_req2));
+
   -- T8 idempotency: re-run the 113 backfill + helper calls -------------------
   update public.transfer_requests set held_quantity = quantity
    where status = 'approved'

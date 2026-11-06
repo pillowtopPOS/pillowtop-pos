@@ -427,11 +427,15 @@ begin
       perform public.move_unit(v_assigned[i], 'STOCK', null, '{}'::jsonb);
     end loop;
     v_count := 0;
-    -- Cancel every open journey_mismatch request for this
-    -- journey+variant+destination and release its hold, whether or not a
-    -- unit was ever assigned.
-    perform public.cancel_journey_mismatch_requests(
-      v_req.journey_id, v_req.variant_id, v_req.location_id);
+    -- Only when the order/requirement is actually cancelled, superseded or
+    -- back to Quoted. desired = 0 can also just mean "nothing reserved here
+    -- yet" for an order still waiting on a transfer, which must keep its request.
+    if v_req.status in ('cancelled', 'superseded')
+       or v_journey.cancelled_at is not null
+       or v_journey.current_state = 'Quoted' then
+      perform public.cancel_journey_mismatch_requests(
+        v_req.journey_id, v_req.variant_id, v_req.location_id);
+    end if;
   else
     select coalesce(array_agg(id order by unit_number), '{}')
       into v_local
@@ -579,6 +583,11 @@ begin
           and variant_id = old.variant_id
           and quantity_requested <= 0;
       end if;
+      -- a transfer left with no lines would show as an empty transfer
+      if not exists (select 1 from public.transfer_line_items
+                      where transfer_id = new.transfer_id) then
+        delete from public.transfers where id = new.transfer_id;
+      end if;
       new.status := 'cancelled';
       new.transfer_id := null;
       new.held_quantity := 0;
@@ -644,3 +653,22 @@ end;
 $$;
 
 grant execute on function public.cancel_transfer_request(uuid, uuid) to authenticated;
+
+-- 8. Non-journey_mismatch requests entering 'approved' hold their quantity
+--    (approve_transfer_request and the threshold_auto cron commit it).
+create or replace function public.tr_set_held_on_approve()
+returns trigger language plpgsql as $$
+begin
+  if new.status = 'approved'
+     and new.source_type is distinct from 'journey_mismatch'
+     and new.held_quantity = 0
+     and (tg_op = 'INSERT' or old.status is distinct from 'approved') then
+    new.held_quantity := new.quantity;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_tr_set_held_on_approve on public.transfer_requests;
+create trigger trg_tr_set_held_on_approve
+  before insert or update of status on public.transfer_requests
+  for each row execute function public.tr_set_held_on_approve();
