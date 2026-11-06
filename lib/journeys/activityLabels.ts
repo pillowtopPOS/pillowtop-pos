@@ -233,9 +233,17 @@ export function unitActivitySentence(
   const n = ctx.unitNumber != null ? `Unit ${ctx.unitNumber}` : "Unit";
   const at = (id: string | null) => (id ? ` at ${ctx.locName(id)}` : "");
   if (e.event_type === "UNIT_CREATED") {
-    return `Received${at(e.to_location_id)}${
-      ctx.poNumber ? ` on ${ctx.poNumber}` : ""
-    }${ctx.forJourney && ctx.unitNumber != null ? ` (unit ${ctx.unitNumber})` : ""}`;
+    // Never leak a raw uuid: unknown or id-shaped values read as
+    // "a purchase order".
+    const po =
+      ctx.poNumber && !/^[0-9a-f-]{36}$/i.test(ctx.poNumber)
+        ? ` on ${ctx.poNumber}`
+        : ctx.poNumber
+        ? " on a purchase order"
+        : "";
+    return `Received${at(e.to_location_id)}${po}${
+      ctx.forJourney && ctx.unitNumber != null ? ` (unit ${ctx.unitNumber})` : ""
+    }`;
   }
   if (e.event_type === "UNIT_VOIDED" || e.to_status === "VOID") {
     return `Voided`;

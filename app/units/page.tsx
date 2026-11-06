@@ -124,7 +124,7 @@ export default function UnitsPage() {
     journeyNumber: string | null;
     customerName: string | null;
   } | null>(null);
-  const [poId, setPoId] = useState<string | null>(null);
+  const [poId, setPoId] = useState<{ id: string; ref: string | null } | null>(null);
   const [voidedByName, setVoidedByName] = useState<string | null>(null);
 
   const [discState, setDiscState] = useState<
@@ -277,11 +277,17 @@ export default function UnitsPage() {
       if (unit.purchase_order_line_item_id && mounted.current) {
         const { data: li } = await supabase
           .from("purchase_order_line_items")
-          .select("purchase_order_id")
+          .select("purchase_order_id, purchase_orders(reference_code)")
           .eq("id", unit.purchase_order_line_item_id)
           .maybeSingle();
         if (seq !== lookupSeq.current || !mounted.current) return;
-        setPoId(li?.purchase_order_id ?? null);
+        if (li?.purchase_order_id) {
+          const po = (li as any)?.purchase_orders;
+          setPoId({
+            id: li.purchase_order_id,
+            ref: po?.reference_code ?? null,
+          });
+        }
       }
       if (unit.voided_by && mounted.current) {
         const { data: emp } = await supabase
@@ -484,7 +490,7 @@ export default function UnitsPage() {
                 <dt className="inline font-medium">Purchase order: </dt>
                 <dd className="inline">
                   <Link
-                    href={`/purchase-orders/${poId}`}
+                    href={`/purchase-orders/${poId.id}`}
                     className="text-brand-600 hover:underline"
                   >
                     View
@@ -578,7 +584,7 @@ export default function UnitsPage() {
                             : ""
                         }`
                       : null,
-                    poNumber: poId,
+                    poNumber: poId?.ref ?? null,
                   })}
                 </li>
               ))}
