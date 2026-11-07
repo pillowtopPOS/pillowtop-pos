@@ -47,9 +47,14 @@ create index if not exists idx_tlu_line
 
 alter table public.transfer_line_units enable row level security;
 drop policy if exists "Transfer line units readable" on public.transfer_line_units;
-create policy "Transfer line units readable"
+drop policy if exists "Transfer line units viewable by visible transfer" on public.transfer_line_units;
+create policy "Transfer line units viewable by visible transfer"
   on public.transfer_line_units for select
-  to authenticated using (true);
+  to authenticated using (exists (
+    select 1 from public.transfers t
+    where t.id = transfer_line_units.transfer_id
+      and (public.is_store_visible(t.origin_location_id)
+           or public.is_store_visible(t.destination_location_id))));
 
 -- Shared candidate list for one line, in pick order. RESERVED units bound
 -- to a DIFFERENT destination are excluded outright — they can never ride
@@ -109,7 +114,7 @@ end;
 $$;
 
 revoke execute on function public.transfer_line_unit_candidates(uuid)
-  from public, anon;
+  from public, anon, authenticated;
 
 -- preview_transfer_units: read-only. Returns per tracked line the ordered
 -- candidate list and the auto-pick (first quantity_requested). Untracked
