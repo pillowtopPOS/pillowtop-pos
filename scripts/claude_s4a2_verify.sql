@@ -65,15 +65,15 @@ begin
 
   -- units at W
   insert into units(id,company_id,product_id,unit_number,status,
-    location_id,disposition) values
-    (v_ua1,v_c,v_pa,301,'STOCK',v_w,'Prime'),
-    (v_ua2,v_c,v_pa,302,'STOCK',v_w,'Prime'),
-    (v_ub1,v_c,v_pb,311,'STOCK',v_w,'Prime'),
-    (v_ub2,v_c,v_pb,312,'STOCK',v_w,'Prime'),
+    location_id,disposition,assigned_requirement_id) values
+    (v_ua1,v_c,v_pa,301,'STOCK',v_w,'Prime',null),
+    (v_ua2,v_c,v_pa,302,'STOCK',v_w,'Prime',null),
+    (v_ub1,v_c,v_pb,311,'STOCK',v_w,'Prime',null),
+    (v_ub2,v_c,v_pb,312,'STOCK',v_w,'Prime',null),
     (v_ub3,v_c,v_pb,313,'RESERVED',v_w,'Prime',v_ra),
-    (v_uc1,v_c,v_pc,321,'STOCK',v_w,'Prime'),
-    (v_uc2,v_c,v_pc,322,'STOCK',v_w,'Prime'),
-    (v_uc3,v_c,v_pc,323,'STOCK',v_w,'Prime');
+    (v_uc1,v_c,v_pc,321,'STOCK',v_w,'Prime',null),
+    (v_uc2,v_c,v_pc,322,'STOCK',v_w,'Prime',null),
+    (v_uc3,v_c,v_pc,323,'STOCK',v_w,'Prime',null);
 
   insert into transfers(id,origin_location_id,destination_location_id,
     status,scheduled_date) values
