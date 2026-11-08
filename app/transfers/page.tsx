@@ -1217,6 +1217,7 @@ export default function TransfersPage() {
         msg += ` ${assignedCount} assigned to a customer order.`;
       }
       setReceiving(null);
+      await loadAll();
       setPageError(null);
       setPageWarn(null);
       setPageNotice(msg);
@@ -1225,7 +1226,6 @@ export default function TransfersPage() {
           `${unitCount} units arrived but could not be assigned to orders. Check the Requests tab.`
         );
       }
-      await loadAll();
     } catch (err: any) {
       setReceiveError(err.message ?? "Failed to receive transfer");
     } finally {
