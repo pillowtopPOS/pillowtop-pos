@@ -971,6 +971,7 @@ export default function TransfersPage() {
     if (!confirming) return;
     const reports: ReceiptLineReport[] = [];
     for (const line of confirming.line_items) {
+      if (line.reported_at != null) continue;
       const name = line.variant?.item_name ?? "an item";
       const entry = receiptMap[line.id];
       const qty = entry ? parseInt(entry.qty, 10) : NaN;
@@ -1639,6 +1640,9 @@ export default function TransfersPage() {
               Report what actually arrived. This does not move inventory — the
               warehouse finalizes the transfer against the truck.
             </p>
+            {pageError && (
+              <p role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
+            )}
             <div className="space-y-3">
               {confirming.line_items.map((line) => {
                 const entry = receiptMap[line.id] ?? { qty: "", reason: "", note: "" };
@@ -1711,7 +1715,8 @@ export default function TransfersPage() {
               </button>
               <button
                 onClick={handleConfirmReceipt}
-                disabled={confirmSubmitting}
+                disabled={confirmSubmitting ||
+                  confirming.line_items.every((l) => l.reported_at != null)}
                 className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
               >
                 {confirmSubmitting ? "Submitting…" : "Submit report"}
