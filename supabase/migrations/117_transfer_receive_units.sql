@@ -138,7 +138,6 @@ declare
   v_uid uuid;
   v_target text;
   v_journey uuid;
-  v_tlu record;
   i integer;
 begin
   select s.company_id into v_company
@@ -290,20 +289,20 @@ begin
           if coalesce(jsonb_array_length(v_entry -> 'received_unit_numbers'), 0) > 0 then
             select coalesce(array_agg(u.id), '{}') into v_recv_add
             from public.units u
-            where u.unit_number = any (
-              (select array_agg(n::bigint)
-                 from jsonb_array_elements_text(
-                   v_entry -> 'received_unit_numbers') n))
+            where u.unit_number in (
+              select n::bigint
+                from jsonb_array_elements_text(
+                  v_entry -> 'received_unit_numbers') n)
               and u.id = any (v_open_ids);
             v_recv_ids := v_recv_ids || v_recv_add;
           end if;
           if coalesce(jsonb_array_length(v_entry -> 'missing_unit_numbers'), 0) > 0 then
             select coalesce(array_agg(u.id), '{}') into v_miss_add
             from public.units u
-            where u.unit_number = any (
-              (select array_agg(n::bigint)
-                 from jsonb_array_elements_text(
-                   v_entry -> 'missing_unit_numbers') n))
+            where u.unit_number in (
+              select n::bigint
+                from jsonb_array_elements_text(
+                  v_entry -> 'missing_unit_numbers') n)
               and u.id = any (v_open_ids);
             v_miss_ids := v_miss_ids || v_miss_add;
           end if;
@@ -387,6 +386,21 @@ begin
               'transfer_id', p_transfer_id,
               'event_type', 'UNIT_RECEIVED',
               'journey_id', v_journey));
+          -- A customer-bound unit whose order was cancelled/quoted/superseded
+          -- while it was on the truck arrives as ordinary STOCK: release it
+          -- through the standard RESERVED -> STOCK path (clears assignment).
+          if v_target = 'RESERVED' and not exists (
+               select 1
+               from public.units u2
+               join public.journey_inventory_requirements jr2
+                 on jr2.id = u2.assigned_requirement_id
+               join public.sleep_journeys sj2 on sj2.id = jr2.journey_id
+               where u2.id = v_uid
+                 and sj2.cancelled_at is null
+                 and sj2.current_state <> 'Quoted'
+                 and jr2.status not in ('cancelled', 'superseded')) then
+            perform public.move_unit(v_uid, 'STOCK', null, '{}'::jsonb);
+          end if;
           update public.transfer_line_units
             set received_at = now(), received_by = v_actor
           where unit_id = v_uid and transfer_line_item_id = v_line.id;
@@ -574,3 +588,164 @@ $$;
 grant execute on function public.mark_transfer_unit_missing(uuid, text, uuid) to authenticated;
 revoke execute on function public.mark_transfer_unit_missing(uuid, text, uuid)
   from public, anon;
+
+-- ============================================================================
+-- 6. reconcile_requirement_units (112/113/114 version) with ONE change: when
+-- an order is cancelled/quoted/superseded, units riding a transfer
+-- (IN_TRANSIT) are left alone instead of being flipped to STOCK at the origin
+-- while they are physically on the truck.
+-- ============================================================================
+CREATE OR REPLACE FUNCTION public.reconcile_requirement_units(p_requirement_id uuid)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_req public.journey_inventory_requirements%rowtype;
+  v_journey public.sleep_journeys%rowtype;
+  v_company uuid;
+  v_mode text;
+  v_desired integer;
+  v_cross integer;
+  v_assigned uuid[];
+  v_local uuid[];
+  v_count integer;
+  v_unit uuid;
+  v_shortfall integer;
+  i integer;
+begin
+  select * into v_req
+  from public.journey_inventory_requirements
+  where id = p_requirement_id;
+  if not found then
+    return;
+  end if;
+
+  -- Requirement-level request sync runs even for untracked products
+  -- (order-time sourcing is product-agnostic); the unit work below is not.
+  perform public.sync_requirement_request(p_requirement_id);
+
+  if not public.is_unit_tracked(v_req.variant_id) then
+    return;
+  end if;
+
+  select * into v_journey
+  from public.sleep_journeys where id = v_req.journey_id;
+  select s.company_id, c.unit_assignment_mode
+    into v_company, v_mode
+  from public.stores s
+  join public.companies c on c.id = s.company_id
+  where s.id = v_journey.store_id;
+
+  if v_mode <> 'AUTOMATIC' then
+    return;
+  end if;
+
+  select count(*) into v_cross
+  from public.units
+  where assigned_requirement_id = v_req.id
+    and location_id is distinct from v_req.location_id
+    and status in ('RESERVED', 'IN_TRANSIT');
+
+  if v_req.status in ('cancelled', 'superseded')
+     or v_journey.cancelled_at is not null
+     or v_journey.current_state = 'Quoted' then
+    v_desired := 0;
+  elsif v_req.status = 'fulfilled' then
+    for v_unit in
+      select id from public.units
+      where assigned_requirement_id = v_req.id
+        and status in ('RESERVED', 'STAGED')
+    loop
+      perform public.move_unit(v_unit, 'DELIVERED', null,
+        jsonb_build_object('journey_id', v_req.journey_id));
+    end loop;
+    return;
+  else
+    v_desired := least(v_req.quantity_required,
+                       v_req.quantity_reserved + v_cross);
+  end if;
+
+  select array_agg(id order by unit_number)
+    into v_assigned
+  from public.units
+  where assigned_requirement_id = v_req.id;
+  v_count := coalesce(array_length(v_assigned, 1), 0);
+
+  if v_desired = 0 then
+    for i in reverse v_count..1 loop
+      -- A unit riding a transfer (IN_TRANSIT) is physically on the truck:
+      -- never flip it to STOCK at the origin. Receive handles it on arrival
+      -- (a dead order's unit arrives as ordinary STOCK).
+      if (select status from public.units where id = v_assigned[i]) <> 'IN_TRANSIT' then
+        perform public.move_unit(v_assigned[i], 'STOCK', null, '{}'::jsonb);
+      end if;
+    end loop;
+    v_count := 0;
+    if v_req.status in ('cancelled', 'superseded')
+       or v_journey.cancelled_at is not null
+       or v_journey.current_state = 'Quoted' then
+      perform public.cancel_journey_mismatch_requests(
+        v_req.journey_id, v_req.variant_id, v_req.location_id);
+    end if;
+  else
+    select coalesce(array_agg(id order by unit_number), '{}')
+      into v_local
+    from public.units
+    where assigned_requirement_id = v_req.id
+      and location_id = v_req.location_id;
+
+    while v_count > v_desired loop
+      if coalesce(array_length(v_local, 1), 0) = 0 then
+        exit;
+      end if;
+      v_unit := v_local[array_length(v_local, 1)];
+      v_local := v_local[1:array_length(v_local, 1) - 1];
+      perform public.move_unit(v_unit, 'STOCK', null, '{}'::jsonb);
+      v_count := v_count - 1;
+    end loop;
+  end if;
+
+  if v_count < v_desired then
+    for v_unit in
+      select id from public.units
+      where product_id = v_req.variant_id
+        and location_id = v_req.location_id
+        and disposition = 'Prime'
+        and status = 'STOCK'
+        and assigned_requirement_id is null
+      order by unit_number
+      limit v_desired - v_count
+      for update skip locked
+    loop
+      perform public.move_unit(v_unit, 'RESERVED', null,
+        jsonb_build_object('requirement_id', v_req.id));
+      v_count := v_count + 1;
+    end loop;
+
+    v_shortfall := v_desired - v_count;
+    if v_shortfall > 0 and not exists (
+      select 1 from public.audit_events ae
+      where ae.entity_type = 'journey_inventory_requirement'
+        and ae.entity_id = v_req.id
+        and ae.event_type = 'UNIT_ASSIGNMENT_SHORTFALL'
+        and (ae.after->>'shortfall')::int = v_shortfall
+        and (ae.after->>'required')::int = v_desired
+      order by ae.occurred_at desc
+      limit 1
+    ) then
+      insert into public.audit_events (
+        company_id, actor_type, entity_type, entity_id, journey_id,
+        event_type, after
+      ) values (
+        v_company, 'SYSTEM', 'journey_inventory_requirement', v_req.id,
+        v_req.journey_id, 'UNIT_ASSIGNMENT_SHORTFALL',
+        jsonb_build_object('required', v_desired, 'assigned', v_count,
+          'shortfall', v_shortfall, 'variant_id', v_req.variant_id,
+          'location_id', v_req.location_id)
+      );
+    end if;
+  end if;
+end;
+$function$;

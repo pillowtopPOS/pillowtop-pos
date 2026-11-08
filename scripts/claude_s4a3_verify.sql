@@ -42,16 +42,17 @@ begin
   select enumlabel into v_state from pg_enum e join pg_type y
     on y.oid = e.enumtypid where y.typname = 'journey_state'
     and enumlabel <> 'Quoted' limit 1;
+  v_state := coalesce(v_state, 'Sold');
   insert into companies(id,name,business_timezone)
     values (v_c,'C','America/Denver');
   insert into stores(id,company_id,name,location_type,is_active) values
     (v_w,v_c,'W','WAREHOUSE',true),(v_a,v_c,'A','STORE',true),
     (v_b,v_c,'B','STORE',true);
-  insert into employees(id,auth_user_id,home_store_id,role,is_active,name) values
-    (v_emp,v_auth,v_w,'owner',true,'Owner'),
-    (v_empd,v_authd,v_a,'sales',true,'DestStaff'),
-    (v_empu,v_authu,v_b,'sales',true,'OtherStore'),
-    (v_empw,v_authw,v_w,'sales',true,'WarehouseStaff');
+  insert into employees(id,auth_user_id,home_store_id,role,is_active) values
+    (v_emp,v_auth,v_w,'owner',true),
+    (v_empd,v_authd,v_a,'sales',true),
+    (v_empu,v_authu,v_b,'sales',true),
+    (v_empw,v_authw,v_w,'sales',true);
   insert into products(id,company_id,item_name,unit_tracked) values
     (v_pf,v_c,'Full',true),(v_ps,v_c,'Short',true),
     (v_pw,v_c,'Wait',true),(v_pl,v_c,'Legacy',true),
@@ -201,6 +202,8 @@ begin
         and a ->> 'customer_name' = 'Test Customer'));
 
   -- ============ T5: legacy in-transit line, no picks ===============
+  perform set_config('request.jwt.claims',
+    jsonb_build_object('sub',v_authw)::text,true);
   v_res := public.finalize_transfer(v_tl, null, v_empw);  -- warehouse staff ok
   perform pg_temp.chk('T5a legacy finalize works, quantity_received=1',
     (select quantity_received from transfer_line_items where id = v_ll) = 1
