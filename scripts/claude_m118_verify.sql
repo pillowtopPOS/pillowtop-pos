@@ -21,7 +21,7 @@ declare
   v_t1 uuid; v_t2 uuid; v_t3 uuid; v_t1b uuid;
   v_l1 uuid; v_l2 uuid; v_l3 uuid;
   v_u1 uuid := gen_random_uuid(); v_u2 uuid := gen_random_uuid();
-  v_err text; v_res jsonb; v_comm int; v_held int;
+  v_err text; v_q int; v_res jsonb; v_comm int; v_held int;
 begin
   select enumlabel into v_state from pg_enum e join pg_type y
     on y.oid = e.enumtypid where y.typname = 'journey_state'
@@ -30,8 +30,8 @@ begin
     values (v_c,'C','America/Denver');
   insert into stores(id,company_id,name,location_type,is_active) values
     (v_w,v_c,'W','WAREHOUSE',true),(v_a,v_c,'A','STORE',true);
-  insert into employees(id,auth_user_id,home_store_id,role,is_active,name)
-    values (v_emp,v_auth,v_w,'owner',true,'Owner');
+  insert into employees(id,auth_user_id,home_store_id,role,is_active)
+    values (v_emp,v_auth,v_w,'owner',true);
   insert into products(id,company_id,item_name,unit_tracked) values
     (v_p,v_c,'Widget',true);
   insert into customers(id,first_name,last_name) values (v_cust,'T','U');
@@ -125,12 +125,12 @@ begin
   v_res := public.cancel_transfer(v_t2, v_emp, 'jm cancel');
   select committed_quantity into v_comm from inventory_positions
     where variant_id = v_p and location_id = v_w;
-  select held_quantity, quantity, status::text into v_held, v_t3, v_err
+  select held_quantity, quantity, status::text into v_held, v_q, v_err
     from transfer_requests where id = v_req2;
   perform pg_temp.chk('T2b JM committed back to 4 after cancel+sync',
     v_comm = 4);
   perform pg_temp.chk('T2c JM request approved, held rebuilt to 2',
-    v_err = 'approved' and v_held = 2 and v_t3 = 2);
+    v_err = 'approved' and v_held = 2 and v_q = 2);
 
   -- ============ T3: mask ignores consolidated-on-cancelled ==========
   -- force the stale state the mask fix guards: consolidated request

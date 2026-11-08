@@ -229,7 +229,7 @@ begin
     and source_reference_id = p_journey_id
     and variant_id = p_variant_id
     and destination_location_id = p_destination_location_id
-    and status = 'consolidated
+    and status = 'consolidated'
     and exists (select 1 from public.transfers t
                 where t.id = transfer_requests.transfer_id
                   and t.status <> 'cancelled');
@@ -397,7 +397,7 @@ begin
     and source_reference_id = v_req.journey_id
     and variant_id = v_req.variant_id
     and destination_location_id = v_req.location_id
-    and status = 'consolidated
+    and status = 'consolidated'
     and exists (select 1 from public.transfers t
                 where t.id = transfer_requests.transfer_id
                   and t.status <> 'cancelled');
