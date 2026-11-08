@@ -379,7 +379,8 @@ export async function expediteTransferRequestGroup(groupId: string, scheduledDat
 
 export async function markTransferInTransit(
   transferId: string,
-  shipped?: Record<string, number>
+  shipped?: Record<string, number>,
+  unitPicks?: { line_item_id: string; unit_ids: string[] }[]
 ) {
   const supabase = createClient();
   const employee = await fetchCurrentEmployee();
@@ -389,8 +390,107 @@ export async function markTransferInTransit(
     p_transfer_id: transferId,
     p_employee_id: employee.id,
     p_shipped: shipped ?? null,
+    p_unit_picks: unitPicks ?? null,
   });
   if (error) throw new Error(error.message);
+}
+
+// ---- S4b-1: unit picking for the ship screen -------------------------------
+
+export type ShipUnitCandidate = {
+  unit_id: string;
+  unit_number: number;
+  status: string;
+  is_order_bound: boolean;
+  journey_id: string | null;
+};
+
+export type ShipLinePreview = {
+  line_item_id: string;
+  variant_id: string;
+  quantity_requested: number;
+  candidates: ShipUnitCandidate[];
+  auto_pick: string[];
+  shortfall: number;
+};
+
+export type ShipPreview = {
+  transfer_id: string;
+  status: string;
+  lines: ShipLinePreview[];
+};
+
+export type ShipPick = {
+  line_item_id: string;
+  unit_ids: string[];
+};
+
+export async function previewTransferUnits(
+  transferId: string
+): Promise<ShipPreview> {
+  const supabase = createClient();
+  const { data, error } = await (supabase as any).rpc(
+    "preview_transfer_units",
+    { p_transfer_id: transferId }
+  );
+  if (error) throw new Error(error.message);
+  return data as ShipPreview;
+}
+
+export async function pickTransferUnits(
+  transferId: string,
+  picks: ShipPick[]
+) {
+  const supabase = createClient();
+  const employee = await fetchCurrentEmployee();
+  if (!employee) throw new Error("Employee record not found");
+
+  const { error } = await (supabase as any).rpc("pick_transfer_units", {
+    p_transfer_id: transferId,
+    p_picks: picks,
+    p_employee_id: employee.id,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export type ScannedUnit = {
+  id: string;
+  unit_number: number;
+  product_id: string;
+  location_id: string | null;
+  status: string;
+  disposition: string | null;
+};
+
+// Scan-time lookup: the unit row plus the id of any transfer it is already
+// picked onto (unresolved pick rows only). openTransferId is best-effort —
+// a failed secondary read does not block the scan.
+export async function lookupScannableUnit(
+  unitNumber: number
+): Promise<{ unit: ScannedUnit | null; openTransferId: string | null }> {
+  const supabase = createClient();
+  const [unitRes, openRes] = await Promise.all([
+    (supabase as any)
+      .from("units")
+      .select("id, unit_number, product_id, location_id, status, disposition")
+      .eq("unit_number", unitNumber)
+      .maybeSingle(),
+    (supabase as any)
+      .from("transfer_line_units")
+      .select("transfer_id")
+      .eq("unit_number", unitNumber)
+      .is("received_at", null)
+      .is("missing_at", null)
+      .limit(1)
+      .maybeSingle(),
+  ]);
+  if (unitRes.error) throw new Error(unitRes.error.message);
+  return {
+    unit: (unitRes.data as ScannedUnit | null) ?? null,
+    openTransferId: openRes.error
+      ? null
+      : ((openRes.data as { transfer_id: string } | null)?.transfer_id ?? null),
+  };
 }
 
 export async function finalizeTransfer(

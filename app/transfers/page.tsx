@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Lock, Pencil, Check, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -28,6 +28,9 @@ import {
   runTransferConsolidationNow,
   fetchTransferConsolidationLastRun,
   markTransferInTransit,
+  previewTransferUnits,
+  pickTransferUnits,
+  lookupScannableUnit,
   finalizeTransfer,
   confirmTransferReceipt,
   cancelTransfer,
@@ -41,6 +44,8 @@ import {
   type RestockCandidate,
   type RestockGenerationMode,
   type ReceiptLineReport,
+  type ShipPreview,
+  type ShipLinePreview,
 } from "@/lib/transfers/queries";
 import {
   requestSourceLabel,
@@ -63,6 +68,13 @@ const STATUS_CLASS = {
   pending: "text-amber-700 bg-amber-50",
   in_transit: "text-blue-700 bg-blue-50",
   finalized: "text-emerald-700 bg-emerald-50",
+};
+
+type ShipPickUnit = {
+  unit_id: string;
+  unit_number: number;
+  is_order_bound: boolean;
+  status: string;
 };
 
 export default function TransfersPage() {
@@ -126,6 +138,24 @@ export default function TransfersPage() {
   const [cancelReason, setCancelReason] = useState("");
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [cancelSubmitting, setCancelSubmitting] = useState(false);
+
+  // Ship modal (S4b-1): unit picks for a pending transfer.
+  const [shipping, setShipping] = useState<TransferWithDetails | null>(null);
+  const [shipPreview, setShipPreview] = useState<ShipPreview | null>(null);
+  const [shipLoading, setShipLoading] = useState(false);
+  const [shipError, setShipError] = useState<string | null>(null);
+  const [shipPicks, setShipPicks] = useState<
+    Record<string, ShipPickUnit[]>
+  >({});
+  const [shipAutoPick, setShipAutoPick] = useState<Record<string, string[]>>({});
+  const [shipScan, setShipScan] = useState("");
+  const [shipScanBusy, setShipScanBusy] = useState(false);
+  const [shipSubmitting, setShipSubmitting] = useState(false);
+  const [confirmRemoveUnit, setConfirmRemoveUnit] = useState<{
+    lineId: string;
+    unit: ShipPickUnit;
+  } | null>(null);
+  const shipScanRef = useRef<HTMLInputElement>(null);
 
   const canManage =
     employee?.role === "owner" ||
@@ -901,11 +931,206 @@ export default function TransfersPage() {
     ];
   }
 
-  async function handleMarkInTransit(t: TransferWithDetails) {
+  // ---- Ship modal (S4b-1) -------------------------------------------------
+
+  async function openShipTransfer(t: TransferWithDetails) {
+    setShipping(t);
+    setShipPreview(null);
+    setShipPicks({});
+    setShipAutoPick({});
+    setShipScan("");
+    setShipError(null);
+    setConfirmRemoveUnit(null);
+    setShipLoading(true);
     try {
-      setPageError(null);
-      await markTransferInTransit(t.id);
+      const preview = await previewTransferUnits(t.id);
+      setShipPreview(preview);
+      const picks: Record<string, ShipPickUnit[]> = {};
+      const auto: Record<string, string[]> = {};
+      for (const line of preview.lines) {
+        auto[line.line_item_id] = line.auto_pick;
+        const byId = new Map(
+          line.candidates.map((c) => [c.unit_id, c])
+        );
+        picks[line.line_item_id] = line.auto_pick
+          .map((id) => byId.get(id))
+          .filter((c): c is NonNullable<typeof c> => c != null)
+          .map((c) => ({
+            unit_id: c.unit_id,
+            unit_number: c.unit_number,
+            is_order_bound: c.is_order_bound,
+            status: c.status,
+          }));
+      }
+      setShipPicks(picks);
+      setShipAutoPick(auto);
+    } catch (err: any) {
+      setShipError(err?.message ?? "Failed to load units for this transfer");
+    } finally {
+      setShipLoading(false);
+    }
+  }
+
+  // Keep focus on the scan box so a keyboard-wedge scanner always lands here.
+  useEffect(() => {
+    if (shipping && shipPreview && !shipSubmitting) {
+      shipScanRef.current?.focus();
+    }
+  }, [shipping, shipPreview, shipSubmitting]);
+
+  function shipLineByVariant(variantId: string): ShipLinePreview | undefined {
+    return shipPreview?.lines.find((l) => l.variant_id === variantId);
+  }
+
+  function candidateFor(
+    line: ShipLinePreview,
+    unitId: string
+  ): ShipLinePreview["candidates"][number] | undefined {
+    return line.candidates.find((c) => c.unit_id === unitId);
+  }
+
+  // Add a scanned/typed unit to its line. A full line swaps out the
+  // highest-numbered plain STOCK pick; order-bound picks are never removed
+  // automatically.
+  function addOrSwapPick(line: ShipLinePreview, unit: ShipPickUnit) {
+    const current = shipPicks[line.line_item_id] ?? [];
+    if (current.length < line.quantity_requested) {
+      setShipPicks((prev) => ({
+        ...prev,
+        [line.line_item_id]: [...(prev[line.line_item_id] ?? []), unit],
+      }));
+      return;
+    }
+    let victimIdx = -1;
+    let victimNum = -1;
+    current.forEach((u, i) => {
+      if (!u.is_order_bound && u.unit_number > victimNum) {
+        victimNum = u.unit_number;
+        victimIdx = i;
+      }
+    });
+    if (victimIdx === -1) {
+      setShipError("Remove a unit with the × first.");
+      return;
+    }
+    setShipPicks((prev) => {
+      const next = [...(prev[line.line_item_id] ?? [])];
+      next[victimIdx] = unit;
+      return { ...prev, [line.line_item_id]: next };
+    });
+  }
+
+  async function handleShipScan() {
+    const raw = shipScan.trim();
+    if (!raw || shipScanBusy || !shipping || !shipPreview) return;
+    const n = Number(raw);
+    if (!/^\d+$/.test(raw) || !Number.isSafeInteger(n)) {
+      setShipError("Enter a unit number.");
+      setShipScan("");
+      return;
+    }
+    setShipScan("");
+    setShipScanBusy(true);
+    setShipError(null);
+    try {
+      const { unit, openTransferId } = await lookupScannableUnit(n);
+      if (!unit) {
+        setShipError(`No unit found with number ${n}.`);
+        return;
+      }
+      const already = Object.values(shipPicks).some((list) =>
+        list.some((u) => u.unit_id === unit.id)
+      );
+      if (already) {
+        setShipError(`Unit ${n} is already on the list.`);
+        return;
+      }
+      const line = shipLineByVariant(unit.product_id);
+      if (!line) {
+        setShipError(`Unit ${n} is not on this transfer.`);
+        return;
+      }
+      if (unit.location_id !== shipping.origin_location_id) {
+        setShipError(`Unit ${n} is not at the transfer origin`);
+        return;
+      }
+      if (unit.status !== "STOCK" && unit.status !== "RESERVED") {
+        setShipError(
+          `Unit ${n} is not available (status ${unit.status})`
+        );
+        return;
+      }
+      const cand = candidateFor(line, unit.id);
+      if (unit.status === "RESERVED" && !cand) {
+        setShipError(
+          `Unit ${n} is reserved for an order at a different store`
+        );
+        return;
+      }
+      if (!cand && openTransferId && openTransferId !== shipping.id) {
+        setShipError(`Unit ${n} is already on another shipment`);
+        return;
+      }
+      addOrSwapPick(line, {
+        unit_id: unit.id,
+        unit_number: unit.unit_number,
+        is_order_bound: cand?.is_order_bound ?? false,
+        status: unit.status,
+      });
+    } catch (err: any) {
+      setShipError(err?.message ?? "Could not look up that unit");
+    } finally {
+      setShipScanBusy(false);
+      shipScanRef.current?.focus();
+    }
+  }
+
+  function removeShipPick(lineId: string, unit: ShipPickUnit) {
+    setShipPicks((prev) => ({
+      ...prev,
+      [lineId]: (prev[lineId] ?? []).filter(
+        (u) => u.unit_id !== unit.unit_id
+      ),
+    }));
+    setConfirmRemoveUnit(null);
+  }
+
+  // Ship is allowed only when every tracked line has exactly its requested
+  // count picked. Partial shipping of tracked lines is not supported in
+  // this version (pick_transfer_units requires the full count anyway).
+  const shipReady =
+    shipping != null &&
+    shipPreview != null &&
+    shipPreview.lines.every(
+      (l) => (shipPicks[l.line_item_id]?.length ?? 0) === l.quantity_requested
+    );
+
+  const shipDirty = useMemo(() => {
+    if (!shipPreview) return false;
+    return shipPreview.lines.some((l) => {
+      const picked = (shipPicks[l.line_item_id] ?? [])
+        .map((u) => u.unit_id)
+        .sort();
+      const auto = [...(shipAutoPick[l.line_item_id] ?? [])].sort();
+      return JSON.stringify(picked) !== JSON.stringify(auto);
+    });
+  }, [shipPreview, shipPicks, shipAutoPick]);
+
+  async function handleShipTransfer() {
+    if (!shipping || !shipPreview || !shipReady) return;
+    setShipSubmitting(true);
+    setShipError(null);
+    try {
+      const picks = shipPreview.lines.map((l) => ({
+        line_item_id: l.line_item_id,
+        unit_ids: (shipPicks[l.line_item_id] ?? []).map((u) => u.unit_id),
+      }));
+      await pickTransferUnits(shipping.id, picks);
+      await markTransferInTransit(shipping.id, undefined, picks);
+      const ref = shipping.reference_code ?? "Transfer";
+      setShipping(null);
       await loadAll();
+      setPageNotice(`${ref} marked in transit.`);
     } catch (err: any) {
       // Soften the raw RPC guard message (048: "committed to other orders
       // at the origin") into something a shipper can act on.
@@ -913,7 +1138,9 @@ export default function TransfersPage() {
       const msg = /committed to other orders/i.test(raw)
         ? "Some of these units are reserved for open customer orders. Resolve or cancel those orders before shipping."
         : raw || "Failed to mark in transit";
-      setPageError(msg);
+      setShipError(msg);
+    } finally {
+      setShipSubmitting(false);
     }
   }
 
@@ -1382,7 +1609,7 @@ export default function TransfersPage() {
                         (canApprove ? (
                           <>
                             <button
-                              onClick={() => handleMarkInTransit(t)}
+                              onClick={() => openShipTransfer(t)}
                               className="rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700"
                             >
                               Mark in transit
@@ -1626,6 +1853,194 @@ export default function TransfersPage() {
             )}
           </div>
         </section>
+      )}
+
+      {shipping && (
+        <Modal
+          onClose={() => setShipping(null)}
+          dirty={shipDirty}
+          saving={shipSubmitting || shipLoading}
+        >
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+            <h2 className="mb-1 text-lg font-semibold text-slate-900">
+              Ship {shipping.reference_code ?? "transfer"}
+            </h2>
+            <p className="mb-3 text-sm text-slate-600">
+              {shipping.origin?.name} → {shipping.destination?.name}
+            </p>
+            <p className="mb-3 text-xs text-slate-500">
+              Scan or type a unit number and press Enter to add it. A full
+              line swaps out its highest-numbered plain unit.
+            </p>
+            {shipError && (
+              <p role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{shipError}</p>
+            )}
+            <input
+              ref={shipScanRef}
+              value={shipScan}
+              onChange={(e) => setShipScan(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleShipScan();
+                }
+              }}
+              placeholder="Scan or type a unit number"
+              className="mb-4 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            />
+            {shipLoading ? (
+              <p className="text-sm text-slate-500">Loading units…</p>
+            ) : (
+              shipPreview && (
+                <div className="space-y-3">
+                  {shipping.line_items.map((line) => {
+                    const previewLine = shipPreview.lines.find(
+                      (l) => l.line_item_id === line.id
+                    );
+                    const picked = shipPicks[line.id] ?? [];
+                    const remaining = previewLine
+                      ? previewLine.candidates.filter(
+                          (c) => !picked.some((p) => p.unit_id === c.unit_id)
+                        ).length
+                      : 0;
+                    const canNeverFill =
+                      previewLine != null &&
+                      picked.length + remaining < previewLine.quantity_requested;
+                    return (
+                      <div
+                        key={line.id}
+                        className="rounded-md border border-slate-200 p-3"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-sm font-medium text-slate-800">
+                            {line.variant?.item_name ?? "Unknown"}
+                          </div>
+                          {previewLine ? (
+                            <div
+                              className={`text-xs font-medium ${
+                                picked.length === previewLine.quantity_requested
+                                  ? "text-emerald-700"
+                                  : "text-amber-700"
+                              }`}
+                            >
+                              {picked.length} of {previewLine.quantity_requested}{" "}
+                              picked
+                            </div>
+                          ) : (
+                            <div className="text-xs text-slate-500">
+                              Requested {line.quantity_requested}
+                            </div>
+                          )}
+                        </div>
+                        {!previewLine && (
+                          <p className="mt-1 text-xs text-slate-500">
+                            Not unit tracked. Ships as a quantity.
+                          </p>
+                        )}
+                        {previewLine && (
+                          <>
+                            {picked.length === 0 && (
+                              <p className="mt-2 text-xs text-slate-400">
+                                No units picked.
+                              </p>
+                            )}
+                            {picked.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                {picked.map((u) => {
+                                  const confirming =
+                                    confirmRemoveUnit?.unit.unit_id ===
+                                    u.unit_id;
+                                  return (
+                                    <span
+                                      key={u.unit_id}
+                                      className="inline-flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700"
+                                    >
+                                      {u.unit_number}
+                                      {u.is_order_bound && (
+                                        <span className="rounded bg-amber-100 px-1 text-[10px] font-medium text-amber-800">
+                                          customer order
+                                        </span>
+                                      )}
+                                      {confirming ? (
+                                        <span className="ml-1 inline-flex items-center gap-1">
+                                          <span className="text-[10px] text-slate-500">
+                                            promised to a customer order.
+                                            Remove anyway?
+                                          </span>
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              removeShipPick(line.id, u)
+                                            }
+                                            className="font-medium text-red-600 hover:underline"
+                                          >
+                                            Remove
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              setConfirmRemoveUnit(null)
+                                            }
+                                            className="font-medium text-slate-500 hover:underline"
+                                          >
+                                            Keep
+                                          </button>
+                                        </span>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          aria-label={`Remove unit ${u.unit_number}`}
+                                          onClick={() => {
+                                            if (u.is_order_bound) {
+                                              setConfirmRemoveUnit({
+                                                lineId: line.id,
+                                                unit: u,
+                                              });
+                                            } else {
+                                              removeShipPick(line.id, u);
+                                            }
+                                          }}
+                                          className="ml-0.5 text-slate-400 hover:text-slate-700"
+                                        >
+                                          ×
+                                        </button>
+                                      )}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
+                            {canNeverFill && (
+                              <p className="mt-2 text-xs text-red-600">
+                                Only {picked.length + remaining} units are
+                                available at the origin for this line.
+                              </p>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )
+            )}
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                onClick={() => setShipping(null)}
+                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Keep transfer
+              </button>
+              <button
+                onClick={handleShipTransfer}
+                disabled={!shipReady || shipSubmitting || shipLoading}
+                className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+              >
+                {shipSubmitting ? "Shipping…" : "Ship transfer"}
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {finalizing && (
