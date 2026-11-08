@@ -22,6 +22,8 @@ export type TransferRequestWithDetails = {
   variant: { id: string; item_name: string } | null;
   requester: { id: string; name: string } | null;
   approver: { id: string; name: string } | null;
+  // journey_mismatch requests: the order this request sources for.
+  journey_number?: string | null;
 };
 
 export type TransferWithDetails = {
@@ -106,7 +108,36 @@ export async function fetchTransferRequests(
     console.error("fetchTransferRequests error", error);
     return [];
   }
-  return (data as unknown as TransferRequestWithDetails[]) ?? [];
+  const rows = (data as unknown as TransferRequestWithDetails[]) ?? [];
+
+  // journey_mismatch requests point at a sleep_journeys row via
+  // source_reference_id (no FK — the column is polymorphic), so pull the
+  // order numbers in a second batched read.
+  const journeyIds = Array.from(
+    new Set(
+      rows
+        .filter((r) => r.source_type === "journey_mismatch" && r.source_reference_id)
+        .map((r) => r.source_reference_id as string)
+    )
+  );
+  if (journeyIds.length === 0) return rows;
+
+  const { data: journeys, error: journeyError } = await (supabase as any)
+    .from("sleep_journeys")
+    .select("id, journey_number")
+    .in("id", journeyIds);
+  if (journeyError) {
+    console.error("fetchTransferRequests journey numbers error", journeyError);
+    return rows;
+  }
+  const numberById = new Map<string, string | null>(
+    ((journeys as any[]) ?? []).map((j) => [j.id, j.journey_number ?? null])
+  );
+  return rows.map((r) =>
+    r.source_type === "journey_mismatch" && r.source_reference_id
+      ? { ...r, journey_number: numberById.get(r.source_reference_id) ?? null }
+      : r
+  );
 }
 
 export async function fetchTransfers(
