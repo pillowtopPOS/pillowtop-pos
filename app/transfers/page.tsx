@@ -157,6 +157,13 @@ export default function TransfersPage() {
   } | null>(null);
   const shipScanRef = useRef<HTMLInputElement>(null);
 
+  // Receive modal (S4b-2a): finalize with optional unit-level receipts.
+  const [receiving, setReceiving] = useState<TransferWithDetails | null>(null);
+  const [receiveMap, setReceiveMap] = useState<Record<string, string>>({});
+  const [receiveError, setReceiveError] = useState<string | null>(null);
+  const [receiveSubmitting, setReceiveSubmitting] = useState(false);
+  const [pageWarn, setPageWarn] = useState<string | null>(null);
+
   const canManage =
     employee?.role === "owner" ||
     employee?.role === "admin" ||
@@ -1168,6 +1175,72 @@ export default function TransfersPage() {
     }
   }
 
+  async function handleReceive() {
+    if (!receiving) return;
+    setReceiveSubmitting(true);
+    setReceiveError(null);
+    try {
+      const received: Record<string, number> = {};
+      for (const line of receiving.line_items) {
+        const openPicks = (line.picks ?? []).filter(
+          (p) => p.received_at == null && p.missing_at == null
+        );
+        if (openPicks.length > 0) {
+          // Unit-picked line: full count only; the server treats
+          // received == shipped with no unit list as "everything arrived".
+          received[line.id] = line.quantity_shipped;
+          continue;
+        }
+        const qty = parseInt(receiveMap[line.id] ?? "", 10);
+        if (
+          Number.isNaN(qty) ||
+          qty < 0 ||
+          qty > line.quantity_shipped
+        ) {
+          setReceiveError(
+            `Enter a received quantity between 0 and ${line.quantity_shipped} for ${line.variant?.item_name ?? "an item"}.`
+          );
+          return;
+        }
+        received[line.id] = qty;
+      }
+      const result = await finalizeTransfer(receiving.id, received);
+      const ref = receiving.reference_code ?? "Transfer";
+      const unitCount = result.received_unit_ids?.length ?? 0;
+      const assignedCount = result.assignments?.length ?? 0;
+      const destName = receiving.destination?.name ?? "the destination";
+      let msg = `${ref} received.`;
+      if (unitCount > 0) {
+        msg += ` ${unitCount} ${unitCount === 1 ? "unit" : "units"} now at ${destName}.`;
+      } else {
+        const totalReceived = Object.values(received).reduce(
+          (sum, qty) => sum + qty,
+          0
+        );
+        if (totalReceived > 0) {
+          msg += ` ${totalReceived} ${totalReceived === 1 ? "unit" : "units"} now at ${destName}.`;
+        }
+      }
+      if (assignedCount > 0) {
+        msg += ` ${assignedCount} assigned to a customer order.`;
+      }
+      setReceiving(null);
+      await loadAll();
+      setPageError(null);
+      setPageWarn(null);
+      setPageNotice(msg);
+      if (result.assign_failed) {
+        setPageWarn(
+          `${unitCount} units arrived but could not be assigned to orders. Check the Requests tab.`
+        );
+      }
+    } catch (err: any) {
+      setReceiveError(err.message ?? "Failed to receive transfer");
+    } finally {
+      setReceiveSubmitting(false);
+    }
+  }
+
   // Confirm Receipt is available to owner/admin, or any employee checked in
   // at the destination store today — only for in_transit transfers bound
   // for a STORE.
@@ -1177,6 +1250,31 @@ export default function TransfersPage() {
     if (dest?.location_type !== "STORE") return false;
     if (employee?.role === "owner" || employee?.role === "admin") return true;
     return storeConfirmedToday && activeStoreId === t.destination_location_id;
+  }
+
+  // Receive is available to owner/admin always; store destinations to
+  // anyone checked in there today; warehouse destinations to
+  // warehouse-based staff. Mirrors verify_transfer_receiver (119).
+  function canReceiveFor(t: TransferWithDetails): boolean {
+    if (t.status !== "in_transit") return false;
+    const dest = stores.find((s) => s.id === t.destination_location_id);
+    if (!dest) return false;
+    if (employee?.role === "owner" || employee?.role === "admin") return true;
+    if (dest.location_type === "STORE") {
+      return storeConfirmedToday && activeStoreId === t.destination_location_id;
+    }
+    if (dest.location_type === "WAREHOUSE") return canApprove;
+    return false;
+  }
+
+  function openReceive(t: TransferWithDetails) {
+    const initial: Record<string, string> = {};
+    for (const line of t.line_items) {
+      initial[line.id] = String(line.quantity_shipped);
+    }
+    setReceiveMap(initial);
+    setReceiveError(null);
+    setReceiving(t);
   }
 
   function openConfirmReceipt(t: TransferWithDetails) {
@@ -1300,6 +1398,9 @@ export default function TransfersPage() {
       )}
       {pageNotice && (
         <p key="page-notice" role="status" className="mb-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{pageNotice}</p>
+      )}
+      {pageWarn && (
+        <p key="page-warn" role="status" className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{pageWarn}</p>
       )}
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold text-slate-900">Transfers</h1>
@@ -1646,19 +1747,24 @@ export default function TransfersPage() {
                           Confirm Receipt
                         </button>
                       )}
-                      {canManage &&
-                        t.status === "in_transit" &&
-                        (canApprove ? (
+                      {t.status === "in_transit" &&
+                        (canReceiveFor(t) ? (
                           <button
-                            onClick={() => openFinalize(t)}
+                            onClick={() => openReceive(t)}
                             className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
                           >
-                            Finalize
+                            Receive
                           </button>
                         ) : (
-                          lockedReviewButton(
-                            "Finalize",
-                            "Finalizing transfers is restricted to warehouse-based employees. An owner, admin, or warehouse team member needs to finalize this transfer."
+                          stores.find((s) => s.id === t.destination_location_id)
+                            ?.location_type === "STORE" && (
+                            <span className="text-xs text-slate-500">
+                              Check in at{" "}
+                              {stores.find(
+                                (s) => s.id === t.destination_location_id
+                              )?.name ?? "the store"}{" "}
+                              to receive this transfer.
+                            </span>
                           )
                         ))}
                     </div>
@@ -2037,6 +2143,114 @@ export default function TransfersPage() {
                 className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
               >
                 {shipSubmitting ? "Shipping…" : "Ship transfer"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {receiving && (
+        <Modal
+          onClose={() => setReceiving(null)}
+          dirty={receiving.line_items.some(
+            (l) =>
+              (receiveMap[l.id] ?? String(l.quantity_shipped)) !==
+              String(l.quantity_shipped)
+          )}
+          saving={receiveSubmitting}
+        >
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+            <h2 className="mb-4 text-lg font-semibold text-slate-900">
+              Receive {receiving.reference_code ?? "Transfer"}
+            </h2>
+            <p className="mb-1 text-sm text-slate-600">
+              {receiving.origin?.name} → {receiving.destination?.name}
+            </p>
+            {receiveError && (
+              <p role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {receiveError}
+              </p>
+            )}
+            <div className="space-y-3">
+              {receiving.line_items.map((line) => {
+                const openPicks = (line.picks ?? []).filter(
+                  (p) => p.received_at == null && p.missing_at == null
+                );
+                const hasPicks = openPicks.length > 0;
+                return (
+                  <div
+                    key={line.id}
+                    className="space-y-2 rounded-md border border-slate-200 p-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 text-sm text-slate-700">
+                        {line.variant?.item_name ?? "Unknown"}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        shipped {line.quantity_shipped}
+                      </div>
+                      {!hasPicks && (
+                        <input
+                          type="number"
+                          min={0}
+                          max={line.quantity_shipped}
+                          value={
+                            receiveMap[line.id] ??
+                            String(line.quantity_shipped)
+                          }
+                          onChange={(e) =>
+                            setReceiveMap((m) => ({
+                              ...m,
+                              [line.id]: e.target.value,
+                            }))
+                          }
+                          className="w-24 rounded-md border border-slate-300 px-2 py-1 text-sm"
+                        />
+                      )}
+                    </div>
+                    {hasPicks && (
+                      <>
+                        <div className="flex flex-wrap gap-1.5">
+                          {openPicks.map((p) => (
+                            <span
+                              key={p.unit_number}
+                              className="rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 text-xs text-slate-700"
+                            >
+                              #{p.unit_number}
+                            </span>
+                          ))}
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          To receive fewer than shipped, count the units. That
+                          option arrives in the next update.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                onClick={() => setReceiving(null)}
+                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReceive}
+                disabled={receiveSubmitting}
+                className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {receiveSubmitting
+                  ? "Receiving…"
+                  : receiving.line_items.some((l) =>
+                        (l.picks ?? []).some(
+                          (p) => p.received_at == null && p.missing_at == null
+                        )
+                      )
+                    ? "Everything arrived"
+                    : "Receive"}
               </button>
             </div>
           </div>

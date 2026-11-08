@@ -57,6 +57,7 @@ export type TransferLineItem = {
   reported_at: string | null;
   reporter: { id: string; name: string } | null;
   variant: { id: string; item_name: string } | null;
+  picks?: { unit_number: number; received_at: string | null; missing_at: string | null }[];
 };
 
 export type OverstockSuggestion = {
@@ -122,7 +123,8 @@ export async function fetchTransfers(
         id, transfer_id, variant_id, quantity_requested, quantity_shipped, quantity_received,
         reported_quantity_received, reported_reason, reported_note, reported_by, reported_at,
         reporter:employees!reported_by ( id, name ),
-        variant:products!variant_id ( id, item_name )
+        variant:products!variant_id ( id, item_name ),
+        picks:transfer_line_units ( unit_number, received_at, missing_at )
       )`
     )
     .order("created_at", { ascending: false });
@@ -493,20 +495,59 @@ export async function lookupScannableUnit(
   };
 }
 
+export type FinalizeTransferResult = {
+  received_unit_ids: string[];
+  unit_numbers: number[];
+  assignments: {
+    unit_id: string;
+    unit_number: number;
+    journey_id: string;
+    journey_number: string | null;
+    customer_name: string | null;
+    requirement_id: string;
+  }[];
+  missing_units: {
+    unit_id: string;
+    unit_number: number;
+    transfer_line_item_id: string;
+    variant_id: string;
+    reason?: string | null;
+  }[];
+  assign_failed: boolean;
+};
+
+export type UnitReceiptEntry = {
+  line_item_id: string;
+  received_unit_ids?: string[];
+  missing_unit_ids?: string[];
+  received_unit_numbers?: number[];
+  missing_unit_numbers?: number[];
+  missing_reason?: string | null;
+};
+
 export async function finalizeTransfer(
   transferId: string,
-  received: Record<string, number>
-) {
+  received: Record<string, number>,
+  unitReceipts?: UnitReceiptEntry[]
+): Promise<FinalizeTransferResult> {
   const supabase = createClient();
   const employee = await fetchCurrentEmployee();
   if (!employee) throw new Error("Employee record not found");
 
-  const { error } = await (supabase as any).rpc("finalize_transfer", {
+  const { data, error } = await (supabase as any).rpc("finalize_transfer", {
     p_transfer_id: transferId,
     p_received: received,
     p_employee_id: employee.id,
+    p_unit_receipts: unitReceipts ?? null,
   });
   if (error) throw new Error(error.message);
+  return (data ?? {
+    received_unit_ids: [],
+    unit_numbers: [],
+    assignments: [],
+    missing_units: [],
+    assign_failed: false,
+  }) as FinalizeTransferResult;
 }
 
 export type ReceiptLineReport = {
