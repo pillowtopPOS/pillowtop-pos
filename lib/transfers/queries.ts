@@ -57,7 +57,7 @@ export type TransferLineItem = {
   reported_at: string | null;
   reporter: { id: string; name: string } | null;
   variant: { id: string; item_name: string } | null;
-  picks?: { unit_number: number; received_at: string | null; missing_at: string | null }[];
+  picks?: { unit_id: string; unit_number: number; picked_requirement_id: string | null; received_at: string | null; missing_at: string | null }[];
 };
 
 export type OverstockSuggestion = {
@@ -124,7 +124,7 @@ export async function fetchTransfers(
         reported_quantity_received, reported_reason, reported_note, reported_by, reported_at,
         reporter:employees!reported_by ( id, name ),
         variant:products!variant_id ( id, item_name ),
-        picks:transfer_line_units ( unit_number, received_at, missing_at )
+        picks:transfer_line_units ( unit_id, unit_number, picked_requirement_id, received_at, missing_at )
       )`
     )
     .order("created_at", { ascending: false });

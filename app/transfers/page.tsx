@@ -46,6 +46,7 @@ import {
   type ReceiptLineReport,
   type ShipPreview,
   type ShipLinePreview,
+  type UnitReceiptEntry,
 } from "@/lib/transfers/queries";
 import {
   requestSourceLabel,
@@ -163,6 +164,17 @@ export default function TransfersPage() {
   const [receiveError, setReceiveError] = useState<string | null>(null);
   const [receiveSubmitting, setReceiveSubmitting] = useState(false);
   const [pageWarn, setPageWarn] = useState<string | null>(null);
+  const [receiveStep, setReceiveStep] = useState<
+    "entry" | "counting" | "review"
+  >("entry");
+  const [receiveArrived, setReceiveArrived] = useState<
+    Record<string, Record<string, true>>
+  >({});
+  const [receiveScan, setReceiveScan] = useState("");
+  const [receiveScanBusy, setReceiveScanBusy] = useState(false);
+  const [missingReasons, setMissingReasons] = useState<Record<string, string>>({});
+  const [missingConfirmed, setMissingConfirmed] = useState<Record<string, boolean>>({});
+  const receiveScanRef = useRef<HTMLInputElement>(null);
 
   const canManage =
     employee?.role === "owner" ||
@@ -985,6 +997,12 @@ export default function TransfersPage() {
     }
   }, [shipping, shipPreview, shipSubmitting]);
 
+  useEffect(() => {
+    if (receiving && receiveStep === "counting" && !receiveSubmitting) {
+      receiveScanRef.current?.focus();
+    }
+  }, [receiving, receiveStep, receiveSubmitting]);
+
   function shipLineByVariant(variantId: string): ShipLinePreview | undefined {
     return shipPreview?.lines.find((l) => l.variant_id === variantId);
   }
@@ -1175,6 +1193,171 @@ export default function TransfersPage() {
     }
   }
 
+  function receiveOpenPicks(line: TransferLineItem) {
+    return (line.picks ?? []).filter(
+      (p) => p.received_at == null && p.missing_at == null
+    );
+  }
+
+  function receiveHasPicks(t: TransferWithDetails): boolean {
+    return t.line_items.some((l) => receiveOpenPicks(l).length > 0);
+  }
+
+  function toggleReceiveUnit(lineId: string, unitId: string) {
+    setReceiveArrived((prev) => {
+      const line = { ...(prev[lineId] ?? {}) };
+      if (line[unitId]) delete line[unitId];
+      else line[unitId] = true;
+      return { ...prev, [lineId]: line };
+    });
+  }
+
+  async function handleReceiveScan() {
+    const raw = receiveScan.trim();
+    if (!raw || receiveScanBusy || !receiving) return;
+    const n = Number(raw);
+    if (!/^\d+$/.test(raw) || !Number.isSafeInteger(n)) {
+      setReceiveError("Enter a unit number.");
+      setReceiveScan("");
+      return;
+    }
+    setReceiveScan("");
+    setReceiveScanBusy(true);
+    setReceiveError(null);
+    try {
+      let found: { line: TransferLineItem; unitId: string } | null = null;
+      for (const line of receiving.line_items) {
+        for (const p of receiveOpenPicks(line)) {
+          if (Number(p.unit_number) === n) {
+            found = { line, unitId: p.unit_id };
+            break;
+          }
+        }
+        if (found) break;
+      }
+      if (found) {
+        if (receiveArrived[found.line.id]?.[found.unitId]) {
+          setReceiveError(`Unit ${n} is already counted.`);
+        } else {
+          toggleReceiveUnit(found.line.id, found.unitId);
+        }
+        return;
+      }
+      const { unit } = await lookupScannableUnit(n);
+      if (!unit) {
+        setReceiveError(`No unit found with number ${n}.`);
+      } else {
+        setReceiveError(`Unit ${n} is not on this transfer.`);
+      }
+    } catch (err: any) {
+      setReceiveError(err?.message ?? "Could not look up that unit");
+    } finally {
+      setReceiveScanBusy(false);
+      receiveScanRef.current?.focus();
+    }
+  }
+
+  // Every not-arrived order-bound unit needs an explicit confirmation
+  // before the count can be submitted.
+  function receiveMissingConfirmed(line: TransferLineItem): boolean {
+    return receiveOpenPicks(line)
+      .filter((p) => !receiveArrived[line.id]?.[p.unit_id])
+      .every(
+        (p) =>
+          p.picked_requirement_id == null ||
+          missingConfirmed[p.unit_id] === true
+      );
+  }
+
+  function receiveReviewReady(): boolean {
+    if (!receiving) return false;
+    return receiving.line_items.every(
+      (l) => receiveOpenPicks(l).length === 0 || receiveMissingConfirmed(l)
+    );
+  }
+
+  async function handleReceiveCountConfirm() {
+    if (!receiving) return;
+    setReceiveSubmitting(true);
+    setReceiveError(null);
+    try {
+      const received: Record<string, number> = {};
+      const receipts: UnitReceiptEntry[] = [];
+      for (const line of receiving.line_items) {
+        const picks = receiveOpenPicks(line);
+        if (picks.length > 0) {
+          const arrivedIds = picks
+            .filter((p) => receiveArrived[line.id]?.[p.unit_id])
+            .map((p) => p.unit_id);
+          const missing = picks.filter(
+            (p) => !receiveArrived[line.id]?.[p.unit_id]
+          );
+          received[line.id] = arrivedIds.length;
+          const reason = missing
+            .map((p) => missingReasons[p.unit_id]?.trim())
+            .find((r) => r);
+          receipts.push({
+            line_item_id: line.id,
+            received_unit_ids: arrivedIds,
+            missing_unit_ids: missing.map((p) => p.unit_id),
+            missing_reason: reason ?? null,
+          });
+          continue;
+        }
+        const qty = parseInt(receiveMap[line.id] ?? "", 10);
+        if (Number.isNaN(qty) || qty < 0 || qty > line.quantity_shipped) {
+          setReceiveError(
+            `Enter a received quantity between 0 and ${line.quantity_shipped} for ${line.variant?.item_name ?? "an item"}.`
+          );
+          return;
+        }
+        received[line.id] = qty;
+      }
+      const result = await finalizeTransfer(
+        receiving.id,
+        received,
+        receipts.length > 0 ? receipts : undefined
+      );
+      const ref = receiving.reference_code ?? "Transfer";
+      const unitCount = result.received_unit_ids?.length ?? 0;
+      const assignedCount = result.assignments?.length ?? 0;
+      const missingNums = (result.missing_units ?? []).map((m) => m.unit_number);
+      const destName = receiving.destination?.name ?? "the destination";
+      let msg = `${ref} received.`;
+      if (unitCount > 0) {
+        msg += ` ${unitCount} ${unitCount === 1 ? "unit" : "units"} now at ${destName}.`;
+      } else {
+        const totalReceived = Object.values(received).reduce(
+          (sum, qty) => sum + qty,
+          0
+        );
+        if (totalReceived > 0) {
+          msg += ` ${totalReceived} ${totalReceived === 1 ? "unit" : "units"} now at ${destName}.`;
+        }
+      }
+      if (assignedCount > 0) {
+        msg += ` ${assignedCount} assigned to a customer order.`;
+      }
+      if (missingNums.length > 0) {
+        msg += ` ${missingNums.length} ${missingNums.length === 1 ? "unit" : "units"} marked missing: ${missingNums.join(", ")}.`;
+      }
+      setReceiving(null);
+      await loadAll();
+      setPageError(null);
+      setPageWarn(null);
+      setPageNotice(msg);
+      if (result.assign_failed) {
+        setPageWarn(
+          `${unitCount} units arrived but could not be assigned to orders. Check the Requests tab.`
+        );
+      }
+    } catch (err: any) {
+      setReceiveError(err.message ?? "Failed to receive transfer");
+    } finally {
+      setReceiveSubmitting(false);
+    }
+  }
+
   async function handleReceive() {
     if (!receiving) return;
     setReceiveSubmitting(true);
@@ -1274,6 +1457,11 @@ export default function TransfersPage() {
     }
     setReceiveMap(initial);
     setReceiveError(null);
+    setReceiveStep("entry");
+    setReceiveArrived({});
+    setReceiveScan("");
+    setMissingReasons({});
+    setMissingConfirmed({});
     setReceiving(t);
   }
 
@@ -2152,11 +2340,15 @@ export default function TransfersPage() {
       {receiving && (
         <Modal
           onClose={() => setReceiving(null)}
-          dirty={receiving.line_items.some(
-            (l) =>
-              (receiveMap[l.id] ?? String(l.quantity_shipped)) !==
-              String(l.quantity_shipped)
-          )}
+          dirty={
+            receiveStep !== "entry" ||
+            Object.keys(receiveArrived).length > 0 ||
+            receiving.line_items.some(
+              (l) =>
+                (receiveMap[l.id] ?? String(l.quantity_shipped)) !==
+                String(l.quantity_shipped)
+            )
+          }
           saving={receiveSubmitting}
         >
           <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
@@ -2171,88 +2363,356 @@ export default function TransfersPage() {
                 {receiveError}
               </p>
             )}
-            <div className="space-y-3">
-              {receiving.line_items.map((line) => {
-                const openPicks = (line.picks ?? []).filter(
-                  (p) => p.received_at == null && p.missing_at == null
-                );
-                const hasPicks = openPicks.length > 0;
-                return (
-                  <div
-                    key={line.id}
-                    className="space-y-2 rounded-md border border-slate-200 p-3"
+
+            {receiveStep === "entry" && (
+              <>
+                <div className="space-y-3">
+                  {receiving.line_items.map((line) => {
+                    const openPicks = receiveOpenPicks(line);
+                    const hasPicks = openPicks.length > 0;
+                    return (
+                      <div
+                        key={line.id}
+                        className="space-y-2 rounded-md border border-slate-200 p-3"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 text-sm text-slate-700">
+                            {line.variant?.item_name ?? "Unknown"}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            shipped {line.quantity_shipped}
+                          </div>
+                          {!hasPicks && (
+                            <input
+                              type="number"
+                              min={0}
+                              max={line.quantity_shipped}
+                              value={
+                                receiveMap[line.id] ??
+                                String(line.quantity_shipped)
+                              }
+                              onChange={(e) =>
+                                setReceiveMap((m) => ({
+                                  ...m,
+                                  [line.id]: e.target.value,
+                                }))
+                              }
+                              className="w-24 rounded-md border border-slate-300 px-2 py-1 text-sm"
+                            />
+                          )}
+                        </div>
+                        {hasPicks && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {openPicks.map((p) => (
+                              <span
+                                key={p.unit_id}
+                                className="rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 text-xs text-slate-700"
+                              >
+                                #{p.unit_number}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="mt-6 flex justify-end gap-2">
+                  <button
+                    onClick={() => setReceiving(null)}
+                    className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                   >
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1 text-sm text-slate-700">
-                        {line.variant?.item_name ?? "Unknown"}
+                    Cancel
+                  </button>
+                  {receiveHasPicks(receiving) && (
+                    <button
+                      onClick={() => setReceiveStep("counting")}
+                      className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      Count the units
+                    </button>
+                  )}
+                  <button
+                    onClick={handleReceive}
+                    disabled={receiveSubmitting}
+                    className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    {receiveSubmitting
+                      ? "Receiving…"
+                      : receiveHasPicks(receiving)
+                        ? "Everything arrived"
+                        : "Receive"}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {receiveStep === "counting" && (
+              <>
+                <p className="mb-2 text-xs text-slate-500">
+                  Scan or type a unit number and press Enter to mark it arrived.
+                  Click a unit to toggle it.
+                </p>
+                <input
+                  ref={receiveScanRef}
+                  value={receiveScan}
+                  onChange={(e) => setReceiveScan(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleReceiveScan();
+                    }
+                  }}
+                  placeholder="Scan or type a unit number"
+                  className="mb-4 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                />
+                <div className="space-y-3">
+                  {receiving.line_items.map((line) => {
+                    const openPicks = receiveOpenPicks(line);
+                    if (openPicks.length === 0) {
+                      return (
+                        <div
+                          key={line.id}
+                          className="flex items-center gap-3 rounded-md border border-slate-200 p-3"
+                        >
+                          <div className="flex-1 text-sm text-slate-700">
+                            {line.variant?.item_name ?? "Unknown"}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            shipped {line.quantity_shipped}
+                          </div>
+                          <input
+                            type="number"
+                            min={0}
+                            max={line.quantity_shipped}
+                            value={
+                              receiveMap[line.id] ??
+                              String(line.quantity_shipped)
+                            }
+                            onChange={(e) =>
+                              setReceiveMap((m) => ({
+                                ...m,
+                                [line.id]: e.target.value,
+                              }))
+                            }
+                            className="w-24 rounded-md border border-slate-300 px-2 py-1 text-sm"
+                          />
+                        </div>
+                      );
+                    }
+                    const arrivedCount = openPicks.filter(
+                      (p) => receiveArrived[line.id]?.[p.unit_id]
+                    ).length;
+                    return (
+                      <div
+                        key={line.id}
+                        className="rounded-md border border-slate-200 p-3"
+                      >
+                        <div className="mb-2 flex items-center gap-3">
+                          <div className="flex-1 text-sm text-slate-700">
+                            {line.variant?.item_name ?? "Unknown"}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {arrivedCount} of {openPicks.length} arrived
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          {openPicks.map((p) => {
+                            const arrived =
+                              receiveArrived[line.id]?.[p.unit_id] === true;
+                            return (
+                              <button
+                                key={p.unit_id}
+                                type="button"
+                                onClick={() =>
+                                  toggleReceiveUnit(line.id, p.unit_id)
+                                }
+                                className={`flex w-full items-center justify-between rounded-md border px-3 py-1.5 text-sm ${
+                                  arrived
+                                    ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                                }`}
+                              >
+                                <span>#{p.unit_number}</span>
+                                <span className="text-xs">
+                                  {arrived ? "Arrived" : "Not counted"}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
-                      <div className="text-xs text-slate-500">
-                        shipped {line.quantity_shipped}
+                    );
+                  })}
+                </div>
+                <div className="mt-6 flex justify-end gap-2">
+                  <button
+                    onClick={() => setReceiveStep("entry")}
+                    className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Back
+                  </button>
+                  <button
+                    onClick={() => setReceiveStep("review")}
+                    className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+                  >
+                    Review count
+                  </button>
+                </div>
+              </>
+            )}
+
+            {receiveStep === "review" && (
+              <>
+                {(() => {
+                  const arrived: {
+                    line: TransferLineItem;
+                    pick: NonNullable<TransferLineItem["picks"]>[number];
+                  }[] = [];
+                  const missing: typeof arrived = [];
+                  for (const line of receiving.line_items) {
+                    for (const p of receiveOpenPicks(line)) {
+                      const entry = { line, pick: p };
+                      if (receiveArrived[line.id]?.[p.unit_id]) {
+                        arrived.push(entry);
+                      } else {
+                        missing.push(entry);
+                      }
+                    }
+                  }
+                  const untracked = receiving.line_items.filter(
+                    (l) => receiveOpenPicks(l).length === 0
+                  );
+                  return (
+                    <div className="space-y-4">
+                      <div>
+                        <h3 className="mb-2 text-sm font-semibold text-slate-800">
+                          Arrived ({arrived.length})
+                        </h3>
+                        {arrived.length === 0 ? (
+                          <p className="text-sm text-slate-500">
+                            No units counted as arrived.
+                          </p>
+                        ) : (
+                          <ul className="space-y-1">
+                            {arrived.map(({ line, pick }) => (
+                              <li
+                                key={pick.unit_id}
+                                className="flex items-center gap-2 text-sm text-slate-700"
+                              >
+                                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800">
+                                  #{pick.unit_number}
+                                </span>
+                                {line.variant?.item_name ?? "Unknown"}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
                       </div>
-                      {!hasPicks && (
-                        <input
-                          type="number"
-                          min={0}
-                          max={line.quantity_shipped}
-                          value={
-                            receiveMap[line.id] ??
-                            String(line.quantity_shipped)
-                          }
-                          onChange={(e) =>
-                            setReceiveMap((m) => ({
-                              ...m,
-                              [line.id]: e.target.value,
-                            }))
-                          }
-                          className="w-24 rounded-md border border-slate-300 px-2 py-1 text-sm"
-                        />
+                      <div>
+                        <h3 className="mb-2 text-sm font-semibold text-slate-800">
+                          Did not arrive ({missing.length})
+                        </h3>
+                        {missing.length === 0 ? (
+                          <p className="text-sm text-slate-500">
+                            Every shipped unit was counted.
+                          </p>
+                        ) : (
+                          <ul className="space-y-2">
+                            {missing.map(({ line, pick }) => {
+                              const orderBound =
+                                pick.picked_requirement_id != null;
+                              const confirmed =
+                                missingConfirmed[pick.unit_id] === true;
+                              return (
+                                <li
+                                  key={pick.unit_id}
+                                  className="rounded-md border border-amber-200 bg-amber-50 p-3"
+                                >
+                                  <div className="flex items-center gap-2 text-sm text-slate-800">
+                                    <span className="rounded-full border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700">
+                                      #{pick.unit_number}
+                                    </span>
+                                    {line.variant?.item_name ?? "Unknown"}
+                                    {orderBound && (
+                                      <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs text-sky-800">
+                                        customer order
+                                      </span>
+                                    )}
+                                  </div>
+                                  <input
+                                    type="text"
+                                    value={missingReasons[pick.unit_id] ?? ""}
+                                    onChange={(e) =>
+                                      setMissingReasons((m) => ({
+                                        ...m,
+                                        [pick.unit_id]: e.target.value,
+                                      }))
+                                    }
+                                    placeholder="Reason (optional)"
+                                    className="mt-2 w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                                  />
+                                  {orderBound && (
+                                    <label className="mt-2 flex items-start gap-2 text-xs text-slate-700">
+                                      <input
+                                        type="checkbox"
+                                        checked={confirmed}
+                                        onChange={(e) =>
+                                          setMissingConfirmed((m) => ({
+                                            ...m,
+                                            [pick.unit_id]: e.target.checked,
+                                          }))
+                                        }
+                                        className="mt-0.5"
+                                      />
+                                      <span>
+                                        Unit {pick.unit_number} is reserved for
+                                        an order. I confirm it is missing.
+                                      </span>
+                                    </label>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                      </div>
+                      {untracked.length > 0 && (
+                        <div>
+                          <h3 className="mb-2 text-sm font-semibold text-slate-800">
+                            Quantity lines
+                          </h3>
+                          <ul className="space-y-1 text-sm text-slate-700">
+                            {untracked.map((l) => (
+                              <li key={l.id}>
+                                {l.variant?.item_name ?? "Unknown"}: received{" "}
+                                {receiveMap[l.id] ?? l.quantity_shipped} of{" "}
+                                {l.quantity_shipped}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
                       )}
                     </div>
-                    {hasPicks && (
-                      <>
-                        <div className="flex flex-wrap gap-1.5">
-                          {openPicks.map((p) => (
-                            <span
-                              key={p.unit_number}
-                              className="rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 text-xs text-slate-700"
-                            >
-                              #{p.unit_number}
-                            </span>
-                          ))}
-                        </div>
-                        <p className="text-xs text-slate-500">
-                          To receive fewer than shipped, count the units. That
-                          option arrives in the next update.
-                        </p>
-                      </>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                onClick={() => setReceiving(null)}
-                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleReceive}
-                disabled={receiveSubmitting}
-                className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-              >
-                {receiveSubmitting
-                  ? "Receiving…"
-                  : receiving.line_items.some((l) =>
-                        (l.picks ?? []).some(
-                          (p) => p.received_at == null && p.missing_at == null
-                        )
-                      )
-                    ? "Everything arrived"
-                    : "Receive"}
-              </button>
-            </div>
+                  );
+                })()}
+                <div className="mt-6 flex justify-end gap-2">
+                  <button
+                    onClick={() => setReceiveStep("counting")}
+                    className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Back to counting
+                  </button>
+                  <button
+                    onClick={handleReceiveCountConfirm}
+                    disabled={receiveSubmitting || !receiveReviewReady()}
+                    className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    {receiveSubmitting ? "Receiving…" : "Confirm and receive"}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </Modal>
       )}
