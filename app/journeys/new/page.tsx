@@ -18,7 +18,7 @@ import {
 import { requestDepositException } from "@/lib/journeys/deposit";
 import type { CreateJourneyInput } from "@/lib/journeys/queries";
 import ProductPicker, { type ProductSelection } from "@/components/ProductPicker";
-import { fetchProductStock, fetchProductAvailabilityByLocation, type LocationAvailability } from "@/lib/inventory/queries";
+import { fetchProductAvailabilityByLocation, type LocationAvailability } from "@/lib/inventory/queries";
 import { fetchInTransitArrivals } from "@/lib/transfers/queries";
 import { resolveLineItemLocation } from "@/lib/journeys/fulfillment";
 import Modal from "@/components/Modal";
@@ -94,10 +94,10 @@ export default function NewJourneyPage() {
   const [fulfillmentType, setFulfillmentType] = useState<"delivery" | "pickup">("delivery");
   const [assignedEmployeeId, setAssignedEmployeeId] = useState<string | null>(null);
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
-  const [availability, setAvailability] = useState<Record<string, number>>({});
   const [locationStock, setLocationStock] = useState<Record<string, LocationAvailability[]>>({});
   const [inTransitArrivals, setInTransitArrivals] = useState<Record<string, Record<string, number>>>({});
   const [stockLoaded, setStockLoaded] = useState(false);
+  const [showOthers, setShowOthers] = useState<Record<string, boolean>>({});
   const [quoteNotes, setQuoteNotes] = useState("");
   const [purchase, setPurchase] = useState({
     paymentAmount: "",
@@ -138,19 +138,6 @@ export default function NewJourneyPage() {
       ),
     [stores, storeId, fulfillmentType]
   );
-
-  async function refreshAvailability(item: LineItem) {
-    if (!item.product_id) return;
-    const productId = item.product_id;
-    const locationId = resolveLineItemLocation(
-      item,
-      { store_id: storeId, fulfillment_type: fulfillmentType },
-      stores
-    );
-    if (!locationId) return;
-    const map = await fetchProductStock([productId], locationId);
-    setAvailability((prev) => ({ ...prev, [item.id]: map[productId]?.ats ?? 0 }));
-  }
 
   // All-locations availability + in-transit arrivals, batched once per
   // distinct product set (not per line item or keystroke).
@@ -229,18 +216,14 @@ export default function NewJourneyPage() {
       pickup_location_id: null,
     };
     setLineItems((prev) => [...prev, item]);
-    void refreshAvailability(item);
   }
 
   function updateLineItem(id: string, updates: Partial<LineItem>) {
-    setLineItems((prev) => {
-      const next = prev.map((item) =>
+    setLineItems((prev) =>
+      prev.map((item) =>
         item.id === id ? { ...item, ...updates } : item
-      );
-      const changed = next.find((item) => item.id === id);
-      if (changed) void refreshAvailability(changed);
-      return next;
-    });
+      )
+    );
   }
 
   function removeLineItem(id: string) {
@@ -459,12 +442,17 @@ export default function NewJourneyPage() {
     return !!loc && loc.location_type !== "STORE";
   }
 
-  // One compact line: ATS at every visible location, plus anything still
-  // on the truck. Only nonzero locations appear, plus the line's pickup
-  // location even at zero.
-  function locationAvailabilityText(item: LineItem): string {
-    if (!item.product_id) return "";
-    if (!stockLoaded) return "Loading…";
+  // Default view: the order's store, every warehouse, and the line's
+  // selected pickup location. Everything else with stock sits behind the
+  // "Show other stores" link. Returns the main line plus the hidden list.
+  function locationAvailability(item: LineItem): {
+    line: string;
+    others: string[];
+  } {
+    const empty = { line: "", others: [] as string[] };
+    if (!item.product_id) return empty;
+    if (!stockLoaded) return { line: "Loading…", others: [] };
+
     const stock = locationStock[item.product_id] ?? [];
     const arrivals = inTransitArrivals[item.product_id] ?? {};
     const pickupId = linePickupLocationId(item);
@@ -475,7 +463,14 @@ export default function NewJourneyPage() {
         (byLocation.get(row.location_id) ?? 0) + row.available
       );
     }
-    const entries: string[] = [];
+
+    const defaultIds = new Set<string>([storeId, pickupId]);
+    for (const s of stores) {
+      if (s.location_type === "WAREHOUSE") defaultIds.add(s.id);
+    }
+
+    const main: string[] = [];
+    const others: string[] = [];
     let anyAvailable = false;
     let anyArriving = false;
     for (const s of stores) {
@@ -484,15 +479,44 @@ export default function NewJourneyPage() {
       const arriving = arrivals[s.id] ?? 0;
       if (available > 0) anyAvailable = true;
       if (arriving > 0) anyArriving = true;
-      if (available === 0 && arriving === 0 && s.id !== pickupId) continue;
-      entries.push(
-        `${s.name} ${available}${arriving > 0 ? `, ${arriving} arriving` : ""}`
-      );
+      const entry = `${s.name} ${available}${arriving > 0 ? `, ${arriving} arriving` : ""}`;
+      if (defaultIds.has(s.id)) {
+        main.push(entry);
+      } else if (available > 0 || arriving > 0) {
+        others.push(entry);
+      }
     }
+
     if (!anyAvailable && !anyArriving) {
-      return "Not in stock at any location.";
+      return { line: "Not in stock at any location.", others: [] };
     }
-    return `All locations: ${entries.join(" · ")}`;
+    return { line: main.join(" · "), others };
+  }
+
+  function renderAvailability(item: LineItem) {
+    const { line, others } = locationAvailability(item);
+    const expanded = showOthers[item.id] ?? false;
+    return (
+      <>
+        <div className="mt-1 text-xs text-slate-500">{line}</div>
+        {others.length > 0 && (
+          <button
+            type="button"
+            onClick={() =>
+              setShowOthers((prev) => ({ ...prev, [item.id]: !expanded }))
+            }
+            className="mt-0.5 text-xs text-brand-700 hover:underline"
+          >
+            {expanded ? "Hide other stores" : `Show other stores (${others.length})`}
+          </button>
+        )}
+        {expanded && others.length > 0 && (
+          <div className="mt-0.5 text-xs text-slate-500">
+            {others.join(" · ")}
+          </div>
+        )}
+      </>
+    );
   }
 
   if (loading) return <p className="p-8 text-sm text-slate-500">Loading…</p>;
@@ -754,16 +778,7 @@ export default function NewJourneyPage() {
                           Pickup is set to the warehouse. The customer will collect it there, no transfer will be made.
                         </div>
                       )}
-                      {item.product_id && (
-                        <div className="mt-1 text-xs text-slate-500">
-                          Availability: {availability[item.id] ?? "Loading…"}
-                        </div>
-                      )}
-                      {item.product_id && (
-                        <div className="mt-0.5 text-xs text-slate-500">
-                          {locationAvailabilityText(item)}
-                        </div>
-                      )}
+                      {item.product_id && renderAvailability(item)}
                     </div>
                     <div className="col-span-2">
                       <input

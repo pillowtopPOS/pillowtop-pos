@@ -432,10 +432,15 @@ export async function confirmTransferReceipt(
   if (error) throw new Error(error.message);
 }
 
-// Units/qty still on the truck, per variant per destination, for transfers
-// currently in_transit. Tracked lines with pick rows count only unresolved
-// picks (received/missing excluded); other lines fall back to shipped minus
-// received. Read-only, batched for all variants at once.
+// Net unclaimed units still on the truck, per variant per destination, for
+// transfers currently in_transit. Read-only, batched for all variants once.
+//
+// Claim rule: units already promised to customer orders do not count as
+// freely arriving. For lines WITH transfer_line_units pick rows, a pick is
+// claimed when picked_requirement_id is not null. For lines with NO pick
+// rows, claimed units are the summed quantity of journey_mismatch
+// transfer_requests (matched by variant) linked to the same transfer.
+// Net arriving = max(0, arriving - claimed).
 export async function fetchInTransitArrivals(
   productIds: string[]
 ): Promise<Record<string, Record<string, number>>> {
@@ -453,39 +458,65 @@ export async function fetchInTransitArrivals(
   }
   const transferList = (transfers as any[]) ?? [];
   if (transferList.length === 0) return result;
+  const transferIds = transferList.map((t) => t.id);
   const destById = new Map<string, string>(
     transferList.map((t) => [t.id, t.destination_location_id])
   );
 
-  const { data: lines, error: lineError } = await (supabase as any)
-    .from("transfer_line_items")
-    .select(
-      "id, transfer_id, variant_id, quantity_shipped, quantity_received, transfer_line_units(received_at, missing_at)"
-    )
-    .in("transfer_id", transferList.map((t) => t.id))
-    .in("variant_id", productIds);
-  if (lineError) {
-    console.error("fetchInTransitArrivals lines error", lineError);
+  const [linesRes, claimsRes] = await Promise.all([
+    (supabase as any)
+      .from("transfer_line_items")
+      .select(
+        "id, transfer_id, variant_id, quantity_shipped, quantity_received, transfer_line_units(received_at, missing_at, picked_requirement_id)"
+      )
+      .in("transfer_id", transferIds)
+      .in("variant_id", productIds),
+    (supabase as any)
+      .from("transfer_requests")
+      .select("transfer_id, variant_id, quantity")
+      .in("transfer_id", transferIds)
+      .eq("source_type", "journey_mismatch"),
+  ]);
+  if (linesRes.error) {
+    console.error("fetchInTransitArrivals lines error", linesRes.error);
     return result;
   }
+  if (claimsRes.error) {
+    console.error("fetchInTransitArrivals claims error", claimsRes.error);
+  }
 
-  for (const line of (lines as any[]) ?? []) {
+  // Claimed quantity per (transfer_id, variant_id) for pick-less lines.
+  const claimedQty = new Map<string, number>();
+  for (const req of (claimsRes.data as any[]) ?? []) {
+    const key = `${req.transfer_id}:${req.variant_id}`;
+    claimedQty.set(key, (claimedQty.get(key) ?? 0) + (req.quantity ?? 0));
+  }
+
+  for (const line of (linesRes.data as any[]) ?? []) {
     const picks = (line.transfer_line_units as any[]) ?? [];
     const unresolved = picks.filter(
       (p) => p.received_at == null && p.missing_at == null
-    ).length;
-    const arriving =
-      picks.length > 0
-        ? unresolved
-        : Math.max(
-            0,
-            (line.quantity_shipped ?? 0) - (line.quantity_received ?? 0)
-          );
-    if (arriving <= 0) continue;
+    );
+    let arriving: number;
+    let claimed: number;
+    if (picks.length > 0) {
+      arriving = unresolved.length;
+      claimed = unresolved.filter((p) => p.picked_requirement_id != null)
+        .length;
+    } else {
+      arriving = Math.max(
+        0,
+        (line.quantity_shipped ?? 0) - (line.quantity_received ?? 0)
+      );
+      claimed =
+        claimedQty.get(`${line.transfer_id}:${line.variant_id}`) ?? 0;
+    }
+    const net = Math.max(0, arriving - claimed);
+    if (net <= 0) continue;
     const dest = destById.get(line.transfer_id);
     if (!dest) continue;
     const byLocation = (result[line.variant_id] ??= {});
-    byLocation[dest] = (byLocation[dest] ?? 0) + arriving;
+    byLocation[dest] = (byLocation[dest] ?? 0) + net;
   }
   return result;
 }
