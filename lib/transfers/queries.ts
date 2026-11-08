@@ -35,6 +35,9 @@ export type TransferWithDetails = {
   in_transit_at: string | null;
   finalized_at: string | null;
   finalized_by: string | null;
+  cancelled_at?: string | null;
+  cancelled_by_name?: string | null;
+  cancel_reason?: string | null;
   origin: { id: string; name: string } | null;
   destination: { id: string; name: string; transfer_schedule_day?: number | null } | null;
   line_items: TransferLineItem[];
@@ -129,7 +132,51 @@ export async function fetchTransfers(
     console.error("fetchTransfers error", error);
     return [];
   }
-  return (data as unknown as TransferWithDetails[]) ?? [];
+  const rows = (data as unknown as TransferWithDetails[]) ?? [];
+
+  // Cancellation reason/actor live only in audit_events (migration 118);
+  // pull them for cancelled rows so the list can show who cancelled and why.
+  const cancelledIds = rows
+    .filter((t) => t.status === "cancelled")
+    .map((t) => t.id);
+  if (cancelledIds.length === 0) return rows;
+
+  const { data: events, error: auditError } = await (supabase as any)
+    .from("audit_events")
+    .select(
+      "entity_id, occurred_at, after, actor:employees!actor_employee_id ( id, name )"
+    )
+    .eq("event_type", "TRANSFER_CANCELLED")
+    .in("entity_id", cancelledIds)
+    .order("occurred_at", { ascending: false });
+  if (auditError) {
+    console.error("fetchTransfers audit_events error", auditError);
+    return rows;
+  }
+
+  const byTransfer = new Map<
+    string,
+    { at: string; by: string | null; reason: string | null }
+  >();
+  for (const ev of (events as any[]) ?? []) {
+    if (byTransfer.has(ev.entity_id)) continue;
+    byTransfer.set(ev.entity_id, {
+      at: ev.occurred_at,
+      by: ev.actor?.name ?? null,
+      reason: ev.after?.reason ?? null,
+    });
+  }
+  return rows.map((t) => {
+    const c = byTransfer.get(t.id);
+    return c
+      ? {
+          ...t,
+          cancelled_at: c.at,
+          cancelled_by_name: c.by,
+          cancel_reason: c.reason,
+        }
+      : t;
+  });
 }
 
 async function insertTransferRequest(payload: {
@@ -383,6 +430,32 @@ export async function confirmTransferReceipt(
     p_line_reports: reports,
   });
   if (error) throw new Error(error.message);
+}
+
+export type CancelTransferResult = {
+  transfer_id: string;
+  status: string;
+  committed_released: number;
+  units_unpicked: number;
+  requests_reset: number;
+  committed_reheld: number;
+};
+
+export async function cancelTransfer(
+  transferId: string,
+  reason?: string | null
+): Promise<CancelTransferResult> {
+  const supabase = createClient();
+  const employee = await fetchCurrentEmployee();
+  if (!employee) throw new Error("Employee record not found");
+
+  const { data, error } = await (supabase as any).rpc("cancel_transfer", {
+    p_transfer_id: transferId,
+    p_employee_id: employee.id,
+    p_reason: reason?.trim() ? reason.trim() : null,
+  });
+  if (error) throw new Error(error.message);
+  return data as CancelTransferResult;
 }
 
 export async function fetchOverstockSuggestions(
