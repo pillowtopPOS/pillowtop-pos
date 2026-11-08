@@ -625,7 +625,6 @@ export default function JourneyWorkspace({
   >(null);
   const [confirmRemoveItem, setConfirmRemoveItem] = useState<string | null>(null);
   const [addressPromptOpen, setAddressPromptOpen] = useState(false);
-  const mismatchedRequested = useRef<Set<string>>(new Set());
   // Reassign can be started from the header "..." menu — scroll the
   // Ownership card's chooser into view when it appears.
   const reassignRef = useRef<HTMLDivElement>(null);
@@ -916,16 +915,22 @@ export default function JourneyWorkspace({
     };
   }, [journey.id, events]);
 
+  const availabilityContext = `${journey.store_id}|${journey.fulfillment_type}|${inventoryStoreId}`;
+  const availabilityContextRef = useRef(availabilityContext);
   useEffect(() => {
     let ignore = false;
 
-    // Clear all current availability values synchronously so a location change
-    // never leaves the previous location's number visible during the fetch.
-    setLineAvailability((previous) => {
-      const next = { ...previous };
-      for (const item of lineItems) delete next[item.id];
-      return next;
-    });
+    // Only blank the numbers when the location context actually changes —
+    // a lineItems refetch (e.g. after a payment event) keeps the last
+    // values visible while fresh ones load, so the card doesn't flicker.
+    if (availabilityContextRef.current !== availabilityContext) {
+      availabilityContextRef.current = availabilityContext;
+      setLineAvailability((previous) => {
+        const next = { ...previous };
+        for (const item of lineItems) delete next[item.id];
+        return next;
+      });
+    }
 
     Promise.all(
       lineItems.map(async (item) => {
@@ -935,44 +940,14 @@ export default function JourneyWorkspace({
         return [item.id, map[item.product_id]?.ats ?? 0] as const;
       })
     ).then((values) => {
-      if (!ignore) setLineAvailability(Object.fromEntries(values.filter(Boolean) as [string, number][]));
+      if (!ignore)
+        setLineAvailability((previous) => ({
+          ...previous,
+          ...Object.fromEntries(values.filter(Boolean) as [string, number][]),
+        }));
     });
     return () => { ignore = true; };
-  }, [lineItems, journey.store_id, journey.fulfillment_type, inventoryStoreId]);
-
-  // Phase 7d-ii: auto-create transfer requests when a journey line item's
-  // fulfillment location doesn't have enough stock to satisfy the quantity.
-  useEffect(() => {
-    const supabase = createClient();
-    (async () => {
-      for (const item of lineItems) {
-        if (!item.product_id || !journey.id) continue;
-        const ats = lineAvailability[item.id] ?? 0;
-        const shortfall = item.quantity - ats;
-        if (shortfall <= 0) continue;
-        if (mismatchedRequested.current.has(item.id)) continue;
-
-        const locationId = resolveLineItemLocation(item, journey, stores);
-        mismatchedRequested.current.add(item.id);
-
-        try {
-          const { error } = await (supabase as any).rpc(
-            "create_journey_mismatch_transfer",
-            {
-              p_journey_id: journey.id,
-              p_variant_id: item.product_id,
-              p_quantity: shortfall,
-              p_fulfillment_location_id: locationId,
-            }
-          );
-          if (error) throw new Error(error.message);
-        } catch (err: any) {
-          console.error("create_journey_mismatch_transfer", err);
-          mismatchedRequested.current.delete(item.id);
-        }
-      }
-    })();
-  }, [lineAvailability, lineItems, journey.id, journey.store_id, journey.fulfillment_type, inventoryStoreId, stores]);
+  }, [lineItems, journey.store_id, journey.fulfillment_type, inventoryStoreId, availabilityContext]);
 
   async function addLineItem(selection: ProductSelection) {
     setPanelError(null);
@@ -1556,7 +1531,7 @@ export default function JourneyWorkspace({
                 <ProductPicker storeId={inventoryStoreId} onSelect={addLineItem} />
               )}
 
-              {!lineItemsLoading && lineItems.length > 0 && !orderEditing && (
+              {lineItems.length > 0 && !orderEditing && (
                 <div className="divide-y divide-slate-100">
                   {lineItems.map((item) => (
                     <div key={item.id} className="py-1.5">
@@ -1640,7 +1615,7 @@ export default function JourneyWorkspace({
                 </div>
               )}
 
-              {!lineItemsLoading && lineItems.length > 0 && orderEditing && !orderLocked && (
+              {lineItems.length > 0 && orderEditing && !orderLocked && (
                 <div className="space-y-2">
                   {lineItems.map((item) => (
                     <div
