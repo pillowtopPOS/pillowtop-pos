@@ -764,8 +764,8 @@ export default function NewJourneyPage() {
                       <div className="mb-1 min-w-0 text-slate-900">
                         <div className="truncate">{item.item_name}</div>
                       </div>
-                      <div className="grid grid-cols-12 items-start gap-2">
-                        <div className="col-span-3 min-w-0">
+                      <div className="grid grid-cols-12 items-stretch gap-2">
+                        <div className="col-span-4 min-w-0">
                           <select
                             value={item.fulfillment_type_override ?? "inherit"}
                             onChange={(e) =>
@@ -827,10 +827,8 @@ export default function NewJourneyPage() {
                             className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                           />
                         </div>
-                        <div className="col-span-2 text-right text-slate-600">
+                        <div className="col-span-2 flex items-center justify-end gap-1 text-slate-600">
                           ${(item.quantity * item.unit_price).toFixed(2)}
-                        </div>
-                        <div className="col-span-1 flex justify-end">
                           <button
                             onClick={() => removeLineItem(item.id)}
                             className="rounded p-1 text-slate-400 hover:bg-red-100 hover:text-red-600"
