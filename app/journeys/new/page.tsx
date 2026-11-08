@@ -18,7 +18,8 @@ import {
 import { requestDepositException } from "@/lib/journeys/deposit";
 import type { CreateJourneyInput } from "@/lib/journeys/queries";
 import ProductPicker, { type ProductSelection } from "@/components/ProductPicker";
-import { fetchProductStock } from "@/lib/inventory/queries";
+import { fetchProductStock, fetchProductAvailabilityByLocation, type LocationAvailability } from "@/lib/inventory/queries";
+import { fetchInTransitArrivals } from "@/lib/transfers/queries";
 import { resolveLineItemLocation } from "@/lib/journeys/fulfillment";
 import Modal from "@/components/Modal";
 import { isStoreConfirmedToday, storeSelectUrl } from "@/lib/journeys/storeConfirm";
@@ -94,6 +95,9 @@ export default function NewJourneyPage() {
   const [assignedEmployeeId, setAssignedEmployeeId] = useState<string | null>(null);
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
   const [availability, setAvailability] = useState<Record<string, number>>({});
+  const [locationStock, setLocationStock] = useState<Record<string, LocationAvailability[]>>({});
+  const [inTransitArrivals, setInTransitArrivals] = useState<Record<string, Record<string, number>>>({});
+  const [stockLoaded, setStockLoaded] = useState(false);
   const [quoteNotes, setQuoteNotes] = useState("");
   const [purchase, setPurchase] = useState({
     paymentAmount: "",
@@ -147,6 +151,47 @@ export default function NewJourneyPage() {
     const map = await fetchProductStock([productId], locationId);
     setAvailability((prev) => ({ ...prev, [item.id]: map[productId]?.ats ?? 0 }));
   }
+
+  // All-locations availability + in-transit arrivals, batched once per
+  // distinct product set (not per line item or keystroke).
+  const productKey = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          lineItems
+            .map((i) => i.product_id)
+            .filter((x): x is string => !!x)
+        )
+      )
+        .sort()
+        .join(","),
+    [lineItems]
+  );
+
+  useEffect(() => {
+    if (loading) return;
+    if (!productKey) {
+      setLocationStock({});
+      setInTransitArrivals({});
+      setStockLoaded(true);
+      return;
+    }
+    setStockLoaded(false);
+    const ids = productKey.split(",");
+    let cancelled = false;
+    Promise.all([
+      fetchProductAvailabilityByLocation(ids),
+      fetchInTransitArrivals(ids),
+    ]).then(([stock, arrivals]) => {
+      if (cancelled) return;
+      setLocationStock(stock);
+      setInTransitArrivals(arrivals);
+      setStockLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, productKey]);
 
   const hasDeliveryAddress = customer.streetAddress.trim() !== "";
 
@@ -396,6 +441,58 @@ export default function NewJourneyPage() {
       setSaving(false);
       setError(e.message ?? "Reconciliation failed");
     }
+  }
+
+  function linePickupLocationId(item: LineItem): string {
+    return resolveLineItemLocation(
+      item,
+      { store_id: storeId, fulfillment_type: fulfillmentType },
+      stores
+    );
+  }
+
+  function pickupIsWarehouse(item: LineItem): boolean {
+    if ((item.fulfillment_type_override ?? fulfillmentType) !== "pickup") {
+      return false;
+    }
+    const loc = stores.find((s) => s.id === linePickupLocationId(item));
+    return !!loc && loc.location_type !== "STORE";
+  }
+
+  // One compact line: ATS at every visible location, plus anything still
+  // on the truck. Only nonzero locations appear, plus the line's pickup
+  // location even at zero.
+  function locationAvailabilityText(item: LineItem): string {
+    if (!item.product_id) return "";
+    if (!stockLoaded) return "Loading…";
+    const stock = locationStock[item.product_id] ?? [];
+    const arrivals = inTransitArrivals[item.product_id] ?? {};
+    const pickupId = linePickupLocationId(item);
+    const byLocation = new Map<string, number>();
+    for (const row of stock) {
+      byLocation.set(
+        row.location_id,
+        (byLocation.get(row.location_id) ?? 0) + row.available
+      );
+    }
+    const entries: string[] = [];
+    let anyAvailable = false;
+    let anyArriving = false;
+    for (const s of stores) {
+      if (s.location_type === "WAREHOUSE_QUARANTINE") continue;
+      const available = byLocation.get(s.id) ?? 0;
+      const arriving = arrivals[s.id] ?? 0;
+      if (available > 0) anyAvailable = true;
+      if (arriving > 0) anyArriving = true;
+      if (available === 0 && arriving === 0 && s.id !== pickupId) continue;
+      entries.push(
+        `${s.name} ${available}${arriving > 0 ? `, ${arriving} arriving` : ""}`
+      );
+    }
+    if (!anyAvailable && !anyArriving) {
+      return "Not in stock at any location.";
+    }
+    return `All locations: ${entries.join(" · ")}`;
   }
 
   if (loading) return <p className="p-8 text-sm text-slate-500">Loading…</p>;
@@ -652,9 +749,19 @@ export default function NewJourneyPage() {
                             ))}
                         </select>
                       )}
+                      {pickupIsWarehouse(item) && (
+                        <div className="mt-1 text-xs text-amber-700">
+                          Pickup is set to the warehouse. The customer will collect it there, no transfer will be made.
+                        </div>
+                      )}
                       {item.product_id && (
                         <div className="mt-1 text-xs text-slate-500">
                           Availability: {availability[item.id] ?? "Loading…"}
+                        </div>
+                      )}
+                      {item.product_id && (
+                        <div className="mt-0.5 text-xs text-slate-500">
+                          {locationAvailabilityText(item)}
                         </div>
                       )}
                     </div>

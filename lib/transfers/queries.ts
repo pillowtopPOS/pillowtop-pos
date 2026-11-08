@@ -432,6 +432,64 @@ export async function confirmTransferReceipt(
   if (error) throw new Error(error.message);
 }
 
+// Units/qty still on the truck, per variant per destination, for transfers
+// currently in_transit. Tracked lines with pick rows count only unresolved
+// picks (received/missing excluded); other lines fall back to shipped minus
+// received. Read-only, batched for all variants at once.
+export async function fetchInTransitArrivals(
+  productIds: string[]
+): Promise<Record<string, Record<string, number>>> {
+  const result: Record<string, Record<string, number>> = {};
+  if (productIds.length === 0) return result;
+
+  const supabase = createClient();
+  const { data: transfers, error: transferError } = await (supabase as any)
+    .from("transfers")
+    .select("id, destination_location_id")
+    .eq("status", "in_transit");
+  if (transferError) {
+    console.error("fetchInTransitArrivals transfers error", transferError);
+    return result;
+  }
+  const transferList = (transfers as any[]) ?? [];
+  if (transferList.length === 0) return result;
+  const destById = new Map<string, string>(
+    transferList.map((t) => [t.id, t.destination_location_id])
+  );
+
+  const { data: lines, error: lineError } = await (supabase as any)
+    .from("transfer_line_items")
+    .select(
+      "id, transfer_id, variant_id, quantity_shipped, quantity_received, transfer_line_units(received_at, missing_at)"
+    )
+    .in("transfer_id", transferList.map((t) => t.id))
+    .in("variant_id", productIds);
+  if (lineError) {
+    console.error("fetchInTransitArrivals lines error", lineError);
+    return result;
+  }
+
+  for (const line of (lines as any[]) ?? []) {
+    const picks = (line.transfer_line_units as any[]) ?? [];
+    const unresolved = picks.filter(
+      (p) => p.received_at == null && p.missing_at == null
+    ).length;
+    const arriving =
+      picks.length > 0
+        ? unresolved
+        : Math.max(
+            0,
+            (line.quantity_shipped ?? 0) - (line.quantity_received ?? 0)
+          );
+    if (arriving <= 0) continue;
+    const dest = destById.get(line.transfer_id);
+    if (!dest) continue;
+    const byLocation = (result[line.variant_id] ??= {});
+    byLocation[dest] = (byLocation[dest] ?? 0) + arriving;
+  }
+  return result;
+}
+
 export type CancelTransferResult = {
   transfer_id: string;
   status: string;
