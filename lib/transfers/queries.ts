@@ -432,6 +432,95 @@ export async function confirmTransferReceipt(
   if (error) throw new Error(error.message);
 }
 
+// Net unclaimed units still on the truck, per variant per destination, for
+// transfers currently in_transit. Read-only, batched for all variants once.
+//
+// Claim rule: units already promised to customer orders do not count as
+// freely arriving. For lines WITH transfer_line_units pick rows, a pick is
+// claimed when picked_requirement_id is not null. For lines with NO pick
+// rows, claimed units are the summed quantity of journey_mismatch
+// transfer_requests (matched by variant) linked to the same transfer.
+// Net arriving = max(0, arriving - claimed).
+export async function fetchInTransitArrivals(
+  productIds: string[]
+): Promise<Record<string, Record<string, number>>> {
+  const result: Record<string, Record<string, number>> = {};
+  if (productIds.length === 0) return result;
+
+  const supabase = createClient();
+  const { data: transfers, error: transferError } = await (supabase as any)
+    .from("transfers")
+    .select("id, destination_location_id")
+    .eq("status", "in_transit");
+  if (transferError) {
+    console.error("fetchInTransitArrivals transfers error", transferError);
+    return result;
+  }
+  const transferList = (transfers as any[]) ?? [];
+  if (transferList.length === 0) return result;
+  const transferIds = transferList.map((t) => t.id);
+  const destById = new Map<string, string>(
+    transferList.map((t) => [t.id, t.destination_location_id])
+  );
+
+  const [linesRes, claimsRes] = await Promise.all([
+    (supabase as any)
+      .from("transfer_line_items")
+      .select(
+        "id, transfer_id, variant_id, quantity_shipped, quantity_received, transfer_line_units(received_at, missing_at, picked_requirement_id)"
+      )
+      .in("transfer_id", transferIds)
+      .in("variant_id", productIds),
+    (supabase as any)
+      .from("transfer_requests")
+      .select("transfer_id, variant_id, quantity")
+      .in("transfer_id", transferIds)
+      .eq("source_type", "journey_mismatch"),
+  ]);
+  if (linesRes.error) {
+    console.error("fetchInTransitArrivals lines error", linesRes.error);
+    return result;
+  }
+  if (claimsRes.error) {
+    console.error("fetchInTransitArrivals claims error", claimsRes.error);
+  }
+
+  // Claimed quantity per (transfer_id, variant_id) for pick-less lines.
+  const claimedQty = new Map<string, number>();
+  for (const req of (claimsRes.data as any[]) ?? []) {
+    const key = `${req.transfer_id}:${req.variant_id}`;
+    claimedQty.set(key, (claimedQty.get(key) ?? 0) + (req.quantity ?? 0));
+  }
+
+  for (const line of (linesRes.data as any[]) ?? []) {
+    const picks = (line.transfer_line_units as any[]) ?? [];
+    const unresolved = picks.filter(
+      (p) => p.received_at == null && p.missing_at == null
+    );
+    let arriving: number;
+    let claimed: number;
+    if (picks.length > 0) {
+      arriving = unresolved.length;
+      claimed = unresolved.filter((p) => p.picked_requirement_id != null)
+        .length;
+    } else {
+      arriving = Math.max(
+        0,
+        (line.quantity_shipped ?? 0) - (line.quantity_received ?? 0)
+      );
+      claimed =
+        claimedQty.get(`${line.transfer_id}:${line.variant_id}`) ?? 0;
+    }
+    const net = Math.max(0, arriving - claimed);
+    if (net <= 0) continue;
+    const dest = destById.get(line.transfer_id);
+    if (!dest) continue;
+    const byLocation = (result[line.variant_id] ??= {});
+    byLocation[dest] = (byLocation[dest] ?? 0) + net;
+  }
+  return result;
+}
+
 export type CancelTransferResult = {
   transfer_id: string;
   status: string;

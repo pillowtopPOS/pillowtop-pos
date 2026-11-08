@@ -81,6 +81,43 @@ export async function fetchProductStock(
   return map;
 }
 
+export type LocationAvailability = {
+  location_id: string;
+  available: number;
+};
+
+// Batched ATS for many products across every visible location. The view
+// already enforces store visibility; Prime disposition and no sublocations
+// are filtered here. ats is floored at zero so callers never see negatives.
+export async function fetchProductAvailabilityByLocation(
+  productIds: string[]
+): Promise<Record<string, LocationAvailability[]>> {
+  if (productIds.length === 0) return {};
+
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("inventory_positions_public")
+    .select("variant_id, location_id, ats")
+    .in("variant_id", productIds)
+    .eq("disposition", "Prime")
+    .is("sublocation_id", null);
+
+  if (error) {
+    console.error("fetchProductAvailabilityByLocation error", error);
+    return {};
+  }
+
+  const map: Record<string, LocationAvailability[]> = {};
+  for (const row of (data as unknown as InventoryPosition[]) ?? []) {
+    const available = Math.max(0, row.ats ?? 0);
+    (map[row.variant_id] ??= []).push({
+      location_id: row.location_id,
+      available,
+    });
+  }
+  return map;
+}
+
 export async function fetchProductsWithStock(
   storeId?: string
 ): Promise<ProductWithStock[]> {
