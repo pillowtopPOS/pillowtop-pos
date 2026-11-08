@@ -30,6 +30,7 @@ import {
   markTransferInTransit,
   finalizeTransfer,
   confirmTransferReceipt,
+  cancelTransfer,
   fetchOverstockSuggestions,
   fetchRestockCandidates,
   fetchRestockGenerationMode,
@@ -83,6 +84,7 @@ export default function TransfersPage() {
   const [restockingStore, setRestockingStore] = useState<string | null>(null);
 
   const [pageError, setPageError] = useState<string | null>(null);
+  const [pageNotice, setPageNotice] = useState<string | null>(null);
 
   const [requestFilter, setRequestFilter] = useState<string>("");
   const [transferFilter, setTransferFilter] = useState<string>("");
@@ -120,6 +122,11 @@ export default function TransfersPage() {
   const [lastConsolidationRun, setLastConsolidationRun] = useState<string | null>(null);
   const [runningConsolidation, setRunningConsolidation] = useState(false);
 
+  const [cancelling, setCancelling] = useState<TransferWithDetails | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [cancelSubmitting, setCancelSubmitting] = useState(false);
+
   const canManage =
     employee?.role === "owner" ||
     employee?.role === "admin" ||
@@ -150,6 +157,7 @@ export default function TransfersPage() {
   }
 
   async function loadAll() {
+    setPageNotice(null);
     const [reqs, trs, os, lastRun] = await Promise.all([
       fetchTransferRequests(),
       fetchTransfers(),
@@ -1016,6 +1024,40 @@ export default function TransfersPage() {
     }
   }
 
+  function openCancelTransfer(t: TransferWithDetails) {
+    setCancelReason("");
+    setCancelError(null);
+    setCancelling(t);
+  }
+
+  async function handleCancelTransfer() {
+    if (!cancelling) return;
+    setCancelSubmitting(true);
+    setCancelError(null);
+    try {
+      const res = await cancelTransfer(cancelling.id, cancelReason);
+      const ref = cancelling.reference_code ?? "Transfer";
+      setCancelling(null);
+      await loadAll();
+      const parts = [`${ref} cancelled.`];
+      if (res.requests_reset > 0) {
+        parts.push(
+          `${res.requests_reset} request${res.requests_reset === 1 ? " is" : "s are"} back to Approved.`
+        );
+      }
+      if (res.committed_released > 0) {
+        parts.push(
+          `${res.committed_released} unit${res.committed_released === 1 ? "" : "s"} of held stock freed.`
+        );
+      }
+      setPageNotice(parts.join(" "));
+    } catch (err: any) {
+      setCancelError(err.message ?? "Failed to cancel transfer");
+    } finally {
+      setCancelSubmitting(false);
+    }
+  }
+
   if (loading) {
     return (
       <main className="min-h-screen bg-slate-50 p-6">
@@ -1028,6 +1070,9 @@ export default function TransfersPage() {
     <main className="min-h-screen bg-slate-50 p-6">
       {pageError && (
         <p key="page-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
+      )}
+      {pageNotice && (
+        <p key="page-notice" role="status" className="mb-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{pageNotice}</p>
       )}
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold text-slate-900">Transfers</h1>
@@ -1313,6 +1358,18 @@ export default function TransfersPage() {
                       <p className="text-xs text-slate-500">
                         {t.scheduled_date} • {t.status.replace("_", " ")}
                       </p>
+                      {t.status === "cancelled" &&
+                        (t.cancelled_by_name || t.cancel_reason) && (
+                          <p className="mt-0.5 text-xs text-slate-500">
+                            {t.cancelled_by_name
+                              ? `Cancelled by ${t.cancelled_by_name}`
+                              : "Cancelled"}
+                            {t.cancelled_at
+                              ? ` on ${new Date(t.cancelled_at).toLocaleDateString()}`
+                              : ""}
+                            {t.cancel_reason ? `. Reason: ${t.cancel_reason}` : ""}
+                          </p>
+                        )}
                     </div>
                     <div className="flex items-center gap-2">
                       {t.line_items.some((l) => l.reported_at) && (
@@ -1323,18 +1380,37 @@ export default function TransfersPage() {
                       {canManage &&
                         t.status === "pending" &&
                         (canApprove ? (
-                          <button
-                            onClick={() => handleMarkInTransit(t)}
-                            className="rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700"
-                          >
-                            Mark in transit
-                          </button>
+                          <>
+                            <button
+                              onClick={() => handleMarkInTransit(t)}
+                              className="rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700"
+                            >
+                              Mark in transit
+                            </button>
+                            <button
+                              onClick={() => openCancelTransfer(t)}
+                              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                            >
+                              Cancel transfer
+                            </button>
+                          </>
                         ) : (
-                          lockedReviewButton(
-                            "Mark in transit",
-                            "Shipping transfers is restricted to warehouse-based employees. An owner, admin, or warehouse team member needs to mark this in transit."
-                          )
+                          <>
+                            {lockedReviewButton(
+                              "Mark in transit",
+                              "Shipping transfers is restricted to warehouse-based employees. An owner, admin, or warehouse team member needs to mark this in transit."
+                            )}
+                            {lockedReviewButton(
+                              "Cancel transfer",
+                              "Cancelling transfers is restricted to warehouse-based employees. An owner, admin, or warehouse team member needs to cancel this transfer."
+                            )}
+                          </>
                         ))}
+                      {canManage && t.status === "in_transit" && canApprove && (
+                        <span className="text-xs text-slate-500">
+                          Already shipped. It cannot be cancelled here.
+                        </span>
+                      )}
                       {canConfirmReceiptFor(t) && (
                         <button
                           onClick={() => openConfirmReceipt(t)}
@@ -1720,6 +1796,53 @@ export default function TransfersPage() {
                 className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
               >
                 {confirmSubmitting ? "Submitting…" : "Submit report"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {cancelling && (
+        <Modal
+          onClose={() => setCancelling(null)}
+          dirty={cancelReason.trim() !== ""}
+          saving={cancelSubmitting}
+        >
+          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+            {cancelError && (
+              <p role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{cancelError}</p>
+            )}
+            <h2 className="mb-4 text-lg font-semibold text-slate-900">
+              Cancel {cancelling.reference_code ?? "transfer"}?
+            </h2>
+            <p className="mb-4 text-sm text-slate-600">
+              This frees the stock held at {cancelling.origin?.name ?? "the origin"} and
+              sends the requests back to Approved so they can be sent again or
+              expedited. Nothing has shipped.
+            </p>
+            <label className="mb-1 block text-sm font-medium text-slate-700">
+              Reason (optional)
+            </label>
+            <textarea
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              rows={2}
+              placeholder="Why is this transfer being cancelled?"
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            />
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                onClick={() => setCancelling(null)}
+                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Keep transfer
+              </button>
+              <button
+                onClick={handleCancelTransfer}
+                disabled={cancelSubmitting}
+                className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {cancelSubmitting ? "Cancelling…" : "Cancel transfer"}
               </button>
             </div>
           </div>
