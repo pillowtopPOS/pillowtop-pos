@@ -1212,6 +1212,14 @@ export default function TransfersPage() {
       let msg = `${ref} received.`;
       if (unitCount > 0) {
         msg += ` ${unitCount} ${unitCount === 1 ? "unit" : "units"} now at ${destName}.`;
+      } else {
+        const totalReceived = Object.values(received).reduce(
+          (sum, qty) => sum + qty,
+          0
+        );
+        if (totalReceived > 0) {
+          msg += ` ${totalReceived} ${totalReceived === 1 ? "unit" : "units"} now at ${destName}.`;
+        }
       }
       if (assignedCount > 0) {
         msg += ` ${assignedCount} assigned to a customer order.`;
