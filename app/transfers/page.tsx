@@ -2426,7 +2426,7 @@ export default function TransfersPage() {
                   </button>
                   {receiveHasPicks(receiving) && (
                     <button
-                      onClick={() => setReceiveStep("counting")}
+                      onClick={() => { setReceiveError(null); setReceiveStep("counting"); }}
                       className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                     >
                       Count the units
@@ -2547,13 +2547,13 @@ export default function TransfersPage() {
                 </div>
                 <div className="mt-6 flex justify-end gap-2">
                   <button
-                    onClick={() => setReceiveStep("entry")}
+                    onClick={() => { setReceiveError(null); setReceiveStep("entry"); }}
                     className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                   >
                     Back
                   </button>
                   <button
-                    onClick={() => setReceiveStep("review")}
+                    onClick={() => { setReceiveError(null); setReceiveStep("review"); }}
                     className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
                   >
                     Review count
@@ -2698,7 +2698,7 @@ export default function TransfersPage() {
                 })()}
                 <div className="mt-6 flex justify-end gap-2">
                   <button
-                    onClick={() => setReceiveStep("counting")}
+                    onClick={() => { setReceiveError(null); setReceiveStep("counting"); }}
                     className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                   >
                     Back to counting
