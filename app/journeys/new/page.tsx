@@ -97,7 +97,8 @@ export default function NewJourneyPage() {
   const [locationStock, setLocationStock] = useState<Record<string, LocationAvailability[]>>({});
   const [inTransitArrivals, setInTransitArrivals] = useState<Record<string, Record<string, number>>>({});
   const [stockLoaded, setStockLoaded] = useState(false);
-  const [showOthers, setShowOthers] = useState<Record<string, boolean>>({});
+  const [otherStoresItemId, setOtherStoresItemId] = useState<string | null>(null);
+  const [otherStoresQuery, setOtherStoresQuery] = useState("");
   const [quoteNotes, setQuoteNotes] = useState("");
   const [purchase, setPurchase] = useState({
     paymentAmount: "",
@@ -442,20 +443,24 @@ export default function NewJourneyPage() {
     return !!loc && loc.location_type !== "STORE";
   }
 
-  // Default view: the order's store, every warehouse, and the line's
-  // selected pickup location. Everything else with stock sits behind the
-  // "Show other stores" link. Returns the main line plus the hidden list.
-  function locationAvailability(item: LineItem): {
-    line: string;
-    others: string[];
-  } {
-    const empty = { line: "", others: [] as string[] };
-    if (!item.product_id) return empty;
-    if (!stockLoaded) return { line: "Loading…", others: [] };
+  type StockRow = {
+    id: string;
+    name: string;
+    available: number;
+    arriving: number;
+  };
+
+  // Stock breakdown for one line: warehouses always, the pickup store for
+  // pickup lines, and every other stocked location sorted for the modal.
+  function stockBreakdown(item: LineItem): {
+    warehouses: StockRow[];
+    pickup: StockRow | null;
+    others: StockRow[];
+  } | null {
+    if (!item.product_id || !stockLoaded) return null;
 
     const stock = locationStock[item.product_id] ?? [];
     const arrivals = inTransitArrivals[item.product_id] ?? {};
-    const pickupId = linePickupLocationId(item);
     const byLocation = new Map<string, number>();
     for (const row of stock) {
       byLocation.set(
@@ -463,59 +468,76 @@ export default function NewJourneyPage() {
         (byLocation.get(row.location_id) ?? 0) + row.available
       );
     }
+    const visible = stores.filter(
+      (s) => s.location_type !== "WAREHOUSE_QUARANTINE"
+    );
+    const toRow = (s: Store): StockRow => ({
+      id: s.id,
+      name: s.name,
+      available: byLocation.get(s.id) ?? 0,
+      arriving: arrivals[s.id] ?? 0,
+    });
 
-    const defaultIds = new Set<string>([storeId, pickupId]);
-    for (const s of stores) {
-      if (s.location_type === "WAREHOUSE") defaultIds.add(s.id);
-    }
+    const warehouses = visible
+      .filter((s) => s.location_type === "WAREHOUSE")
+      .map(toRow);
+    const isPickup =
+      (item.fulfillment_type_override ?? fulfillmentType) === "pickup";
+    const pickupId = linePickupLocationId(item);
+    const pickup = isPickup
+      ? visible.map(toRow).find((r) => r.id === pickupId) ?? null
+      : null;
 
-    const main: string[] = [];
-    const others: string[] = [];
-    let anyAvailable = false;
-    let anyArriving = false;
-    for (const s of stores) {
-      if (s.location_type === "WAREHOUSE_QUARANTINE") continue;
-      const available = byLocation.get(s.id) ?? 0;
-      const arriving = arrivals[s.id] ?? 0;
-      if (available > 0) anyAvailable = true;
-      if (arriving > 0) anyArriving = true;
-      const entry = `${s.name} ${available}${arriving > 0 ? `, ${arriving} arriving` : ""}`;
-      if (defaultIds.has(s.id)) {
-        main.push(entry);
-      } else if (available > 0 || arriving > 0) {
-        others.push(entry);
-      }
-    }
+    const shownIds = new Set<string>(warehouses.map((w) => w.id));
+    if (pickup) shownIds.add(pickup.id);
+    const others = visible
+      .filter((s) => !shownIds.has(s.id))
+      .map(toRow)
+      .filter((r) => r.available > 0 || r.arriving > 0)
+      .sort(
+        (a, b) => b.available - a.available || a.name.localeCompare(b.name)
+      );
 
-    if (!anyAvailable && !anyArriving) {
-      return { line: "Not in stock at any location.", others: [] };
-    }
-    return { line: main.join(" · "), others };
+    return { warehouses, pickup, others };
   }
 
-  function renderAvailability(item: LineItem) {
-    const { line, others } = locationAvailability(item);
-    const expanded = showOthers[item.id] ?? false;
+  function stockCountText(r: StockRow): string {
+    return `${r.available}${r.arriving > 0 ? `, ${r.arriving} arriving` : ""}`;
+  }
+
+  function renderStockBlock(item: LineItem) {
+    const bd = stockBreakdown(item);
+    if (!bd) {
+      return <div className="mt-2 text-xs text-slate-500">Loading…</div>;
+    }
+    const isPickup =
+      (item.fulfillment_type_override ?? fulfillmentType) === "pickup";
     return (
-      <>
-        <div className="mt-1 text-xs text-slate-500">{line}</div>
-        {others.length > 0 && (
-          <button
-            type="button"
-            onClick={() =>
-              setShowOthers((prev) => ({ ...prev, [item.id]: !expanded }))
-            }
-            className="mt-0.5 text-xs text-brand-700 hover:underline"
-          >
-            {expanded ? "Hide other stores" : `Show other stores (${others.length})`}
-          </button>
-        )}
-        {expanded && others.length > 0 && (
-          <div className="mt-0.5 text-xs text-slate-500">
-            {others.join(" · ")}
+      <div className="mt-2 space-y-0.5 text-xs text-slate-500">
+        {bd.warehouses.length > 0 && (
+          <div>
+            Warehouse:{" "}
+            {bd.warehouses.map((w) => `${w.name} ${stockCountText(w)}`).join(" · ")}
           </div>
         )}
-      </>
+        {isPickup && bd.pickup && (
+          <div>
+            Pickup store: {bd.pickup.name} {stockCountText(bd.pickup)}
+          </div>
+        )}
+        {bd.others.length > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              setOtherStoresQuery("");
+              setOtherStoresItemId(item.id);
+            }}
+            className="text-brand-700 hover:underline"
+          >
+            Check other stores ({bd.others.length})
+          </button>
+        )}
+      </div>
     );
   }
 
@@ -731,92 +753,102 @@ export default function NewJourneyPage() {
 
             {lineItems.length > 0 && (
               <div className="space-y-2">
-                {lineItems.map((item) => (
-                  <div
-                    key={item.id}
-                    className="grid grid-cols-12 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-2 text-sm"
-                  >
-                    <div className="col-span-5 min-w-0 text-slate-900">
-                      <div className="truncate">{item.item_name}</div>
-                      <select
-                        value={item.fulfillment_type_override ?? "inherit"}
-                        onChange={(e) =>
-                          updateLineItem(item.id, {
-                            fulfillment_type_override:
-                              e.target.value === "inherit"
-                                ? null
-                                : (e.target.value as "delivery" | "pickup"),
-                            pickup_location_id:
-                              e.target.value === "pickup"
-                                ? item.pickup_location_id ?? storeId
-                                : null,
-                          })
-                        }
-                        className="mt-1 w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs"
-                      >
-                        <option value="inherit">Inherit Journey ({fulfillmentType})</option>
-                        <option value="delivery" disabled={!hasDeliveryAddress}>Delivery</option>
-                        <option value="pickup">Pickup</option>
-                      </select>
-                      {(item.fulfillment_type_override ?? fulfillmentType) === "pickup" && (
-                        <select
-                          value={item.pickup_location_id ?? storeId}
-                          onChange={(e) =>
-                            updateLineItem(item.id, { pickup_location_id: e.target.value })
-                          }
-                          className="mt-1 w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs"
-                        >
-                          {stores
-                            .filter((s) => s.location_type !== "WAREHOUSE_QUARANTINE")
-                            .map((s) => (
-                              <option key={s.id} value={s.id}>{s.name}</option>
-                            ))}
-                        </select>
-                      )}
+                {lineItems.map((item) => {
+                  const isPickupLine =
+                    (item.fulfillment_type_override ?? fulfillmentType) === "pickup";
+                  return (
+                    <div
+                      key={item.id}
+                      className="rounded-md border border-slate-200 bg-slate-50 p-2 text-sm"
+                    >
+                      <div className="mb-1 min-w-0 text-slate-900">
+                        <div className="truncate">{item.item_name}</div>
+                      </div>
+                      <div className="grid grid-cols-12 items-start gap-2">
+                        <div className="col-span-3 min-w-0">
+                          <select
+                            value={item.fulfillment_type_override ?? "inherit"}
+                            onChange={(e) =>
+                              updateLineItem(item.id, {
+                                fulfillment_type_override:
+                                  e.target.value === "inherit"
+                                    ? null
+                                    : (e.target.value as "delivery" | "pickup"),
+                                pickup_location_id:
+                                  e.target.value === "pickup"
+                                    ? item.pickup_location_id ?? storeId
+                                    : null,
+                              })
+                            }
+                            className="w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs"
+                          >
+                            <option value="inherit">Inherit Journey ({fulfillmentType})</option>
+                            <option value="delivery" disabled={!hasDeliveryAddress}>Delivery</option>
+                            <option value="pickup">Pickup</option>
+                          </select>
+                        </div>
+                        <div className="col-span-3 min-w-0">
+                          {isPickupLine && (
+                            <select
+                              value={item.pickup_location_id ?? storeId}
+                              onChange={(e) =>
+                                updateLineItem(item.id, { pickup_location_id: e.target.value })
+                              }
+                              className="w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs"
+                            >
+                              {stores
+                                .filter((s) => s.location_type !== "WAREHOUSE_QUARANTINE")
+                                .map((s) => (
+                                  <option key={s.id} value={s.id}>{s.name}</option>
+                                ))}
+                            </select>
+                          )}
+                        </div>
+                        <div className="col-span-1">
+                          <input
+                            type="number"
+                            min={1}
+                            value={item.quantity}
+                            onChange={(e) =>
+                              updateLineItem(item.id, { quantity: Math.max(1, parseInt(e.target.value) || 1) })
+                            }
+                            className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm text-center focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                          />
+                        </div>
+                        <div className="col-span-2">
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={item.unit_price.toFixed(2)}
+                            onChange={(e) =>
+                              updateLineItem(item.id, { unit_price: parseFloat(e.target.value) || 0 })
+                            }
+                            className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                          />
+                        </div>
+                        <div className="col-span-2 text-right text-slate-600">
+                          ${(item.quantity * item.unit_price).toFixed(2)}
+                        </div>
+                        <div className="col-span-1 flex justify-end">
+                          <button
+                            onClick={() => removeLineItem(item.id)}
+                            className="rounded p-1 text-slate-400 hover:bg-red-100 hover:text-red-600"
+                            aria-label="Remove"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
                       {pickupIsWarehouse(item) && (
-                        <div className="mt-1 text-xs text-amber-700">
+                        <div className="mt-2 text-xs text-amber-700">
                           Pickup is set to the warehouse. The customer will collect it there, no transfer will be made.
                         </div>
                       )}
-                      {item.product_id && renderAvailability(item)}
+                      {item.product_id && renderStockBlock(item)}
                     </div>
-                    <div className="col-span-2">
-                      <input
-                        type="number"
-                        min={1}
-                        value={item.quantity}
-                        onChange={(e) =>
-                          updateLineItem(item.id, { quantity: Math.max(1, parseInt(e.target.value) || 1) })
-                        }
-                        className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm text-center focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                      />
-                    </div>
-                    <div className="col-span-3">
-                      <input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={item.unit_price.toFixed(2)}
-                        onChange={(e) =>
-                          updateLineItem(item.id, { unit_price: parseFloat(e.target.value) || 0 })
-                        }
-                        className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                      />
-                    </div>
-                    <div className="col-span-1 text-right text-slate-600">
-                      ${(item.quantity * item.unit_price).toFixed(2)}
-                    </div>
-                    <div className="col-span-1 flex justify-end">
-                      <button
-                        onClick={() => removeLineItem(item.id)}
-                        className="rounded p-1 text-slate-400 hover:bg-red-100 hover:text-red-600"
-                        aria-label="Remove"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
                 <div className="flex justify-end border-t border-slate-200 pt-2 text-sm font-semibold text-slate-900">
                   Total: ${total.toFixed(2)}
                 </div>
@@ -997,6 +1029,63 @@ export default function NewJourneyPage() {
           </div>
         )}
       </div>
+
+      {otherStoresItemId && (() => {
+        const item = lineItems.find((i) => i.id === otherStoresItemId);
+        if (!item) return null;
+        const bd = stockBreakdown(item);
+        const q = otherStoresQuery.trim().toLowerCase();
+        const rows = (bd?.others ?? []).filter((r) =>
+          r.name.toLowerCase().includes(q)
+        );
+        return (
+          <Modal
+            onClose={() => {
+              setOtherStoresItemId(null);
+              setOtherStoresQuery("");
+            }}
+          >
+            <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+              <h2 className="mb-4 text-lg font-semibold text-slate-900">
+                {item.item_name}
+              </h2>
+              {(bd?.others.length ?? 0) > 8 && (
+                <input
+                  value={otherStoresQuery}
+                  onChange={(e) => setOtherStoresQuery(e.target.value)}
+                  placeholder="Filter stores"
+                  className="mb-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                />
+              )}
+              <div className="max-h-80 space-y-1 overflow-y-auto">
+                {rows.map((r) => (
+                  <div
+                    key={r.id}
+                    className="flex items-center justify-between text-sm"
+                  >
+                    <span className="text-slate-700">{r.name}</span>
+                    <span className="text-slate-500">{stockCountText(r)}</span>
+                  </div>
+                ))}
+                {rows.length === 0 && (
+                  <p className="text-sm text-slate-500">No matching stores.</p>
+                )}
+              </div>
+              <div className="mt-4 flex justify-end">
+                <button
+                  onClick={() => {
+                    setOtherStoresItemId(null);
+                    setOtherStoresQuery("");
+                  }}
+                  className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {pendingOverpayment && (
         <Modal onClose={cancelOverpayment} saving={saving}>
