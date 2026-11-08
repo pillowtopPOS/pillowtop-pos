@@ -1042,7 +1042,7 @@ export default function TransfersPage() {
       const parts = [`${ref} cancelled.`];
       if (res.requests_reset > 0) {
         parts.push(
-          `${res.requests_reset} request${res.requests_reset === 1 ? " is" : "s are"} back to Approved.`
+          `${res.requests_reset} request${res.requests_reset === 1 ? "" : "s"} released from this transfer. Check the Requests tab for their current status.`
         );
       }
       if (res.committed_released > 0) {
@@ -1816,9 +1816,10 @@ export default function TransfersPage() {
               Cancel {cancelling.reference_code ?? "transfer"}?
             </h2>
             <p className="mb-4 text-sm text-slate-600">
-              This frees the stock held at {cancelling.origin?.name ?? "the origin"} and
-              sends the requests back to Approved so they can be sent again or
-              expedited. Nothing has shipped.
+              This frees the stock held at {cancelling.origin?.name ?? "the origin"}.
+              Requests on this transfer are released so they can be sent
+              again. Requests for orders that were already cancelled are
+              closed. Nothing has shipped.
             </p>
             <label className="mb-1 block text-sm font-medium text-slate-700">
               Reason (optional)
