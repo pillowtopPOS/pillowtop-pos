@@ -95,12 +95,36 @@ export async function setTruckDateState(
   if (error) throw error;
 }
 
+/** Set the absolute extra-slots value for one date (0 removes the row).
+ *  The RPC enforces delivery.manage_calendar; errors are thrown. */
+export async function setDayExtraSlots(
+  date: string,
+  extraSlots: number
+): Promise<void> {
+  const supabase = createClient();
+  const { error } = await (supabase as any).rpc("set_day_extra_slots", {
+    p_date: date,
+    p_extra_slots: extraSlots,
+  });
+  if (error) throw error;
+}
+
 /** Whether the signed-in employee may manage trucks / the calendar.
  *  False on error — the UI simply hides editing affordances. */
 export async function fetchDeliveryManageTrucks(): Promise<boolean> {
   const supabase = createClient();
   const { data, error } = await supabase.rpc("has_permission", {
     p_key: "delivery.manage_trucks",
+  });
+  if (error) return false;
+  return data === true;
+}
+
+/** Whether the signed-in employee may adjust per-day extra slots. */
+export async function fetchDeliveryManageCalendar(): Promise<boolean> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("has_permission", {
+    p_key: "delivery.manage_calendar",
   });
   if (error) return false;
   return data === true;

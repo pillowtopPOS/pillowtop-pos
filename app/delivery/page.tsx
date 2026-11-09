@@ -8,7 +8,9 @@ import {
   fetchDeliveryCalendar,
   fetchDeliveryBusinessToday,
   fetchDeliveryManageTrucks,
+  fetchDeliveryManageCalendar,
   setTruckDateState,
+  setDayExtraSlots,
   type DeliveryCalendar,
   type DeliveryCalendarDay,
   type DeliveryTruckDay,
@@ -124,9 +126,11 @@ export default function DeliveryPage() {
   const [calendar, setCalendar] = useState<DeliveryCalendar | null>(null);
   const [weekStart, setWeekStart] = useState<string | null>(null);
   const [canManageTrucks, setCanManageTrucks] = useState(false);
+  const [canManageCalendar, setCanManageCalendar] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savingCells, setSavingCells] = useState<Set<string>>(new Set());
+  const [savingDays, setSavingDays] = useState<Set<string>>(new Set());
   const [cellError, setCellError] = useState<string | null>(null);
   const weekStartRef = useRef<string | null>(null);
 
@@ -157,16 +161,18 @@ export default function DeliveryPage() {
       const start = mondayOf(today);
       weekStartRef.current = start;
       setWeekStart(start);
-      const [cal, canManage] = await Promise.all([
+      const [cal, canManageTrucksPerm, canManageCalendarPerm] = await Promise.all([
         fetchDeliveryCalendar(start, addDays(start, 6)).catch(() => null),
         fetchDeliveryManageTrucks(),
+        fetchDeliveryManageCalendar(),
       ]);
       if (cal === null) {
         setError("We couldn't load the delivery calendar. Please try again.");
       } else {
         setCalendar(cal);
       }
-      setCanManageTrucks(canManage);
+      setCanManageTrucks(canManageTrucksPerm);
+      setCanManageCalendar(canManageCalendarPerm);
       setLoading(false);
     });
   }, [router]);
@@ -204,6 +210,29 @@ export default function DeliveryPage() {
       setSavingCells((prev) => {
         const next = new Set(prev);
         next.delete(key);
+        return next;
+      });
+    }
+  };
+
+  // +/- extra slots for one day. Sends the new ABSOLUTE value; refetches
+  // whatever week is on screen now so a mid-save week change can't paint
+  // stale data onto the wrong week.
+  const adjustDay = async (iso: string, newExtra: number) => {
+    if (!canManageCalendar) return;
+    if (savingDays.has(iso)) return;
+    setCellError(null);
+    setSavingDays((prev) => new Set(prev).add(iso));
+    try {
+      await setDayExtraSlots(iso, newExtra);
+      const current = weekStartRef.current;
+      if (current) await load(current);
+    } catch {
+      setCellError("Couldn't update that day. Please try again.");
+    } finally {
+      setSavingDays((prev) => {
+        const next = new Set(prev);
+        next.delete(iso);
         return next;
       });
     }
@@ -316,13 +345,41 @@ export default function DeliveryPage() {
                         {l.month} {l.dayNum}
                       </div>
                       {d && (
-                        <div className="mt-0.5 text-xs font-normal text-slate-500">
-                          {d.capacity} stop{d.capacity === 1 ? "" : "s"}, {d.booked_count} booked
+                        <div className="mt-0.5 space-y-0.5">
+                          <div className="text-xs font-normal text-slate-500">
+                            {d.booked_count} of {d.capacity} booked
+                          </div>
                           {d.extra_slots !== 0 && (
-                            <span className={d.extra_slots > 0 ? "text-emerald-600" : "text-red-600"}>
-                              {" "}({d.extra_slots > 0 ? "+" : ""}
-                              {d.extra_slots})
-                            </span>
+                            <div className="text-[11px] font-normal text-slate-400">
+                              includes {d.extra_slots > 0 ? "+" : ""}
+                              {d.extra_slots} extra
+                            </div>
+                          )}
+                          {canManageCalendar && (
+                            <div className="flex items-center justify-center gap-1 pt-0.5">
+                              <button
+                                type="button"
+                                disabled={savingDays.has(iso) || d.capacity <= 0}
+                                onClick={() => adjustDay(iso, d.extra_slots - 1)}
+                                title="Remove one delivery spot for this day"
+                                className="flex h-6 w-6 items-center justify-center rounded border border-slate-300 text-xs text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                −
+                              </button>
+                              <span className="w-7 text-center text-[11px] text-slate-500">
+                                {d.extra_slots > 0 ? "+" : ""}
+                                {d.extra_slots}
+                              </span>
+                              <button
+                                type="button"
+                                disabled={savingDays.has(iso)}
+                                onClick={() => adjustDay(iso, d.extra_slots + 1)}
+                                title="Add one delivery spot for this day"
+                                className="flex h-6 w-6 items-center justify-center rounded border border-slate-300 text-xs text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                +
+                              </button>
+                            </div>
                           )}
                         </div>
                       )}
@@ -369,7 +426,8 @@ export default function DeliveryPage() {
             <span className="inline-block h-2 w-2 rounded-full bg-amber-500" />
             Amber dot = this day differs from the truck&apos;s usual weekly
             pattern.
-            {!canManageTrucks && " Only managers can change the delivery calendar."}
+            {!canManageTrucks && !canManageCalendar &&
+              " Only managers can change the delivery calendar."}
           </p>
         </div>
       )}
