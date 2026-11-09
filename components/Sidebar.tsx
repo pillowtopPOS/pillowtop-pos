@@ -8,6 +8,7 @@ import {
   Calendar,
   Package,
   Lightbulb,
+  Truck,
   ChevronLeft,
   ChevronRight,
   Store as StoreIcon,
@@ -33,6 +34,7 @@ const NAV = [
   { href: "/my-work", label: "My Work", icon: Calendar },
   { href: "/inventory", label: "Inventory", icon: Package },
   { href: "/opportunities", label: "Opportunities", icon: Lightbulb },
+  { href: "/delivery", label: "Delivery", icon: Truck },
 ];
 
 export default function Sidebar({

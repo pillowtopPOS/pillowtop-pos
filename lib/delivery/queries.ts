@@ -1,0 +1,90 @@
+import { createClient } from "@/lib/supabase/client";
+import { fetchCurrentEmployee } from "@/lib/journeys/queries";
+
+export type DeliveryTruckDay = {
+  truck_id: string;
+  name: string;
+  home_location_id: string | null;
+  home_location_name: string | null;
+  home_location_type: string | null;
+  on: boolean;
+  source: "pattern" | "exception" | string;
+  stop_cap: number;
+};
+
+export type DeliveryCalendarDay = {
+  date: string;
+  extra_slots: number;
+  capacity: number;
+  booked_count: number;
+  trucks: DeliveryTruckDay[];
+};
+
+export type DeliveryTruckInfo = {
+  id: string;
+  name: string;
+  home_location_id: string | null;
+  home_location_name: string | null;
+  default_stop_cap: number;
+  weekly_pattern: number[];
+  sort_order: number;
+};
+
+export type DeliverySettings = {
+  delivery_limit_type: "stops" | "time" | "both" | string;
+  delivery_window_hours: number;
+  delivery_day_mode: "window" | "day_only" | string;
+  delivery_day_start: string;
+  delivery_day_end: string;
+};
+
+export type DeliveryCalendar = {
+  settings: DeliverySettings | null;
+  trucks: DeliveryTruckInfo[];
+  days: DeliveryCalendarDay[];
+};
+
+/** One call returns settings, the truck list, and every day in the range. */
+export async function fetchDeliveryCalendar(
+  startDate: string,
+  endDate: string
+): Promise<DeliveryCalendar> {
+  const supabase = createClient();
+  const { data, error } = await (supabase as any).rpc("get_delivery_calendar", {
+    p_start_date: startDate,
+    p_end_date: endDate,
+  });
+  if (error) throw error;
+  const cal = data as DeliveryCalendar | null;
+  return {
+    settings: cal?.settings ?? null,
+    trucks: cal?.trucks ?? [],
+    days: cal?.days ?? [],
+  };
+}
+
+/** The caller's business "today" in their home store's timezone
+ *  (stores.timezone -> companies.business_timezone), same source the
+ *  rest of the app uses. Returns null when unavailable — callers fall
+ *  back to the browser date. */
+export async function fetchDeliveryBusinessToday(): Promise<string | null> {
+  const employee = await fetchCurrentEmployee();
+  if (!employee?.home_store_id) return null;
+  const supabase = createClient();
+  const { data, error } = await (supabase as any).rpc("business_today", {
+    p_store_id: employee.home_store_id,
+  });
+  if (error) return null;
+  return (data as string | null) ?? null;
+}
+
+/** Whether the signed-in employee may manage trucks / the calendar.
+ *  False on error — the UI simply hides editing affordances. */
+export async function fetchDeliveryManageTrucks(): Promise<boolean> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("has_permission", {
+    p_key: "delivery.manage_trucks",
+  });
+  if (error) return false;
+  return data === true;
+}
