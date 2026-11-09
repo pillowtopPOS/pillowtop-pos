@@ -36,6 +36,11 @@
 --     computes shortfall = 0 and no request is ever created; a genuinely
 --     uncovered order still gets exactly one request with correct
 --     quantity and hold, in the same transaction.
+--     Its column list includes quantity_reserved because the old
+--     trg_jir_units_observer used to re-sync on reserved-only changes
+--     (its column list was status, quantity_reserved, quantity_required):
+--     without it, a partial reservation that leaves status 'pending'
+--     would never shrink an existing request's held quantity.
 --
 -- The reconcile body below is the 117_transfer_receive_units.sql body
 -- verbatim except: the signature gains p_sync, and the
@@ -258,7 +263,7 @@ revoke execute on function public.observe_requirement_units() from public, anon;
 drop trigger if exists trg_jm_requirement_sync on public.journey_inventory_requirements;
 
 create constraint trigger trg_jm_requirement_sync
-  after insert or update of quantity_required, location_id, status
+  after insert or update of quantity_required, quantity_reserved, location_id, status
   on public.journey_inventory_requirements
   deferrable initially deferred
   for each row execute function public.jm_requirement_sync();

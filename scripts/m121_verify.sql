@@ -19,6 +19,29 @@ begin
   perform pg_temp.chk('is deferrable', v.tgdeferrable);
   perform pg_temp.chk('initially deferred', v.tginitdeferred);
 
+  -- UPDATE OF column list must include all four columns; quantity_reserved
+  -- is required so a reserved-only change still re-syncs the request hold.
+  perform pg_temp.chk('sync trigger covers quantity_required',
+    exists (select 1 from pg_attribute a
+      where a.attrelid = 'public.journey_inventory_requirements'::regclass
+        and a.attname = 'quantity_required'
+        and a.attnum = any (v.tgattr)));
+  perform pg_temp.chk('sync trigger covers quantity_reserved',
+    exists (select 1 from pg_attribute a
+      where a.attrelid = 'public.journey_inventory_requirements'::regclass
+        and a.attname = 'quantity_reserved'
+        and a.attnum = any (v.tgattr)));
+  perform pg_temp.chk('sync trigger covers location_id',
+    exists (select 1 from pg_attribute a
+      where a.attrelid = 'public.journey_inventory_requirements'::regclass
+        and a.attname = 'location_id'
+        and a.attnum = any (v.tgattr)));
+  perform pg_temp.chk('sync trigger covers status',
+    exists (select 1 from pg_attribute a
+      where a.attrelid = 'public.journey_inventory_requirements'::regclass
+        and a.attname = 'status'
+        and a.attnum = any (v.tgattr)));
+
   select * into v from pg_trigger
   where tgname = 'trg_jir_units_observer'
     and tgrelid = 'public.journey_inventory_requirements'::regclass;
@@ -58,3 +81,6 @@ end $$;
 -- T7 receive_purchase_order_line regression: returned assignments match
 --    pre-m121 behavior (units visible in v_assignments before commit).
 -- T8 journey deleted before commit: no error.
+-- T9 over-hold regression: order needs 3, uncovered, request held 3;
+--    a later evaluate reserves 1 locally (status stays 'pending').
+--    The reserved-only update must re-sync at commit so held drops to 2.
