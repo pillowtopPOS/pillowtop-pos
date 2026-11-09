@@ -150,9 +150,11 @@ export default function MyWorkPage() {
                           {r.journey_number}
                         </span>
                       )}
-                      <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-normal text-emerald-700">
-                        Stock ready
-                      </span>
+                      {r.ready_after_wait_at && (
+                        <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-normal text-emerald-700">
+                          Stock ready
+                        </span>
+                      )}
                     </p>
                     <p className="mt-1 text-xs text-slate-600">
                       {r.ready_at
