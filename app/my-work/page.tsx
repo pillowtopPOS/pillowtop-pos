@@ -13,20 +13,6 @@ export default function MyWorkPage() {
   const [items, setItems] = useState<MyWorkItem[]>([]);
   const [showAllStores, setShowAllStores] = useState(false);
 
-  // Remember the toggle per browser; storage may be blocked, so every
-  // access is wrapped. Default stays OFF until the user turns it on.
-  useEffect(() => {
-    try {
-      if (window.localStorage.getItem("my-work-show-all-stores") === "1") {
-        setShowAllStores(true);
-        load(true);
-      }
-    } catch {
-      // storage unavailable — keep the default
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const [pageError, setPageError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -37,7 +23,18 @@ export default function MyWorkPage() {
         router.push("/login");
         return;
       }
-      load();
+      // Read the saved "Show all stores" choice BEFORE the first fetch so
+      // the initial load already uses it — no fetch-then-swap jump.
+      // Storage may be blocked; every access is wrapped.
+      let allStores = false;
+      try {
+        allStores =
+          window.localStorage.getItem("my-work-show-all-stores") === "1";
+      } catch {
+        // storage unavailable — keep the default
+      }
+      setShowAllStores(allStores);
+      load(allStores);
     });
   }, [router]);
 
