@@ -336,6 +336,21 @@ export async function fetchTransferConsolidationLastRun(): Promise<string | null
 
 // Expedite: convert one approved, unconsolidated request into a real transfer
 // for a chosen scheduled date, ignoring the destination store's schedule day.
+// The store's local business date (stores.timezone -> companies.
+// business_timezone), used to prefill/bound the Expedite date picker so
+// the browser's own timezone can't disagree with the server's check.
+export async function fetchBusinessToday(
+  locationId: string | null
+): Promise<string | null> {
+  if (!locationId) return null;
+  const supabase = createClient();
+  const { data, error } = await (supabase as any).rpc("business_today", {
+    p_store_id: locationId,
+  });
+  if (error) return null;
+  return (data as string | null) ?? null;
+}
+
 export async function expediteTransferRequest(requestId: string, scheduledDate: string) {
   const supabase = createClient();
   const employee = await fetchCurrentEmployee();

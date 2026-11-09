@@ -25,6 +25,7 @@ import {
   updateTransferRequestQuantity,
   expediteTransferRequest,
   expediteTransferRequestGroup,
+  fetchBusinessToday,
   runTransferConsolidationNow,
   fetchTransferConsolidationLastRun,
   markTransferInTransit,
@@ -116,6 +117,7 @@ export default function TransfersPage() {
   const [expeditingId, setExpeditingId] = useState<string | null>(null);
   const [expeditingGroupId, setExpeditingGroupId] = useState<string | null>(null);
   const [expediteDate, setExpediteDate] = useState("");
+  const [expediteToday, setExpediteToday] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [editingQtyId, setEditingQtyId] = useState<string | null>(null);
   const [editingQtyValue, setEditingQtyValue] = useState("");
@@ -569,14 +571,33 @@ export default function TransfersPage() {
   // Expedite: turn an approved request (or a whole request group) into a
   // shippable transfer for a chosen date, skipping the destination store's
   // schedule day.
+  // Prefill with the destination store's business today (m120), not the
+  // browser's local date — they disagree every evening.
+  function openExpedite(destinationLocationId: string | null, apply: () => void) {
+    const fallback = localTodayISO();
+    setExpediteDate(fallback);
+    setExpediteToday(fallback);
+    fetchBusinessToday(destinationLocationId).then((today) => {
+      if (today) {
+        setExpediteToday(today);
+        setExpediteDate((d) => (d === fallback ? today : d));
+      }
+    });
+    apply();
+  }
+
   function handleExpedite(requestId: string) {
-    setExpediteDate(localTodayISO());
-    setExpeditingId(requestId);
+    const r = requests.find((x) => x.id === requestId);
+    openExpedite(r?.destination_location_id ?? null, () =>
+      setExpeditingId(requestId)
+    );
   }
 
   function handleExpediteGroup(groupId: string) {
-    setExpediteDate(localTodayISO());
-    setExpeditingGroupId(groupId);
+    const member = requests.find((x) => x.request_group_id === groupId);
+    openExpedite(member?.destination_location_id ?? null, () =>
+      setExpeditingGroupId(groupId)
+    );
   }
 
   async function confirmExpedite() {
@@ -2945,7 +2966,7 @@ export default function TransfersPage() {
             setExpeditingId(null);
             setExpeditingGroupId(null);
           }}
-          dirty={expediteDate !== localTodayISO()}
+          dirty={expediteDate !== (expediteToday || localTodayISO())}
           saving={expediteSubmitting}
         >
           <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
@@ -2964,7 +2985,7 @@ export default function TransfersPage() {
             <input
               type="date"
               value={expediteDate}
-              min={localTodayISO()}
+              min={expediteToday || localTodayISO()}
               onChange={(e) => setExpediteDate(e.target.value)}
               className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
             />
