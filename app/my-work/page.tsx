@@ -145,15 +145,21 @@ export default function MyWorkPage() {
                     <p className="text-sm font-medium text-slate-900">
                       Ready to schedule:{" "}
                       {r.customer_name ?? "Unknown customer"}
+                      {r.journey_number && (
+                        <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-normal text-slate-600">
+                          {r.journey_number}
+                        </span>
+                      )}
                       <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-normal text-emerald-700">
                         Stock ready
                       </span>
                     </p>
                     <p className="mt-1 text-xs text-slate-600">
-                      Stock arrived{" "}
-                      {formatDistanceToNow(new Date(r.ready_after_wait_at), {
-                        addSuffix: true,
-                      })}
+                      {r.ready_at
+                        ? `Ready ${formatDistanceToNow(new Date(r.ready_at), {
+                            addSuffix: true,
+                          })}`
+                        : "Ready"}
                       {r.store_name ? ` at ${r.store_name}` : ""}
                       {r.item_summary ? ` · ${r.item_summary}` : ""}
                       {r.assigned_employee_name

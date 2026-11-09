@@ -1266,9 +1266,11 @@ export type PendingApproval = {
 
 export type ReadyJourney = {
   journey_id: string;
+  journey_number: string | null;
   customer_name: string | null;
   store_name: string | null;
-  ready_after_wait_at: string;
+  ready_after_wait_at: string | null;
+  ready_at: string | null;
   assigned_employee_name: string | null;
   item_summary: string | null;
 };
@@ -1390,7 +1392,7 @@ export async function fetchMyWork(): Promise<MyWorkItem[]> {
               : 3;
   const sortKey = (i: MyWorkItem) =>
     i.kind === "ready_for_scheduling"
-      ? i.data.ready_after_wait_at
+      ? (i.data.ready_at ?? i.data.ready_after_wait_at ?? i.data.journey_id)
       : i.kind === "follow_up"
         ? i.data.due_at
         : i.kind === "approval"
