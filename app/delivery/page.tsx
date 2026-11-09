@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -8,6 +8,7 @@ import {
   fetchDeliveryCalendar,
   fetchDeliveryBusinessToday,
   fetchDeliveryManageTrucks,
+  setTruckDateState,
   type DeliveryCalendar,
   type DeliveryCalendarDay,
   type DeliveryTruckDay,
@@ -65,16 +66,45 @@ function rangeLabel(startIso: string, endIso: string): string {
   return `${sPart} to ${ePart}, ${e.getUTCFullYear()}`;
 }
 
-function Cell({ truck, day }: { truck: DeliveryTruckInfo; day?: DeliveryCalendarDay }) {
+function Cell({
+  truck,
+  iso,
+  day,
+  canManage,
+  saving,
+  onToggle,
+}: {
+  truck: DeliveryTruckInfo;
+  iso: string;
+  day?: DeliveryCalendarDay;
+  canManage: boolean;
+  saving: boolean;
+  onToggle: (truckId: string, iso: string, entry: DeliveryTruckDay) => void;
+}) {
   const entry: DeliveryTruckDay | undefined = day?.trucks.find(
     (t) => t.truck_id === truck.id
   );
   if (!entry) {
     return <td className="border border-slate-200 px-3 py-2 text-center text-slate-300">—</td>;
   }
+  const tooltip = entry.source === "exception"
+    ? "Click to go back to the usual schedule"
+    : entry.on
+      ? "Click to turn off for this day"
+      : "Click to turn on for this day";
   return (
-    <td className="border border-slate-200 px-3 py-2 text-center">
-      <span className="inline-flex items-center gap-1.5">
+    <td className="border border-slate-200 p-0 text-center">
+      <button
+        type="button"
+        disabled={!canManage || saving}
+        title={canManage ? tooltip : undefined}
+        onClick={() => onToggle(truck.id, iso, entry)}
+        className={`flex w-full items-center justify-center gap-1.5 px-3 py-2 ${
+          canManage
+            ? "cursor-pointer hover:bg-slate-100"
+            : "cursor-default"
+        } ${saving ? "opacity-50" : ""}`}
+      >
         {entry.source === "exception" && (
           <span
             className="inline-block h-2 w-2 rounded-full bg-amber-500"
@@ -84,7 +114,7 @@ function Cell({ truck, day }: { truck: DeliveryTruckInfo; day?: DeliveryCalendar
         <span className={entry.on ? "font-medium text-slate-800" : "text-slate-400"}>
           {entry.on ? `On · ${entry.stop_cap}` : "Off"}
         </span>
-      </span>
+      </button>
     </td>
   );
 }
@@ -96,6 +126,9 @@ export default function DeliveryPage() {
   const [canManageTrucks, setCanManageTrucks] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [savingCells, setSavingCells] = useState<Set<string>>(new Set());
+  const [cellError, setCellError] = useState<string | null>(null);
+  const weekStartRef = useRef<string | null>(null);
 
   const load = useCallback(async (startIso: string) => {
     setLoading(true);
@@ -122,6 +155,7 @@ export default function DeliveryPage() {
       // store timezone — the browser clock is only a fallback.
       const today = (await fetchDeliveryBusinessToday()) ?? toISODay(new Date());
       const start = mondayOf(today);
+      weekStartRef.current = start;
       setWeekStart(start);
       const [cal, canManage] = await Promise.all([
         fetchDeliveryCalendar(start, addDays(start, 6)).catch(() => null),
@@ -138,8 +172,41 @@ export default function DeliveryPage() {
   }, [router]);
 
   const goTo = (startIso: string) => {
+    weekStartRef.current = startIso;
     setWeekStart(startIso);
     load(startIso);
+  };
+
+  // One click: exception -> clear back to pattern; pattern cell -> set the
+  // opposite state. Refetches whatever week is on screen now (via the ref)
+  // so a mid-save week change can't paint stale data onto the wrong week.
+  const toggleCell = async (
+    truckId: string,
+    iso: string,
+    entry: DeliveryTruckDay
+  ) => {
+    if (!canManageTrucks) return;
+    const key = `${truckId}|${iso}`;
+    if (savingCells.has(key)) return;
+    setCellError(null);
+    setSavingCells((prev) => new Set(prev).add(key));
+    try {
+      await setTruckDateState(
+        truckId,
+        iso,
+        entry.source === "exception" ? null : !entry.on
+      );
+      const current = weekStartRef.current;
+      if (current) await load(current);
+    } catch {
+      setCellError("Couldn't update that day. Please try again.");
+    } finally {
+      setSavingCells((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
   };
 
   const days: string[] = weekStart
@@ -250,8 +317,7 @@ export default function DeliveryPage() {
                       </div>
                       {d && (
                         <div className="mt-0.5 text-xs font-normal text-slate-500">
-                          {d.capacity} stop{d.capacity === 1 ? "" : "s"}
-                          {d.booked_count > 0 && `, ${d.booked_count} booked`}
+                          {d.capacity} stop{d.capacity === 1 ? "" : "s"}, {d.booked_count} booked
                           {d.extra_slots !== 0 && (
                             <span className={d.extra_slots > 0 ? "text-emerald-600" : "text-red-600"}>
                               {" "}({d.extra_slots > 0 ? "+" : ""}
@@ -277,7 +343,15 @@ export default function DeliveryPage() {
                     )}
                   </td>
                   {days.map((iso) => (
-                    <Cell key={iso} truck={truck} day={dayByDate.get(iso)} />
+                    <Cell
+                      key={iso}
+                      truck={truck}
+                      iso={iso}
+                      day={dayByDate.get(iso)}
+                      canManage={canManageTrucks}
+                      saving={savingCells.has(`${truck.id}|${iso}`)}
+                      onToggle={toggleCell}
+                    />
                   ))}
                 </tr>
               ))}
@@ -287,11 +361,17 @@ export default function DeliveryPage() {
       )}
 
       {!loading && !error && trucks.length > 0 && (
-        <p className="mt-3 flex items-center gap-1.5 text-xs text-slate-500">
-          <span className="inline-block h-2 w-2 rounded-full bg-amber-500" />
-          Amber dot = this day differs from the truck&apos;s usual weekly
-          pattern.
-        </p>
+        <div className="mt-3 space-y-1">
+          {cellError && (
+            <p className="text-xs text-red-600">{cellError}</p>
+          )}
+          <p className="flex items-center gap-1.5 text-xs text-slate-500">
+            <span className="inline-block h-2 w-2 rounded-full bg-amber-500" />
+            Amber dot = this day differs from the truck&apos;s usual weekly
+            pattern.
+            {!canManageTrucks && " Only managers can change the delivery calendar."}
+          </p>
+        </div>
       )}
     </div>
   );

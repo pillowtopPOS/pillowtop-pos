@@ -78,6 +78,23 @@ export async function fetchDeliveryBusinessToday(): Promise<string | null> {
   return (data as string | null) ?? null;
 }
 
+/** Turn a truck on/off for one date, or clear back to the weekly pattern
+ *  (pOn = null). The RPC enforces delivery.manage_trucks and company
+ *  scope; errors are thrown for the caller to translate. */
+export async function setTruckDateState(
+  truckId: string,
+  date: string,
+  pOn: boolean | null
+): Promise<void> {
+  const supabase = createClient();
+  const { error } = await (supabase as any).rpc("set_truck_date_state", {
+    p_truck_id: truckId,
+    p_date: date,
+    p_on: pOn,
+  });
+  if (error) throw error;
+}
+
 /** Whether the signed-in employee may manage trucks / the calendar.
  *  False on error — the UI simply hides editing affordances. */
 export async function fetchDeliveryManageTrucks(): Promise<boolean> {
