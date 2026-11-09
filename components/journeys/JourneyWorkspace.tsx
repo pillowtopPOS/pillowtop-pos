@@ -605,6 +605,10 @@ export default function JourneyWorkspace({
 
   const [lineItems, setLineItems] = useState<JourneyLineItem[]>([]);
   const [lineItemsLoading, setLineItemsLoading] = useState(false);
+  // True once the first line-items fetch for this journey has resolved —
+  // background refetches (every events change re-runs the fetch) must not
+  // flash "Loading items…" or hide the empty state again.
+  const [lineItemsLoaded, setLineItemsLoaded] = useState(false);
   const [journeyUnits, setJourneyUnits] = useState<
     {
       requirement_id: string | null;
@@ -884,6 +888,7 @@ export default function JourneyWorkspace({
     fetchJourneyLineItems(journey.id).then((items) => {
       setLineItems(items);
       setLineItemsLoading(false);
+      setLineItemsLoaded(true);
     });
     setJourneyUnits([]);
     let unitsCancelled = false;
@@ -1548,15 +1553,15 @@ export default function JourneyWorkspace({
                 )}
               </div>
 
-              {lineItemsLoading && (
+              {lineItemsLoading && !lineItemsLoaded && (
                 <p className="text-sm text-slate-500">Loading items…</p>
               )}
 
-              {!lineItemsLoading && lineItems.length === 0 && (
+              {lineItemsLoaded && lineItems.length === 0 && (
                 <p className="text-sm text-slate-500">No items on this journey.</p>
               )}
 
-              {!lineItemsLoading && lineItems.length === 0 && !orderLocked && (
+              {lineItemsLoaded && lineItems.length === 0 && !orderLocked && (
                 <ProductPicker storeId={inventoryStoreId} onSelect={addLineItem} />
               )}
 
