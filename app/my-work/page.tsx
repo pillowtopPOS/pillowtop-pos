@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { formatDistanceToNow } from "date-fns";
 import { createClient } from "@/lib/supabase/client";
 import { fetchMyWork, completeFollowUp, FOLLOW_UP_METHOD_LABELS, type MyWorkItem } from "@/lib/journeys/queries";
 import { exceptionTypeLabel } from "@/lib/journeys/sleepTrial";
@@ -13,6 +12,20 @@ export default function MyWorkPage() {
   const router = useRouter();
   const [items, setItems] = useState<MyWorkItem[]>([]);
   const [showAllStores, setShowAllStores] = useState(false);
+
+  // Remember the toggle per browser; storage may be blocked, so every
+  // access is wrapped. Default stays OFF until the user turns it on.
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem("my-work-show-all-stores") === "1") {
+        setShowAllStores(true);
+        load(true);
+      }
+    } catch {
+      // storage unavailable — keep the default
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [pageError, setPageError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -141,6 +154,26 @@ export default function MyWorkPage() {
 
             if (item.kind === "ready_for_scheduling") {
               const r = item.data;
+              // One day count feeds BOTH the "Ready … ago" text and the
+              // "Waiting N days" tag so the two numbers can never disagree.
+              const readyMs = r.ready_at
+                ? Date.now() - new Date(r.ready_at).getTime()
+                : null;
+              const readyDays =
+                readyMs === null ? null : Math.floor(readyMs / 86400000);
+              const readyText = !r.ready_at
+                ? "Ready"
+                : readyDays !== null && readyDays >= 1
+                  ? `Ready ${readyDays} day${readyDays === 1 ? "" : "s"} ago`
+                  : readyMs !== null && readyMs >= 3600000
+                    ? `Ready about ${Math.floor(readyMs / 3600000)} hour${
+                        Math.floor(readyMs / 3600000) === 1 ? "" : "s"
+                      } ago`
+                    : readyMs !== null && readyMs >= 60000
+                      ? `Ready ${Math.floor(readyMs / 60000)} minute${
+                          Math.floor(readyMs / 60000) === 1 ? "" : "s"
+                        } ago`
+                      : "Ready just now";
               return (
                 <div
                   key={r.journey_id}
@@ -160,26 +193,16 @@ export default function MyWorkPage() {
                           Stock ready
                         </span>
                       )}
-                      {(() => {
-                        if (!r.ready_at) return null;
-                        const days = Math.floor(
-                          (Date.now() - new Date(r.ready_at).getTime()) /
-                            86400000
-                        );
-                        if (days < READY_SCHEDULING_STALE_DAYS) return null;
-                        return (
+                      {readyDays !== null &&
+                        readyDays >= READY_SCHEDULING_STALE_DAYS && (
                           <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-normal text-amber-800">
-                            Waiting {days} day{days === 1 ? "" : "s"}
+                            Waiting {readyDays} day
+                            {readyDays === 1 ? "" : "s"}
                           </span>
-                        );
-                      })()}
+                        )}
                     </p>
                     <p className="mt-1 text-xs text-slate-600">
-                      {r.ready_at
-                        ? `Ready ${formatDistanceToNow(new Date(r.ready_at), {
-                            addSuffix: true,
-                          })}`
-                        : "Ready"}
+                      {readyText}
                       {r.store_name ? ` at ${r.store_name}` : ""}
                       {r.item_summary ? ` · ${r.item_summary}` : ""}
                       {r.assigned_employee_name
@@ -332,8 +355,17 @@ export default function MyWorkPage() {
               type="checkbox"
               checked={showAllStores}
               onChange={(e) => {
-                setShowAllStores(e.target.checked);
-                load(e.target.checked);
+                const v = e.target.checked;
+                setShowAllStores(v);
+                try {
+                  window.localStorage.setItem(
+                    "my-work-show-all-stores",
+                    v ? "1" : "0"
+                  );
+                } catch {
+                  // storage unavailable — choice just won't persist
+                }
+                load(v);
               }}
               className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
             />

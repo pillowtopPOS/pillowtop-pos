@@ -1413,12 +1413,32 @@ export async function fetchMyWork(opts?: {
           : i.kind === "exchange_progress" || i.kind === "exchange_stalled"
             ? i.data.committed_at
             : i.data.created_at;
+  // Deterministic tie-break so rows with identical timestamps cannot
+  // swap positions between reloads. Ready rows order by journey_number
+  // then journey_id; other kinds fall back to their own stable id.
+  const itemSortId = (i: MyWorkItem): string => {
+    switch (i.kind) {
+      case "follow_up":
+        return i.data.id;
+      case "ready_for_scheduling":
+        return `${i.data.journey_number ?? ""}|${i.data.journey_id}`;
+      case "approval":
+        return i.data.id;
+      case "exchange_progress":
+      case "exchange_stalled":
+        return i.data.action_id;
+      default:
+        return i.data.id;
+    }
+  };
   items.sort((a, b) => {
     const d = rank(a) - rank(b);
     if (d !== 0) return d;
     const ta = new Date(sortKey(a)).getTime();
     const tb = new Date(sortKey(b)).getTime();
-    return a.kind === "opportunity" ? tb - ta : ta - tb;
+    const t = a.kind === "opportunity" ? tb - ta : ta - tb;
+    if (t !== 0) return t;
+    return itemSortId(a).localeCompare(itemSortId(b));
   });
 
   return items;
