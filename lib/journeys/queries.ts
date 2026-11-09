@@ -1266,9 +1266,11 @@ export type PendingApproval = {
 
 export type ReadyJourney = {
   journey_id: string;
+  journey_number: string | null;
   customer_name: string | null;
   store_name: string | null;
-  ready_after_wait_at: string;
+  ready_after_wait_at: string | null;
+  ready_at: string | null;
   assigned_employee_name: string | null;
   item_summary: string | null;
 };
@@ -1281,8 +1283,21 @@ export type MyWorkItem =
   | { kind: "exchange_progress"; data: OpenExchangeWork }
   | { kind: "exchange_stalled"; data: OpenExchangeWork };
 
-export async function fetchMyWork(): Promise<MyWorkItem[]> {
+export async function fetchMyWork(opts?: {
+  allStores?: boolean;
+}): Promise<MyWorkItem[]> {
   const supabase = createClient();
+
+  // m123 adds p_all_stores to list_ready_journeys. Until it is installed
+  // the call errors (PGRST202) — fall back to the recipient-scoped list
+  // so the toggle degrades to today's behavior instead of breaking.
+  const readyPromise = opts?.allStores
+    ? supabase
+        .rpc("list_ready_journeys", { p_all_stores: true })
+        .then((res) =>
+          res.error ? supabase.rpc("list_ready_journeys") : res
+        )
+    : supabase.rpc("list_ready_journeys");
 
   const [
     { data: followUps, error: followError },
@@ -1306,10 +1321,10 @@ export async function fetchMyWork(): Promise<MyWorkItem[]> {
       // My Work APPROVAL kind). Derived at query time server-side so the
       // approver set is never a stale copy.
       supabase.rpc("list_pending_exception_approvals"),
-      // Journeys that reached Ready to Schedule from Waiting for Inventory
-      // (082). Derived like approvals — drops out when the journey is
-      // scheduled or otherwise leaves the state.
-      supabase.rpc("list_ready_journeys"),
+      // Ready-to-schedule delivery orders (122). Derived like approvals —
+      // drops out when the journey is scheduled or leaves the state.
+      // allStores widens recipients to the whole company (m123).
+      readyPromise,
       // Open exchanges the caller should keep an eye on (091). Derived —
       // drops out when the action is cancelled or completed.
       supabase.rpc("list_open_exchange_work"),
@@ -1390,7 +1405,7 @@ export async function fetchMyWork(): Promise<MyWorkItem[]> {
               : 3;
   const sortKey = (i: MyWorkItem) =>
     i.kind === "ready_for_scheduling"
-      ? i.data.ready_after_wait_at
+      ? (i.data.ready_at ?? i.data.ready_after_wait_at ?? i.data.journey_id)
       : i.kind === "follow_up"
         ? i.data.due_at
         : i.kind === "approval"
@@ -1398,12 +1413,32 @@ export async function fetchMyWork(): Promise<MyWorkItem[]> {
           : i.kind === "exchange_progress" || i.kind === "exchange_stalled"
             ? i.data.committed_at
             : i.data.created_at;
+  // Deterministic tie-break so rows with identical timestamps cannot
+  // swap positions between reloads. Ready rows order by journey_number
+  // then journey_id; other kinds fall back to their own stable id.
+  const itemSortId = (i: MyWorkItem): string => {
+    switch (i.kind) {
+      case "follow_up":
+        return i.data.id;
+      case "ready_for_scheduling":
+        return `${i.data.journey_number ?? ""}|${i.data.journey_id}`;
+      case "approval":
+        return i.data.id;
+      case "exchange_progress":
+      case "exchange_stalled":
+        return i.data.action_id;
+      default:
+        return i.data.id;
+    }
+  };
   items.sort((a, b) => {
     const d = rank(a) - rank(b);
     if (d !== 0) return d;
     const ta = new Date(sortKey(a)).getTime();
     const tb = new Date(sortKey(b)).getTime();
-    return a.kind === "opportunity" ? tb - ta : ta - tb;
+    const t = a.kind === "opportunity" ? tb - ta : ta - tb;
+    if (t !== 0) return t;
+    return itemSortId(a).localeCompare(itemSortId(b));
   });
 
   return items;
