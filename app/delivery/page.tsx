@@ -349,7 +349,14 @@ export default function DeliveryPage() {
                           <div className="text-xs font-normal text-slate-500">
                             {d.booked_count} of {d.capacity} booked
                           </div>
-                          {d.extra_slots !== 0 && (
+                          {canManageCalendar && (
+                            <div className="text-[11px] font-normal text-slate-400">
+                              {d.extra_slots !== 0
+                                ? `includes ${d.extra_slots > 0 ? "+" : ""}${d.extra_slots} extra`
+                                : "\u00a0"}
+                            </div>
+                          )}
+                          {!canManageCalendar && d.extra_slots !== 0 && (
                             <div className="text-[11px] font-normal text-slate-400">
                               includes {d.extra_slots > 0 ? "+" : ""}
                               {d.extra_slots} extra
