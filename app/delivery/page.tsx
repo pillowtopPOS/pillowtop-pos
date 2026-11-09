@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Truck } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import TrucksPanel from "@/components/delivery/TrucksPanel";
 import {
   fetchDeliveryCalendar,
   fetchDeliveryBusinessToday,
@@ -132,6 +133,8 @@ export default function DeliveryPage() {
   const [savingCells, setSavingCells] = useState<Set<string>>(new Set());
   const [savingDays, setSavingDays] = useState<Set<string>>(new Set());
   const [cellError, setCellError] = useState<string | null>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelAddMode, setPanelAddMode] = useState(false);
   const weekStartRef = useRef<string | null>(null);
 
   const load = useCallback(async (startIso: string) => {
@@ -285,6 +288,19 @@ export default function DeliveryPage() {
           <span className="ml-2 text-sm font-medium text-slate-700">
             {weekStart ? rangeLabel(weekStart, weekEnd) : ""}
           </span>
+          {canManageTrucks && (
+            <button
+              type="button"
+              onClick={() => {
+                setPanelAddMode(false);
+                setPanelOpen(true);
+              }}
+              className="ml-3 inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+            >
+              <Truck className="h-4 w-4" />
+              Manage trucks
+            </button>
+          )}
         </div>
       </div>
 
@@ -315,8 +331,11 @@ export default function DeliveryPage() {
           {canManageTrucks && (
             <button
               type="button"
-              title="Coming in the next update"
-              className="mt-4 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white opacity-60"
+              onClick={() => {
+                setPanelAddMode(true);
+                setPanelOpen(true);
+              }}
+              className="mt-4 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white"
             >
               Add truck
             </button>
@@ -437,6 +456,19 @@ export default function DeliveryPage() {
               " You don't have permission to change the delivery calendar. Ask an admin if you need it."}
           </p>
         </div>
+      )}
+
+      {panelOpen && canManageTrucks && (
+        <TrucksPanel
+          trucks={trucks}
+          archivedTrucks={calendar?.archived_trucks ?? []}
+          startInAddMode={panelAddMode}
+          onClose={() => setPanelOpen(false)}
+          onChanged={() => {
+            const current = weekStartRef.current;
+            if (current) load(current);
+          }}
+        />
       )}
     </div>
   );

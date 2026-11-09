@@ -25,9 +25,14 @@ export type DeliveryTruckInfo = {
   name: string;
   home_location_id: string | null;
   home_location_name: string | null;
+  home_location_type: string | null;
   default_stop_cap: number;
   weekly_pattern: number[];
   sort_order: number;
+};
+
+export type ArchivedDeliveryTruck = DeliveryTruckInfo & {
+  archived_at: string;
 };
 
 export type DeliverySettings = {
@@ -41,6 +46,7 @@ export type DeliverySettings = {
 export type DeliveryCalendar = {
   settings: DeliverySettings | null;
   trucks: DeliveryTruckInfo[];
+  archived_trucks?: ArchivedDeliveryTruck[];
   days: DeliveryCalendarDay[];
 };
 
@@ -59,6 +65,7 @@ export async function fetchDeliveryCalendar(
   return {
     settings: cal?.settings ?? null,
     trucks: cal?.trucks ?? [],
+    archived_trucks: cal?.archived_trucks ?? [],
     days: cal?.days ?? [],
   };
 }
@@ -105,6 +112,67 @@ export async function setDayExtraSlots(
   const { error } = await (supabase as any).rpc("set_day_extra_slots", {
     p_date: date,
     p_extra_slots: extraSlots,
+  });
+  if (error) throw error;
+}
+
+/** Create a truck. Returns the new truck id. */
+export async function createDeliveryTruck(input: {
+  name: string;
+  homeLocationId: string | null;
+  defaultStopCap: number;
+  weeklyPattern: number[];
+}): Promise<string> {
+  const supabase = createClient();
+  const { data, error } = await (supabase as any).rpc("create_delivery_truck", {
+    p_name: input.name,
+    p_home_location_id: input.homeLocationId,
+    p_default_stop_cap: input.defaultStopCap,
+    p_weekly_pattern: input.weeklyPattern,
+  });
+  if (error) throw error;
+  return data as string;
+}
+
+/** Rename / re-home / re-cap a truck. */
+export async function updateDeliveryTruck(input: {
+  truckId: string;
+  name: string;
+  homeLocationId: string | null;
+  defaultStopCap: number;
+}): Promise<void> {
+  const supabase = createClient();
+  const { error } = await (supabase as any).rpc("update_delivery_truck", {
+    p_truck_id: input.truckId,
+    p_name: input.name,
+    p_home_location_id: input.homeLocationId,
+    p_default_stop_cap: input.defaultStopCap,
+  });
+  if (error) throw error;
+}
+
+/** Archive (true) or restore (false) a truck. */
+export async function setDeliveryTruckArchived(
+  truckId: string,
+  archived: boolean
+): Promise<void> {
+  const supabase = createClient();
+  const { error } = await (supabase as any).rpc("set_delivery_truck_archived", {
+    p_truck_id: truckId,
+    p_archived: archived,
+  });
+  if (error) throw error;
+}
+
+/** Replace a truck's weekly pattern (ISO weekdays 1=Mon..7=Sun). */
+export async function setTruckWeekdayPattern(
+  truckId: string,
+  weekdays: number[]
+): Promise<void> {
+  const supabase = createClient();
+  const { error } = await (supabase as any).rpc("set_truck_weekday_pattern", {
+    p_truck_id: truckId,
+    p_weekdays: weekdays,
   });
   if (error) throw error;
 }
