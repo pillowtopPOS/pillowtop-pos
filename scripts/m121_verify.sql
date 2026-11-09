@@ -9,7 +9,7 @@ begin
 end $$;
 
 do $$
-declare v tg_trigger%rowtype;
+declare v pg_trigger%rowtype;
 begin
   select * into v from pg_trigger
   where tgname = 'trg_jm_requirement_sync'
