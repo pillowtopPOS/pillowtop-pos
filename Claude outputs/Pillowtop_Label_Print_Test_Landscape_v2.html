@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Pillowtop landscape label print test</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+@page { size: 4in 6in; margin: 0; }
+* { box-sizing: border-box; }
+body { margin:0; font-family: Arial, Helvetica, sans-serif; color:#000; background:#f1f5f9; }
+.help { max-width: 680px; margin: 16px auto; padding: 16px; background:#fff; border:1px solid #cbd5e1; border-radius:8px; font-size:15px; line-height:1.5; }
+.help h1 { font-size:18px; margin:0 0 8px; }
+.sheet { contain: strict; width:4in; height:6in; background:#fff; position:relative; overflow:hidden; margin:12px auto; border:1px solid #94a3b8; break-after: page; page-break-after: always; }
+.sheet:last-of-type { break-after: auto; page-break-after: auto; }
+.land { position:absolute; left:0; top:0; width:6in; height:4in; transform-origin: 0 0; background:#fff; }
+.land.cw { transform: translate(4in, 0) rotate(90deg); }
+.land.ccw { transform: translate(0, 6in) rotate(-90deg); }
+.f0 { position:absolute; inset:0.00in; border:1.5px solid #000; }
+.f1 { position:absolute; inset:0.04in; border:1.5px solid #000; }
+.f2 { position:absolute; inset:0.08in; border:1.5px solid #000; }
+.f3 { position:absolute; inset:0.12in; border:1.5px solid #000; }
+.f4 { position:absolute; inset:0.16in; border:1.5px solid #000; }
+.f5 { position:absolute; inset:0.20in; border:1.5px solid #000; }
+.f6 { position:absolute; inset:0.24in; border:1.5px solid #000; }
+.f7 { position:absolute; inset:0.28in; border:1.5px solid #000; }
+
+.corner { position:absolute; font-size:10px; font-weight:bold; }
+.c1 { left:0.33in; top:0.33in; } .c2 { right:0.33in; top:0.33in; } .c3 { left:0.33in; bottom:0.33in; } .c4 { right:0.33in; bottom:0.33in; }
+.inner { position:absolute; inset:0.36in 0.38in; display:flex; flex-direction:column; }
+.top { display:flex; align-items:center; justify-content:space-between; }
+.uidw { display:flex; align-items:baseline; gap:10px; }
+.cap { font-size:16px; font-weight:700; letter-spacing:2px; }
+.uid { font-size:96px; font-weight:800; line-height:1; letter-spacing:-1px; }
+.tag { font-size:14px; font-weight:700; letter-spacing:1px; border:2px solid #000; padding:3px 10px; }
+.row { font-size:20px; margin-top:6px; }
+.sku { font-size:42px; font-weight:800; line-height:1.1; margin-top:6px; }
+.note { font-size:11px; margin-top:4px; }
+.bc { margin-top:auto; }
+.bc svg { height:0.85in; width:100%; display:block; }
+.num { text-align:center; font-size:22px; letter-spacing:6px; margin-top:2px; }
+@media print { body { background:#fff; } .help { display:none; } .sheet { margin:0; border:0; } }
+</style></head><body>
+<div class="help">
+<h1>Pillowtop landscape label print test (sample data only)</h1>
+<ol>
+<li>Open this file on the warehouse Surface in Chrome or Edge. Press Ctrl+P and choose the thermal label printer.</li>
+<li>Paper size <b>4 x 6 in</b>, margins <b>None</b>, scale <b>100%</b>, headers and footers <b>off</b>, orientation <b>Portrait</b>.</li>
+<li>Print. You get <b>two labels</b>. Both are the same wide (landscape) design, turned two different ways: label 1 is turned clockwise, label 2 counter-clockwise.</li>
+</ol>
+<p>This version draws 8 nested border lines (the outermost touches the very edge of the label). Each side of the printer may cut off some of them. For EACH label, hold it with the LONG side running left to right and count how many nested lines you can see on the TOP side, BOTTOM side, LEFT side and RIGHT side (8 means nothing cut off, 5 means the 3 outer lines are missing, and so on). Also tell me: which label reads right way up (1 or 2), does a scanner still read the barcode, printer model, and no blank trailing label.</p>
+</div>
+<div class="sheet"><div class="land cw">
+<div class="f0"></div><div class="f1"></div><div class="f2"></div><div class="f3"></div><div class="f4"></div><div class="f5"></div><div class="f6"></div><div class="f7"></div><span class="corner c1">A</span><span class="corner c2">B</span><span class="corner c3">C</span><span class="corner c4">D</span>
+<div class="inner">
+<div class="top"><span class="tag">STOCK</span><span class="uid">1042</span></div>
+<div class="row"><b>Location:</b> Denver Main Warehouse</div>
+<div class="sku">HEXMIC50</div>
+<div class="row"><b>Item:</b> Helix Midnight Mattress, Queen</div>
+<div class="note">Label 1 (clockwise) v2</div>
+<div class="bc"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 231 100" width="100%" preserveAspectRatio="none" shape-rendering="crispEdges"><rect width="231" height="100" fill="#fff"/><g fill="#000"><rect x="30" y="0" width="6" height="100"/><rect x="39" y="0" width="3" height="100"/><rect x="48" y="0" width="9" height="100"/><rect x="63" y="0" width="6" height="100"/><rect x="75" y="0" width="3" height="100"/><rect x="87" y="0" width="3" height="100"/><rect x="96" y="0" width="3" height="100"/><rect x="102" y="0" width="6" height="100"/><rect x="111" y="0" width="9" height="100"/><rect x="129" y="0" width="3" height="100"/><rect x="135" y="0" width="12" height="100"/><rect x="156" y="0" width="3" height="100"/><rect x="162" y="0" width="6" height="100"/><rect x="177" y="0" width="9" height="100"/><rect x="189" y="0" width="3" height="100"/><rect x="195" y="0" width="6" height="100"/></g></svg><div class="num">1042</div></div>
+</div></div></div>
+<div class="sheet"><div class="land ccw">
+<div class="f0"></div><div class="f1"></div><div class="f2"></div><div class="f3"></div><div class="f4"></div><div class="f5"></div><div class="f6"></div><div class="f7"></div><span class="corner c1">A</span><span class="corner c2">B</span><span class="corner c3">C</span><span class="corner c4">D</span>
+<div class="inner">
+<div class="top"><span class="tag">STOCK</span><span class="uid">1042</span></div>
+<div class="row"><b>Location:</b> Denver Main Warehouse</div>
+<div class="sku">HEXMIC50</div>
+<div class="row"><b>Item:</b> Helix Midnight Mattress, Queen</div>
+<div class="note">Label 2 (counter-clockwise) v2</div>
+<div class="bc"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 231 100" width="100%" preserveAspectRatio="none" shape-rendering="crispEdges"><rect width="231" height="100" fill="#fff"/><g fill="#000"><rect x="30" y="0" width="6" height="100"/><rect x="39" y="0" width="3" height="100"/><rect x="48" y="0" width="9" height="100"/><rect x="63" y="0" width="6" height="100"/><rect x="75" y="0" width="3" height="100"/><rect x="87" y="0" width="3" height="100"/><rect x="96" y="0" width="3" height="100"/><rect x="102" y="0" width="6" height="100"/><rect x="111" y="0" width="9" height="100"/><rect x="129" y="0" width="3" height="100"/><rect x="135" y="0" width="12" height="100"/><rect x="156" y="0" width="3" height="100"/><rect x="162" y="0" width="6" height="100"/><rect x="177" y="0" width="9" height="100"/><rect x="189" y="0" width="3" height="100"/><rect x="195" y="0" width="6" height="100"/></g></svg><div class="num">1042</div></div>
+</div></div></div>
+</body></html>
