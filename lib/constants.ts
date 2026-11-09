@@ -22,3 +22,8 @@ export const BOARD_STATES = [
 ] as const;
 
 export type BoardState = (typeof BOARD_STATES)[number];
+
+// Days a Ready to Schedule order may sit unscheduled before My Work shows
+// an amber "Waiting N days" flag. Single source so it can move into
+// delivery settings later.
+export const READY_SCHEDULING_STALE_DAYS = 2;

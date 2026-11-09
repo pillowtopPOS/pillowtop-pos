@@ -7,10 +7,12 @@ import { formatDistanceToNow } from "date-fns";
 import { createClient } from "@/lib/supabase/client";
 import { fetchMyWork, completeFollowUp, FOLLOW_UP_METHOD_LABELS, type MyWorkItem } from "@/lib/journeys/queries";
 import { exceptionTypeLabel } from "@/lib/journeys/sleepTrial";
+import { READY_SCHEDULING_STALE_DAYS } from "@/lib/constants";
 
 export default function MyWorkPage() {
   const router = useRouter();
   const [items, setItems] = useState<MyWorkItem[]>([]);
+  const [showAllStores, setShowAllStores] = useState(false);
 
   const [pageError, setPageError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -26,9 +28,9 @@ export default function MyWorkPage() {
     });
   }, [router]);
 
-  async function load() {
+  async function load(allStores = showAllStores) {
     setLoading(true);
-    const data = await fetchMyWork();
+    const data = await fetchMyWork({ allStores });
     setItems(data);
     setLoading(false);
     // Keep the sidebar badge equal to exactly what this page renders.
@@ -59,30 +61,30 @@ export default function MyWorkPage() {
     inventory_shortage: "Inventory shortage",
   };
 
-  return (
-    <main className="min-h-screen bg-slate-50 p-6">
-      {pageError && (
-        <p key="page-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
-      )}
-      <header className="mb-4 flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold text-slate-900">My Work</h1>
-        <Link
-          href="/board"
-          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-        >
-          Back to Board
-        </Link>
-      </header>
 
-      {loading && <p className="text-sm text-slate-500">Loading…</p>}
+  type WorkSection = "ready" | "follow_ups" | "approvals" | "exchanges" | "opportunities";
+  const SECTION_DEFS: { key: WorkSection; title: string }[] = [
+    { key: "ready", title: "Ready to schedule" },
+    { key: "follow_ups", title: "Follow-ups" },
+    { key: "approvals", title: "Approvals" },
+    { key: "exchanges", title: "Exchanges" },
+    { key: "opportunities", title: "Opportunities" },
+  ];
+  const ACTION_CLS = "font-semibold underline";
 
-      {!loading && items.length === 0 && (
-        <p className="text-sm text-slate-500">Nothing needs attention right now.</p>
-      )}
+  function sectionOf(item: MyWorkItem): WorkSection {
+    switch (item.kind) {
+      case "ready_for_scheduling": return "ready";
+      case "follow_up": return "follow_ups";
+      case "approval": return "approvals";
+      case "exchange_progress":
+      case "exchange_stalled": return "exchanges";
+      default: return "opportunities";
+    }
+  }
 
-      {!loading && (
-        <div className="space-y-2">
-          {items.map((item) => {
+  function renderItem(item: MyWorkItem) {
+
             if (item.kind === "follow_up") {
               const f = item.data;
               const customer = f.journey?.customer;
@@ -98,6 +100,9 @@ export default function MyWorkPage() {
                 >
                   <div>
                     <p className="text-sm font-medium text-slate-900">
+                      <span className={ACTION_CLS}>
+                        {FOLLOW_UP_LABELS[f.type] ?? f.type}:
+                      </span>{" "}
                       {customer
                         ? `${customer.first_name} ${customer.last_name}`
                         : "Unknown"}
@@ -143,7 +148,7 @@ export default function MyWorkPage() {
                 >
                   <div>
                     <p className="text-sm font-medium text-slate-900">
-                      Ready to schedule:{" "}
+                      <span className={ACTION_CLS}>Ready to schedule:</span>{" "}
                       {r.customer_name ?? "Unknown customer"}
                       {r.journey_number && (
                         <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-normal text-slate-600">
@@ -155,6 +160,19 @@ export default function MyWorkPage() {
                           Stock ready
                         </span>
                       )}
+                      {(() => {
+                        if (!r.ready_at) return null;
+                        const days = Math.floor(
+                          (Date.now() - new Date(r.ready_at).getTime()) /
+                            86400000
+                        );
+                        if (days < READY_SCHEDULING_STALE_DAYS) return null;
+                        return (
+                          <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-normal text-amber-800">
+                            Waiting {days} day{days === 1 ? "" : "s"}
+                          </span>
+                        );
+                      })()}
                     </p>
                     <p className="mt-1 text-xs text-slate-600">
                       {r.ready_at
@@ -188,6 +206,7 @@ export default function MyWorkPage() {
                 >
                   <div>
                     <p className="text-sm font-medium text-slate-900">
+                      <span className={ACTION_CLS}>Approval:</span>{" "}
                       {a.customer_name ?? "Unknown customer"}
                       <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-normal text-indigo-700">
                         Approval needed
@@ -231,11 +250,13 @@ export default function MyWorkPage() {
                 >
                   <div>
                     <p className="text-sm font-medium text-slate-900">
-                      {stalled
-                        ? `Exchange stalled ${w.days_committed} day${
-                            w.days_committed === 1 ? "" : "s"
-                          }: `
-                        : "Exchange in progress: "}
+                      <span className={ACTION_CLS}>
+                        {stalled
+                          ? `Exchange stalled ${w.days_committed} day${
+                              w.days_committed === 1 ? "" : "s"
+                            }:`
+                          : "Exchange in progress:"}
+                      </span>{" "}
                       {w.customer_name ?? "Unknown customer"}
                       <span
                         className={`ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-normal ${
@@ -281,6 +302,7 @@ export default function MyWorkPage() {
               >
                 <div>
                   <p className="text-sm font-medium text-slate-900">
+                    <span className={ACTION_CLS}>Opportunity:</span>{" "}
                     {o.first_name} {o.last_name}
                     <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-600">
                       {o.status}
@@ -292,6 +314,60 @@ export default function MyWorkPage() {
                   {o.phone}
                 </div>
               </div>
+            );
+
+    return null;
+  }
+
+  return (
+    <main className="min-h-screen bg-slate-50 p-6">
+      {pageError && (
+        <p key="page-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{pageError}</p>
+      )}
+      <header className="mb-4 flex flex-wrap items-center justify-between gap-4">
+        <h1 className="text-2xl font-semibold text-slate-900">My Work</h1>
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-2 text-sm text-slate-600">
+            <input
+              type="checkbox"
+              checked={showAllStores}
+              onChange={(e) => {
+                setShowAllStores(e.target.checked);
+                load(e.target.checked);
+              }}
+              className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+            />
+            Show all stores
+          </label>
+          <Link
+            href="/board"
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Back to Board
+          </Link>
+        </div>
+      </header>
+
+      {loading && <p className="text-sm text-slate-500">Loading…</p>}
+
+      {!loading && items.length === 0 && (
+        <p className="text-sm text-slate-500">Nothing needs attention right now.</p>
+      )}
+
+      {!loading && (
+        <div className="space-y-6">
+          {SECTION_DEFS.map((def) => {
+            const sectionItems = items.filter((i) => sectionOf(i) === def.key);
+            if (sectionItems.length === 0) return null;
+            return (
+              <section key={def.key}>
+                <h2 className="mb-2 text-sm font-semibold text-slate-700">
+                  {def.title} ({sectionItems.length})
+                </h2>
+                <div className="space-y-2">
+                  {sectionItems.map((item) => renderItem(item))}
+                </div>
+              </section>
             );
           })}
         </div>

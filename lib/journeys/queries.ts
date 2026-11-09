@@ -1283,8 +1283,21 @@ export type MyWorkItem =
   | { kind: "exchange_progress"; data: OpenExchangeWork }
   | { kind: "exchange_stalled"; data: OpenExchangeWork };
 
-export async function fetchMyWork(): Promise<MyWorkItem[]> {
+export async function fetchMyWork(opts?: {
+  allStores?: boolean;
+}): Promise<MyWorkItem[]> {
   const supabase = createClient();
+
+  // m123 adds p_all_stores to list_ready_journeys. Until it is installed
+  // the call errors (PGRST202) — fall back to the recipient-scoped list
+  // so the toggle degrades to today's behavior instead of breaking.
+  const readyPromise = opts?.allStores
+    ? supabase
+        .rpc("list_ready_journeys", { p_all_stores: true })
+        .then((res) =>
+          res.error ? supabase.rpc("list_ready_journeys") : res
+        )
+    : supabase.rpc("list_ready_journeys");
 
   const [
     { data: followUps, error: followError },
@@ -1308,10 +1321,10 @@ export async function fetchMyWork(): Promise<MyWorkItem[]> {
       // My Work APPROVAL kind). Derived at query time server-side so the
       // approver set is never a stale copy.
       supabase.rpc("list_pending_exception_approvals"),
-      // Journeys that reached Ready to Schedule from Waiting for Inventory
-      // (082). Derived like approvals — drops out when the journey is
-      // scheduled or otherwise leaves the state.
-      supabase.rpc("list_ready_journeys"),
+      // Ready-to-schedule delivery orders (122). Derived like approvals —
+      // drops out when the journey is scheduled or leaves the state.
+      // allStores widens recipients to the whole company (m123).
+      readyPromise,
       // Open exchanges the caller should keep an eye on (091). Derived —
       // drops out when the action is cancelled or completed.
       supabase.rpc("list_open_exchange_work"),
