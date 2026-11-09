@@ -122,7 +122,14 @@ export default function SleepTrialPermissionsGrid({
                 key={p.key}
                 className="border-b border-slate-100 last:border-0"
               >
-                <td className="py-2.5 pr-4 text-slate-700">{p.label}</td>
+                <td className="py-2.5 pr-4 text-slate-700">
+                  {p.label}
+                  {p.description && (
+                    <div className="text-xs font-normal text-slate-400">
+                      {p.description}
+                    </div>
+                  )}
+                </td>
                 {PERMISSION_ROLES.map((r) => {
                   const granted = isGranted(r.value, p.key);
                   const disabled = cellDisabled(r.value, p.key);

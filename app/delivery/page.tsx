@@ -434,7 +434,7 @@ export default function DeliveryPage() {
             Amber dot = this day differs from the truck&apos;s usual weekly
             pattern.
             {!canManageTrucks && !canManageCalendar &&
-              " Only managers can change the delivery calendar."}
+              " You don't have permission to change the delivery calendar. Ask an admin if you need it."}
           </p>
         </div>
       )}
