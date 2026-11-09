@@ -167,8 +167,12 @@ export default function BoardPage() {
     return active;
   };
 
-  const loadData = async (u: any, active: string | null | undefined) => {
-    setLoading(true);
+  const loadData = async (
+    u: any,
+    active: string | null | undefined,
+    opts?: { background?: boolean }
+  ) => {
+    if (!opts?.background) setLoading(true);
     const emp = await fetchCurrentEmployee();
     setCurrentEmployee(emp);
 
@@ -214,7 +218,7 @@ export default function BoardPage() {
     );
     setHiddenJourneyIds(hiddenByInProgressAction(trialItemStatuses));
 
-    setLoading(false);
+    if (!opts?.background) setLoading(false);
   };
 
   useEffect(() => {
@@ -232,21 +236,42 @@ export default function BoardPage() {
       await loadData(session.user, active);
     });
 
+    // A single user action writes several rows in quick succession (a
+    // payment inserts journey_events, derive_journey_state updates
+    // sleep_journeys, the inventory evaluator may write more of both).
+    // Each write is a separate postgres_changes event, so without
+    // coalescing one payment fires loadData half a dozen times and the
+    // board visibly strobes. Debounce to one silent background reload.
+    let changesTimer: ReturnType<typeof setTimeout> | null = null;
     const unsubscribe = subscribeToJourneyChanges(() => {
-      supabase.auth.getSession().then(({ data: { session } }) => {
-        if (session?.user) {
-          loadData(session.user, session.user.user_metadata?.active_store_id);
-        }
-      });
+      if (changesTimer) clearTimeout(changesTimer);
+      changesTimer = setTimeout(() => {
+        changesTimer = null;
+        supabase.auth.getSession().then(({ data: { session } }) => {
+          if (session?.user) {
+            loadData(session.user, session.user.user_metadata?.active_store_id, {
+              background: true,
+            });
+          }
+        });
+      }, 400);
     });
 
     return () => {
       unsubscribe();
+      if (changesTimer) clearTimeout(changesTimer);
     };
   }, [router, search, employeeFilter, storeFilter]);
 
+  // Set by handleReassigned after it writes fresh panel data itself —
+  // the effect below must not immediately refetch the same rows.
+  const panelDataFreshFor = useRef<string | null>(null);
   useEffect(() => {
     if (selectedJourney) {
+      if (panelDataFreshFor.current === selectedJourney.id) {
+        panelDataFreshFor.current = null;
+        return;
+      }
       fetchJourneyEvents(selectedJourney.id).then(setEvents);
       fetchJourneyFollowUps(selectedJourney.id).then(setFollowUps);
       fetchJourneyReassignments(selectedJourney.id).then(setReassignments);
@@ -280,34 +305,50 @@ export default function BoardPage() {
     };
   }, [cancelJourneyState]);
 
+  const [journeyRefreshPending, setJourneyRefreshPending] = useState(false);
+
+  // One fetch for everything the open panel renders, applied in a single
+  // batch — journey row, events, follow-ups and reassignments can never
+  // show mismatched generations (e.g. fresh "Paid in full" events under
+  // a stale "Quoted" header).
   async function handleReassigned(journeyId: string) {
-    const [fresh, history, evalMap] = await Promise.all([
-      fetchJourneyById(journeyId),
-      fetchJourneyReassignments(journeyId),
-      // Panel actions (protector override, trial-start correction, ...) can
-      // change the item's evaluation — refresh just this journey's evals so
-      // the board card behind the panel isn't stale until the next loadData.
-      evaluateSleepTrialItems([journeyId]),
-    ]);
-    setReassignments(history);
-    setTrialEvals((prev) => {
-      const next = new Map(prev);
-      const evals = evalMap.get(journeyId) ?? [];
-      if (evals.length > 0) next.set(journeyId, evals);
-      else next.delete(journeyId);
-      return next;
-    });
-    if (fresh) {
-      setSelectedJourney(fresh);
-      setJourneys((prev) => prev.map((j) => (j.id === fresh.id ? fresh : j)));
-    } else {
-      setSelectedJourney(null);
+    setJourneyRefreshPending(true);
+    try {
+      const [fresh, history, evalMap, evs, fus] = await Promise.all([
+        fetchJourneyById(journeyId),
+        fetchJourneyReassignments(journeyId),
+        // Panel actions (protector override, trial-start correction, ...) can
+        // change the item's evaluation — refresh just this journey's evals so
+        // the board card behind the panel isn't stale until the next loadData.
+        evaluateSleepTrialItems([journeyId]),
+        fetchJourneyEvents(journeyId),
+        fetchJourneyFollowUps(journeyId),
+      ]);
+      setReassignments(history);
+      setEvents(evs);
+      setFollowUps(fus);
+      setTrialEvals((prev) => {
+        const next = new Map(prev);
+        const evals = evalMap.get(journeyId) ?? [];
+        if (evals.length > 0) next.set(journeyId, evals);
+        else next.delete(journeyId);
+        return next;
+      });
+      if (fresh) {
+        setSelectedJourney(fresh);
+        setJourneys((prev) => prev.map((j) => (j.id === fresh.id ? fresh : j)));
+        panelDataFreshFor.current = journeyId;
+      } else {
+        setSelectedJourney(null);
+      }
+      // Panel actions (committing/cancelling an exchange) change trial-item
+      // statuses, so the board-hide set is refreshed alongside the journey.
+      fetchLiveTrialItemStatuses().then((m) =>
+        setHiddenJourneyIds(hiddenByInProgressAction(m))
+      );
+    } finally {
+      setJourneyRefreshPending(false);
     }
-    // Panel actions (committing/cancelling an exchange) change trial-item
-    // statuses, so the board-hide set is refreshed alongside the journey.
-    fetchLiveTrialItemStatuses().then((m) =>
-      setHiddenJourneyIds(hiddenByInProgressAction(m))
-    );
   }
 
   useEffect(() => {
@@ -450,7 +491,7 @@ export default function BoardPage() {
         await recordJourneyEvent(journey.id, transition.event, eventData);
         setPendingTransition(null);
         setPendingFieldValues({});
-        fetchJourneyEvents(journey.id).then(setEvents);
+        await handleReassigned(journey.id);
       }
     } catch (e: any) {
       setModalError(e.message ?? "Failed to record event");
@@ -465,12 +506,7 @@ export default function BoardPage() {
     setBoardBusy(true);
     try {
       await reconcilePayment(pendingReconcile.paymentEventId, newOutcome);
-      const [freshEvents, freshFollowUps] = await Promise.all([
-        fetchJourneyEvents(pendingReconcile.journey.id),
-        fetchJourneyFollowUps(pendingReconcile.journey.id),
-      ]);
-      setEvents(freshEvents);
-      setFollowUps(freshFollowUps);
+      await handleReassigned(pendingReconcile.journey.id);
       setPendingReconcile(null);
     } catch (e: any) {
       setModalError(e.message ?? "Reconciliation failed");
@@ -520,7 +556,7 @@ export default function BoardPage() {
         return;
       }
       setPendingDepositException(null);
-      fetchJourneyEvents(pendingDepositException.journey.id).then(setEvents);
+      await handleReassigned(pendingDepositException.journey.id);
     } catch (e: any) {
       setPendingDepositException((prev) =>
         prev ? { ...prev, error: e.message ?? "Payment failed" } : null
@@ -556,7 +592,7 @@ export default function BoardPage() {
       setPendingOverpayment(null);
       setPendingTransition(null);
       setPendingFieldValues({});
-      fetchJourneyEvents(journey.id).then(setEvents);
+      await handleReassigned(journey.id);
     } catch (e: any) {
       const msg = e.message ?? "";
       if (
@@ -650,10 +686,7 @@ export default function BoardPage() {
     // then commit as separate renders. A refresh hiccup is logged, never
     // surfaced as a failed cancel.
     try {
-      await Promise.all([
-        handleReassigned(journeyId),
-        fetchJourneyEvents(journeyId).then(setEvents),
-      ]);
+      await handleReassigned(journeyId);
     } catch (e) {
       console.error("post-cancel refresh failed", e);
     }
@@ -835,6 +868,7 @@ export default function BoardPage() {
           onClose={() => setSelectedJourney(null)}
           onAction={executeAction}
           onCancel={setCancelJourneyState}
+          refreshPending={journeyRefreshPending}
           onRefresh={async () => {
             await handleReassigned(selectedJourney.id);
           }}

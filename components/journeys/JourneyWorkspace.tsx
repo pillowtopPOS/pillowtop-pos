@@ -346,6 +346,8 @@ function JourneyStateSummaryBar({
   attentionItems,
   transitions,
   exchangeAwaitingPayment,
+  paymentSettled,
+  refreshPending,
   onAction,
 }: {
   journey: JourneyWithDetails;
@@ -357,12 +359,25 @@ function JourneyStateSummaryBar({
   // EB-3a: an exchange child sitting in Quoted with a positive balance is
   // waiting on money, not a workflow step (spec 16).
   exchangeAwaitingPayment: boolean;
+  // Paid >= price: the Quoted -> Sold flip may still be in flight, but
+  // Record Payment must never be offered — a second payment is a
+  // double-charge, not a cosmetic glitch.
+  paymentSettled: boolean;
+  refreshPending?: boolean;
   onAction: (j: JourneyWithDetails, e: JourneyEventType) => void;
 }) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const followUpOverdue =
     nextFollowUp !== undefined && new Date(nextFollowUp.due_at) < today;
+  // trial_completed stays excluded: Sleep Trial → Completed is ungated,
+  // so "Complete Trial" must never read as the default next step just
+  // because no follow-up is scheduled.
+  const nextActionTransition = transitions.find(
+    (t) =>
+      t.event !== "trial_completed" &&
+      !(t.event === "payment_completed" && paymentSettled)
+  );
   return (
     <div className="mt-3 grid grid-cols-3 divide-x divide-slate-200 rounded-md border border-slate-200 bg-slate-50">
       <SummaryCell label="Current State">
@@ -422,21 +437,18 @@ function JourneyStateSummaryBar({
                 }.`
               : "Call customer when inventory arrives"}
           </span>
-        ) : transitions.find((t) => t.event !== "trial_completed") ? (
+        ) : nextActionTransition ? (
           // trial_completed stays excluded: Sleep Trial → Completed is
           // ungated, so "Complete Trial" must never read as the default
-          // next step just because no follow-up is scheduled.
+          // next step just because no follow-up is scheduled. A settled
+          // payment also never surfaces Record Payment here.
           <button
             key="na-action"
-            onClick={() =>
-              onAction(
-                journey,
-                transitions.find((t) => t.event !== "trial_completed")!.event
-              )
-            }
-            className="text-left font-medium text-brand-600 hover:text-brand-700"
+            disabled={refreshPending}
+            onClick={() => onAction(journey, nextActionTransition.event)}
+            className="text-left font-medium text-brand-600 hover:text-brand-700 disabled:opacity-50"
           >
-            {transitions.find((t) => t.event !== "trial_completed")!.label}
+            {nextActionTransition.label}
           </button>
         ) : (
           <span key="na-idle" className="font-normal text-slate-400">No action needed</span>
@@ -523,6 +535,7 @@ export default function JourneyWorkspace({
   onAction,
   onCancel,
   onRefresh,
+  refreshPending,
 }: {
   journey: JourneyWithDetails;
   events: JourneyEvent[];
@@ -539,6 +552,10 @@ export default function JourneyWorkspace({
   onAction: (j: JourneyWithDetails, e: JourneyEventType) => void;
   onCancel: (j: JourneyWithDetails) => void;
   onRefresh: () => void;
+  // True while the board is refetching this journey's row + events after
+  // an action — forward actions stay disabled so a stale state can't be
+  // acted on twice (e.g. Record Payment on an already-paid order).
+  refreshPending?: boolean;
 }) {
   const router = useRouter();
   // A3: journey_cancelled leaves current_state at its last value (020),
@@ -573,12 +590,25 @@ export default function JourneyWorkspace({
   // Payment — the payment would write a bad record.
   const paymentAllowed = (journey.price ?? 0) > 0;
 
+  // Paid >= price means no payment is due even if current_state hasn't
+  // caught up yet (the Quoted -> Sold flip lands with the same event that
+  // paid it). Record Payment must never be offered in that window — a
+  // second payment is a real double-charge, not a cosmetic glitch.
+  const paymentSettled =
+    journey.price != null &&
+    journey.price > 0 &&
+    paid >= journey.price;
+
   const nextFollowUp = followUps
     .filter((f) => !f.completed_at)
     .sort((a, b) => new Date(a.due_at).getTime() - new Date(b.due_at).getTime())[0];
 
   const [lineItems, setLineItems] = useState<JourneyLineItem[]>([]);
   const [lineItemsLoading, setLineItemsLoading] = useState(false);
+  // True once the first line-items fetch for this journey has resolved —
+  // background refetches (every events change re-runs the fetch) must not
+  // flash "Loading items…" or hide the empty state again.
+  const [lineItemsLoaded, setLineItemsLoaded] = useState(false);
   const [journeyUnits, setJourneyUnits] = useState<
     {
       requirement_id: string | null;
@@ -858,6 +888,7 @@ export default function JourneyWorkspace({
     fetchJourneyLineItems(journey.id).then((items) => {
       setLineItems(items);
       setLineItemsLoading(false);
+      setLineItemsLoaded(true);
     });
     setJourneyUnits([]);
     let unitsCancelled = false;
@@ -1327,6 +1358,8 @@ export default function JourneyWorkspace({
             attentionItems={attentionItems}
             transitions={transitions}
             exchangeAwaitingPayment={exchangeAwaitingPayment}
+            paymentSettled={paymentSettled}
+            refreshPending={refreshPending}
             onAction={onAction}
           />
           {panelError && (
@@ -1395,8 +1428,9 @@ export default function JourneyWorkspace({
                   .map((t) => (
                   <button
                     key={t.event}
+                    disabled={refreshPending}
                     onClick={() => onAction(journey, t.event)}
-                    className="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
+                    className="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
                   >
                     {t.label}
                   </button>
@@ -1519,15 +1553,15 @@ export default function JourneyWorkspace({
                 )}
               </div>
 
-              {lineItemsLoading && (
+              {lineItemsLoading && !lineItemsLoaded && (
                 <p className="text-sm text-slate-500">Loading items…</p>
               )}
 
-              {!lineItemsLoading && lineItems.length === 0 && (
+              {lineItemsLoaded && lineItems.length === 0 && (
                 <p className="text-sm text-slate-500">No items on this journey.</p>
               )}
 
-              {!lineItemsLoading && lineItems.length === 0 && !orderLocked && (
+              {lineItemsLoaded && lineItems.length === 0 && !orderLocked && (
                 <ProductPicker storeId={inventoryStoreId} onSelect={addLineItem} />
               )}
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Lock, Pencil, Check, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -702,6 +703,14 @@ export default function TransfersPage() {
         </td>
         <td className="px-3 py-2">
           <div>{requestSourceLabel(r.source_type)}</div>
+          {r.source_type === "journey_mismatch" && r.source_reference_id && (
+            <Link
+              href={`/board?journey=${r.source_reference_id}`}
+              className="text-xs font-medium text-brand-700 hover:underline"
+            >
+              {r.journey_number ?? "Order"}
+            </Link>
+          )}
           <div className="mt-0.5 text-xs text-slate-500">
             {requestWhyWhen({ sourceType: r.source_type, scheduleDay: r.destination?.transfer_schedule_day })}
           </div>
