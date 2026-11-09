@@ -1,5 +1,5 @@
--- m121 verify: both requirement observers are deferred to commit.
--- Run in Supabase SQL editor after 001-121.
+-- m121 v3 verify: sync trigger deferred; unit observer immediate and off
+-- the sync path. Run in Supabase SQL editor after 001-121.
 
 create or replace function pg_temp.chk(name text, ok boolean) returns void
 language plpgsql as $$
@@ -11,20 +11,37 @@ end $$;
 do $$
 declare v tg_trigger%rowtype;
 begin
-  for v in
-    select * from pg_trigger
-    where tgrelid = 'public.journey_inventory_requirements'::regclass
-      and tgname in ('trg_jm_requirement_sync', 'trg_jir_units_observer')
-  loop
-    perform pg_temp.chk(v.tgname || ' exists', v.tgname is not null);
-    perform pg_temp.chk(v.tgname || ' is constraint trigger', v.tgconstraint <> 0);
-    perform pg_temp.chk(v.tgname || ' is deferrable', v.tgdeferrable);
-    perform pg_temp.chk(v.tgname || ' initially deferred', v.tginitdeferred);
-  end loop;
-  perform pg_temp.chk('both triggers present',
-    (select count(*) from pg_trigger
-     where tgrelid = 'public.journey_inventory_requirements'::regclass
-       and tgname in ('trg_jm_requirement_sync', 'trg_jir_units_observer')) = 2);
+  select * into v from pg_trigger
+  where tgname = 'trg_jm_requirement_sync'
+    and tgrelid = 'public.journey_inventory_requirements'::regclass;
+  perform pg_temp.chk('trg_jm_requirement_sync exists', v.tgname is not null);
+  perform pg_temp.chk('is constraint trigger', v.tgconstraint <> 0);
+  perform pg_temp.chk('is deferrable', v.tgdeferrable);
+  perform pg_temp.chk('initially deferred', v.tginitdeferred);
+
+  select * into v from pg_trigger
+  where tgname = 'trg_jir_units_observer'
+    and tgrelid = 'public.journey_inventory_requirements'::regclass;
+  perform pg_temp.chk('trg_jir_units_observer exists', v.tgname is not null);
+  perform pg_temp.chk('unit observer NOT a constraint trigger', v.tgconstraint = 0);
+  perform pg_temp.chk('unit observer immediate (not deferred)',
+    not v.tgdeferrable or not v.tginitdeferred);
+end $$;
+
+do $$
+declare v text;
+begin
+  -- reconcile has the p_sync parameter and guards the sync call.
+  select pg_get_function_arguments(p.oid) into v
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname = 'reconcile_requirement_units';
+  perform pg_temp.chk('reconcile signature has p_sync', v like '%p_sync%');
+
+  select p.prosrc into v
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname = 'observe_requirement_units';
+  perform pg_temp.chk('observer passes p_sync=false',
+    v like '%reconcile_requirement_units(new.id, false)%');
 end $$;
 
 -- Behavioral (needs fixtures, run manually):
@@ -36,6 +53,8 @@ end $$;
 -- T4 partial coverage: one request held for the uncovered delta only.
 -- T5 Quoted order: no request; leaving Quoted with real shortfall
 --    creates exactly one.
--- T6 unit-tracked covered order: units end RESERVED at commit, no
---    request, no UNIT_ASSIGNMENT_ERROR audit rows.
--- T7 journey deleted before commit: no error (reconcile not-found guard).
+-- T6 unit-tracked covered order: units end RESERVED, no request, no
+--    UNIT_ASSIGNMENT_ERROR audit rows.
+-- T7 receive_purchase_order_line regression: returned assignments match
+--    pre-m121 behavior (units visible in v_assignments before commit).
+-- T8 journey deleted before commit: no error.
