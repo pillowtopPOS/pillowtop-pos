@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import {
   createDeliveryTruck,
@@ -196,6 +196,12 @@ export default function TrucksPanel({
   const [addPatternError, setAddPatternError] = useState("");
   const [addSaving, setAddSaving] = useState(false);
   const [addError, setAddError] = useState("");
+  // Synchronous in-flight guards — React state updates are async, so two
+  // clicks in the same tick would both pass a state check. Refs are read
+  // and written synchronously.
+  const addInFlight = useRef(false);
+  const editInFlight = useRef(false);
+  const patternInFlight = useRef<Set<string>>(new Set());
 
   // Edit state: truck id -> draft fields
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -252,7 +258,18 @@ export default function TrucksPanel({
     return n;
   };
 
+  // Case/space-insensitive duplicate check across active AND archived
+  // trucks. excludeId skips the truck being edited.
+  const nameTaken = (raw: string, excludeId?: string) => {
+    const n = raw.trim().toLowerCase();
+    if (!n) return false;
+    return [...trucks, ...archivedTrucks].some(
+      (t) => t.id !== excludeId && t.name.trim().toLowerCase() === n
+    );
+  };
+
   const submitAdd = async () => {
+    if (addInFlight.current) return;
     setAddNameError("");
     setAddCapError("");
     setAddPatternError("");
@@ -260,6 +277,11 @@ export default function TrucksPanel({
     let ok = true;
     if (!addName.trim()) {
       setAddNameError("Give the truck a name.");
+      ok = false;
+    } else if (nameTaken(addName)) {
+      setAddNameError(
+        `A truck named '${addName.trim()}' already exists. Pick a different name.`
+      );
       ok = false;
     }
     const cap = validateCap(addCap);
@@ -272,6 +294,7 @@ export default function TrucksPanel({
       ok = false;
     }
     if (!ok) return;
+    addInFlight.current = true;
     setAddSaving(true);
     try {
       await createDeliveryTruck({
@@ -288,17 +311,24 @@ export default function TrucksPanel({
     } catch {
       setAddError(SAVE_ERROR);
     } finally {
+      addInFlight.current = false;
       setAddSaving(false);
     }
   };
 
   const submitEdit = async (truckId: string) => {
+    if (editInFlight.current) return;
     setEditNameError("");
     setEditCapError("");
     setEditError("");
     let ok = true;
     if (!editName.trim()) {
       setEditNameError("Give the truck a name.");
+      ok = false;
+    } else if (nameTaken(editName, truckId)) {
+      setEditNameError(
+        `A truck named '${editName.trim()}' already exists. Pick a different name.`
+      );
       ok = false;
     }
     const cap = validateCap(editCap);
@@ -307,6 +337,7 @@ export default function TrucksPanel({
       ok = false;
     }
     if (!ok) return;
+    editInFlight.current = true;
     setEditSaving(true);
     try {
       await updateDeliveryTruck({
@@ -320,13 +351,14 @@ export default function TrucksPanel({
     } catch {
       setEditError(SAVE_ERROR);
     } finally {
+      editInFlight.current = false;
       setEditSaving(false);
     }
   };
 
   const togglePatternDay = async (truck: DeliveryTruckInfo, num: number) => {
     const current = truck.weekly_pattern;
-    if (patternSaving.has(truck.id)) return;
+    if (patternInFlight.current.has(truck.id)) return;
     let next: number[];
     if (current.includes(num)) {
       if (current.length <= 1) {
@@ -347,6 +379,7 @@ export default function TrucksPanel({
         return n;
       });
     }
+    patternInFlight.current.add(truck.id);
     setPatternSaving((prev) => new Set(prev).add(truck.id));
     try {
       await setTruckWeekdayPattern(truck.id, next);
@@ -354,6 +387,7 @@ export default function TrucksPanel({
     } catch {
       setRowError(SAVE_ERROR);
     } finally {
+      patternInFlight.current.delete(truck.id);
       setPatternSaving((prev) => {
         const n = new Set(prev);
         n.delete(truck.id);
