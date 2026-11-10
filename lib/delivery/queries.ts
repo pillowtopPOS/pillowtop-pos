@@ -218,3 +218,136 @@ export async function fetchDeliveryManageCalendar(): Promise<boolean> {
   if (error) return false;
   return data === true;
 }
+
+/** Whether the signed-in employee may book inside the cutoff window. */
+export async function fetchDeliveryBookInsideCutoff(): Promise<boolean> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("has_permission", {
+    p_key: "delivery.book_inside_cutoff",
+  });
+  if (error) return false;
+  return data === true;
+}
+
+// ---------------------------------------------------------------------------
+// D1-b: delivery stops (booking, rescheduling, cancelling)
+// ---------------------------------------------------------------------------
+
+export type JourneyDeliveryStop = {
+  id: string;
+  delivery_date: string;
+  inside_cutoff: boolean;
+  override_reason: string | null;
+  booked_by_name: string | null;
+  booked_at: string;
+};
+
+export type JourneyDeliveryEvent = {
+  action: "BOOKED" | "RESCHEDULED" | "CANCELLED" | "COMPLETED" | string;
+  from_date: string | null;
+  to_date: string | null;
+  reason: string | null;
+  override: boolean;
+  actor_name: string | null;
+  created_at: string;
+};
+
+export type EarliestBookable = {
+  earliest_date: string;
+  cutoff_time: string | null;
+  timezone: string;
+  today_local: string;
+};
+
+export type JourneyDelivery = {
+  active_stop: JourneyDeliveryStop | null;
+  history: JourneyDeliveryEvent[];
+  earliest: EarliestBookable;
+};
+
+/** Active stop + history + earliest bookable day for one order. */
+export async function fetchJourneyDelivery(
+  journeyId: string
+): Promise<JourneyDelivery> {
+  const supabase = createClient();
+  const { data, error } = await (supabase as any).rpc(
+    "get_journey_delivery",
+    { p_journey_id: journeyId }
+  );
+  if (error) throw error;
+  const d = data as JourneyDelivery | null;
+  return {
+    active_stop: d?.active_stop ?? null,
+    history: d?.history ?? [],
+    earliest: d?.earliest ?? {
+      earliest_date: "",
+      cutoff_time: null,
+      timezone: "",
+      today_local: "",
+    },
+  };
+}
+
+/** Book a delivery day for an order. Returns the new stop id. */
+export async function bookDeliveryStop(
+  journeyId: string,
+  date: string,
+  overrideReason?: string
+): Promise<string> {
+  const supabase = createClient();
+  const { data, error } = await (supabase as any).rpc(
+    "book_delivery_stop",
+    {
+      p_journey_id: journeyId,
+      p_date: date,
+      p_override_reason: overrideReason ?? null,
+    }
+  );
+  if (error) throw error;
+  return data as string;
+}
+
+/** Move an active stop to a new day. Returns the new stop id. */
+export async function rescheduleDeliveryStop(
+  stopId: string,
+  date: string,
+  overrideReason?: string
+): Promise<string> {
+  const supabase = createClient();
+  const { data, error } = await (supabase as any).rpc(
+    "reschedule_delivery_stop",
+    {
+      p_stop_id: stopId,
+      p_new_date: date,
+      p_override_reason: overrideReason ?? null,
+    }
+  );
+  if (error) throw error;
+  return data as string;
+}
+
+/** Cancel an active stop. The order returns to Ready to Schedule. */
+export async function cancelDeliveryStop(
+  stopId: string,
+  reason: string
+): Promise<void> {
+  const supabase = createClient();
+  const { error } = await (supabase as any).rpc(
+    "cancel_delivery_stop",
+    { p_stop_id: stopId, p_reason: reason }
+  );
+  if (error) throw error;
+}
+
+/** Company cutoff setting + whether the caller may edit it. */
+export async function fetchDeliveryCutoff(): Promise<{
+  cutoff_time: string | null;
+  can_edit: boolean;
+} | null> {
+  const supabase = createClient();
+  const { data, error } = await (supabase as any).rpc(
+    "get_delivery_cutoff"
+  );
+  if (error || !data) return null;
+  return data as { cutoff_time: string | null; can_edit: boolean };
+}

@@ -58,6 +58,7 @@ import {
   activityEventTitle,
 } from "@/lib/journeys/activityLabels";
 import SleepTrialSection from "@/components/SleepTrialSection";
+import JourneyDelivery from "@/components/delivery/JourneyDelivery";
 
 // The inventory-ready flag is a one-time notification marker, not a live
 // status. It only surfaces while the journey is Ready to Schedule — a
@@ -536,6 +537,7 @@ export default function JourneyWorkspace({
   onCancel,
   onRefresh,
   refreshPending,
+  openBookingSignal,
 }: {
   journey: JourneyWithDetails;
   events: JourneyEvent[];
@@ -556,6 +558,9 @@ export default function JourneyWorkspace({
   // an action — forward actions stay disabled so a stale state can't be
   // acted on twice (e.g. Record Payment on an already-paid order).
   refreshPending?: boolean;
+  // ?book=1 on the board URL (My Work handoff) — opens the delivery
+  // picker once inside JourneyDelivery, which strips the param.
+  openBookingSignal?: boolean;
 }) {
   const router = useRouter();
   // A3: journey_cancelled leaves current_state at its last value (020),
@@ -1928,15 +1933,13 @@ export default function JourneyWorkspace({
               {journey.fulfillment_type === "delivery" && customerAddress && (
                 <p className="mt-0.5 text-xs text-slate-500">{customerAddress}</p>
               )}
-              {journey.current_state === "Ready to Schedule" &&
-                transitions.find((t) => t.event === "delivery_scheduled") && (
-                  <button
-                    onClick={() => onAction(journey, "delivery_scheduled")}
-                    className="mt-2 w-full rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
-                  >
-                    {transitions.find((t) => t.event === "delivery_scheduled")!.label}
-                  </button>
-                )}
+              <JourneyDelivery
+                journey={journey}
+                onChanged={async () => {
+                  await onReassigned(journey.id);
+                }}
+                openBookingSignal={openBookingSignal}
+              />
             </RailCard>
 
             <RailCard title="Ownership">

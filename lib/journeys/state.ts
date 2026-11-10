@@ -6,6 +6,7 @@ export type JourneyEventType =
   | "deposit_received"
   | "payment_completed"
   | "delivery_scheduled"
+  | "delivery_unscheduled"
   | "delivery_completed"
   | "trial_completed"
   | "journey_cancelled";
@@ -61,16 +62,7 @@ export const STATE_TRANSITIONS: Record<SleepJourneyState, StateTransition[]> = {
   "Deposit Made": [],
   Sold: [],
   "Waiting for Inventory": [],
-  "Ready to Schedule": [
-    {
-      to: "Scheduled",
-      event: "delivery_scheduled",
-      label: "Schedule Delivery",
-      requiredFields: [
-        { name: "delivery_date", label: "Delivery date", type: "date" },
-      ],
-    },
-  ],
+  "Ready to Schedule": [],
   Scheduled: [
     {
       to: "Sleep Trial",

@@ -73,6 +73,10 @@ export function activityEventTitle(e: JourneyEvent, pickupName?: string | null):
       return `Delivery scheduled${
         data.delivery_date ? ` for ${activityShortDate(String(data.delivery_date))}` : ""
       }`;
+    case "delivery_unscheduled":
+      return `Delivery unscheduled${
+        data.reason ? `: ${data.reason}` : ""
+      }`;
     case "inventory_received":
       return "Inventory ready";
     case "inventory_required":
@@ -124,6 +128,8 @@ export function activityEventDetail(e: JourneyEvent): string | undefined {
       return data.delivered_at
         ? `Delivered ${activityShortDate(String(data.delivered_at))}`
         : undefined;
+    case "delivery_unscheduled":
+      return data.reason ? String(data.reason) : undefined;
     case "inventory_received":
       return "All required products are available.";
     case "line_items_changed_balance_due":

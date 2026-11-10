@@ -17,6 +17,7 @@ import {
 } from "@/lib/sleepTrial/permissions";
 import {
   fetchCompanyWeekStart,
+  fetchDeliveryCutoff,
   setCompanyWeekStart,
 } from "@/lib/delivery/queries";
 
@@ -88,6 +89,14 @@ export default function CompanySettingsForm() {
   const [weekStartDay, setWeekStartDay] = useState<1 | 7>(1);
   const [weekStartSaving, setWeekStartSaving] = useState(false);
   const [weekStartError, setWeekStartError] = useState<string | null>(null);
+  // delivery_cutoff_time arrives with migration 129; hidden until the
+  // read RPC exists.
+  const [cutoffSupported, setCutoffSupported] = useState(false);
+  const [cutoffTime, setCutoffTime] = useState("15:00");
+  const [cutoffNone, setCutoffNone] = useState(false);
+  const [cutoffCanEdit, setCutoffCanEdit] = useState(false);
+  const [cutoffSaving, setCutoffSaving] = useState(false);
+  const [cutoffError, setCutoffError] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([fetchCurrentEmployee(), fetchStores()]).then(([e, s]) => {
@@ -104,6 +113,16 @@ export default function CompanySettingsForm() {
       } else {
         setWeekStartSupported(true);
         setWeekStartDay(d === 7 ? 7 : 1);
+      }
+    });
+    fetchDeliveryCutoff().then((d) => {
+      if (d === null) {
+        setCutoffSupported(false);
+      } else {
+        setCutoffSupported(true);
+        setCutoffCanEdit(d.can_edit);
+        setCutoffNone(d.cutoff_time === null);
+        if (d.cutoff_time) setCutoffTime(d.cutoff_time.slice(0, 5));
       }
     });
   }, []);
@@ -206,6 +225,26 @@ export default function CompanySettingsForm() {
       setWeekStartError("Couldn't save that setting. Please try again.");
     } finally {
       setWeekStartSaving(false);
+    }
+  }
+
+  // Same save path as the other company options: a direct companies
+  // update under the owner/admin RLS policy. The RPC only reads.
+  async function changeDeliveryCutoff(nextTime: string, nextNone: boolean) {
+    if (!companyId || cutoffSaving) return;
+    setCutoffError(null);
+    setCutoffSaving(true);
+    const supabase = createClient();
+    const { error } = await (supabase as any)
+      .from("companies")
+      .update({ delivery_cutoff_time: nextNone ? null : nextTime })
+      .eq("id", companyId);
+    setCutoffSaving(false);
+    if (error) {
+      setCutoffError(error.message);
+    } else {
+      setCutoffTime(nextTime);
+      setCutoffNone(nextNone);
     }
   }
 
@@ -344,6 +383,64 @@ export default function CompanySettingsForm() {
                 Which day the company week begins on — calendars, reports,
                 and commissions all follow it.
                 {!canEditPermissions && " Only owners and admins can change this."}
+              </p>
+            </div>
+          )}
+          {cutoffSupported && (
+            <div className="border-b border-slate-200 pb-4">
+              <span className="block text-sm font-medium text-slate-700">
+                Delivery cutoff
+              </span>
+              <div className="mt-2 flex items-center gap-3">
+                <input
+                  id="delivery-cutoff-time"
+                  data-testid="delivery-cutoff-time"
+                  type="time"
+                  value={cutoffTime}
+                  disabled={cutoffSaving || cutoffNone || !cutoffCanEdit}
+                  onChange={(e) => {
+                    if (e.target.value) setCutoffTime(e.target.value);
+                  }}
+                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm disabled:opacity-50"
+                />
+                <label className="flex items-center gap-2 text-sm text-slate-600">
+                  <input
+                    type="checkbox"
+                    data-testid="delivery-cutoff-none"
+                    checked={cutoffNone}
+                    disabled={cutoffSaving || !cutoffCanEdit}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      setCutoffNone(next);
+                      if (next) changeDeliveryCutoff(cutoffTime, true);
+                    }}
+                    className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 disabled:opacity-50"
+                  />
+                  No cutoff
+                </label>
+              </div>
+              {cutoffCanEdit && !cutoffNone && (
+                <button
+                  type="button"
+                  data-testid="delivery-cutoff-save"
+                  disabled={cutoffSaving}
+                  onClick={() => changeDeliveryCutoff(cutoffTime, false)}
+                  className="mt-2 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                >
+                  {cutoffSaving ? "Saving…" : "Save cutoff"}
+                </button>
+              )}
+              {cutoffSaving && (
+                <p className="mt-1 text-xs text-slate-400">Saving…</p>
+              )}
+              {cutoffError && (
+                <p className="mt-1 text-xs text-red-600">{cutoffError}</p>
+              )}
+              <p className="mt-1 text-xs text-slate-500">
+                Orders booked at or after this time start the day after
+                tomorrow. The clock is the timezone of the warehouse each
+                order ships from.
+                {!cutoffCanEdit && " Only owners and admins can change this."}
               </p>
             </div>
           )}

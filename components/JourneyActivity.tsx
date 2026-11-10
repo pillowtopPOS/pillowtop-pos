@@ -95,6 +95,7 @@ function eventCategory(e: JourneyEvent): FeedFilter {
     case "payment_refunded":
       return "payments";
     case "delivery_scheduled":
+    case "delivery_unscheduled":
     case "delivery_completed":
       return "fulfillment";
     case "trial_completed":

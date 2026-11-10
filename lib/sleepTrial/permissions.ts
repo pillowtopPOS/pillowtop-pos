@@ -132,6 +132,12 @@ export const ALL_PERMISSIONS: PermissionDef[] = [
     description: "Lets this person add or remove extra delivery spots on the delivery calendar.",
   },
   {
+    key: "delivery.book_inside_cutoff",
+    label: "Book a delivery inside the cutoff window",
+    group: "Delivery",
+    description: "Lets this person book or move a delivery to a day before the earliest bookable day. They must give a reason.",
+  },
+  {
     key: "delivery.manage_trucks",
     label: "Manage delivery trucks and turn them on or off for a day",
     group: "Delivery",

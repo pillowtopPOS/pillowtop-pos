@@ -872,6 +872,7 @@ export default function BoardPage() {
           onRefresh={async () => {
             await handleReassigned(selectedJourney.id);
           }}
+          openBookingSignal={searchParams.get("book") === "1"}
         />
       )}
 
