@@ -12,6 +12,7 @@ import {
   fetchDeliveryManageCalendar,
   setTruckDateState,
   setDayExtraSlots,
+  fetchDeliveryWeekStart,
   type DeliveryCalendar,
   type DeliveryCalendarDay,
   type DeliveryTruckDay,
@@ -41,11 +42,12 @@ function addDays(iso: string, n: number): string {
   return toISODay(d);
 }
 
-// Monday of the week containing iso.
-function mondayOf(iso: string): string {
+// Start of the week containing iso. startDay is the ISO weekday the
+// company's calendar week begins on: 1 = Monday, 7 = Sunday.
+function weekStartOf(iso: string, startDay: number): string {
   const d = parseDay(iso);
-  const dow = (d.getUTCDay() + 6) % 7; // Mon=0 .. Sun=6
-  d.setUTCDate(d.getUTCDate() - dow);
+  const isoDow = ((d.getUTCDay() + 6) % 7) + 1; // Mon=1 .. Sun=7
+  d.setUTCDate(d.getUTCDate() - ((isoDow - startDay + 7) % 7));
   return toISODay(d);
 }
 
@@ -135,7 +137,9 @@ export default function DeliveryPage() {
   const [cellError, setCellError] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelAddMode, setPanelAddMode] = useState(false);
+  const [weekStartDay, setWeekStartDay] = useState<1 | 7>(1);
   const weekStartRef = useRef<string | null>(null);
+  const weekStartDayRef = useRef<1 | 7>(1);
 
   const load = useCallback(async (startIso: string) => {
     setLoading(true);
@@ -159,9 +163,17 @@ export default function DeliveryPage() {
         return;
       }
       // Anchor the first week on the business date in the caller's home
-      // store timezone — the browser clock is only a fallback.
-      const today = (await fetchDeliveryBusinessToday()) ?? toISODay(new Date());
-      const start = mondayOf(today);
+      // store timezone AND the company's week-start setting — both are
+      // fetched before the first calendar call so there's no flash of
+      // the wrong week. The browser clock is only a fallback.
+      const [today, wkStart] = await Promise.all([
+        fetchDeliveryBusinessToday(),
+        fetchDeliveryWeekStart(),
+      ]);
+      const startDay = (wkStart === 7 ? 7 : 1) as 1 | 7;
+      weekStartDayRef.current = startDay;
+      setWeekStartDay(startDay);
+      const start = weekStartOf(today ?? toISODay(new Date()), startDay);
       weekStartRef.current = start;
       setWeekStart(start);
       const [cal, canManageTrucksPerm, canManageCalendarPerm] = await Promise.all([
@@ -266,10 +278,8 @@ export default function DeliveryPage() {
           <button
             onClick={() => {
               const today = toISODay(new Date());
-              // Prefer the business date when we can get it cheaply; the
-              // week already on screen is fine otherwise.
               fetchDeliveryBusinessToday().then((t) =>
-                goTo(mondayOf(t ?? today))
+                goTo(weekStartOf(t ?? today, weekStartDayRef.current))
               );
             }}
             disabled={loading}
@@ -462,11 +472,24 @@ export default function DeliveryPage() {
         <TrucksPanel
           trucks={trucks}
           archivedTrucks={calendar?.archived_trucks ?? []}
+          weekStartDay={weekStartDay}
           startInAddMode={panelAddMode}
           onClose={() => setPanelOpen(false)}
           onChanged={() => {
             const current = weekStartRef.current;
             if (current) load(current);
+          }}
+          onWeekStartChanged={(day) => {
+            const sd = (day === 7 ? 7 : 1) as 1 | 7;
+            weekStartDayRef.current = sd;
+            setWeekStartDay(sd);
+            // Re-anchor to the week containing the date already on
+            // screen — never jump to a random week.
+            const anchor = weekStartRef.current ?? toISODay(new Date());
+            const newStart = weekStartOf(anchor, sd);
+            weekStartRef.current = newStart;
+            setWeekStart(newStart);
+            load(newStart);
           }}
         />
       )}

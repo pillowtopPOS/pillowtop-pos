@@ -7,35 +7,36 @@ import {
   updateDeliveryTruck,
   setDeliveryTruckArchived,
   setTruckWeekdayPattern,
+  setDeliveryWeekStart,
   type DeliveryTruckInfo,
   type ArchivedDeliveryTruck,
 } from "@/lib/delivery/queries";
-import { fetchStores, type Store } from "@/lib/journeys/queries";
+import { fetchStores } from "@/lib/journeys/queries";
 
-const WEEKDAY_LABELS = ["M", "T", "W", "T", "F", "S", "S"];
-// ISO isodow 1=Mon..7=Sun maps to array index 0..6.
 const WEEKDAY_NUMS = [1, 2, 3, 4, 5, 6, 7];
-
-function locationLabel(store: Store): string {
-  if (store.location_type === "WAREHOUSE") return `${store.name} — Warehouse`;
-  if (store.location_type === "WAREHOUSE_QUARANTINE")
-    return `${store.name} — Quarantine`;
-  return `${store.name} — Store`;
-}
+const WEEKDAY_NAMES = [
+  "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+];
 
 function WeekdayToggles({
   pattern,
   disabled,
+  startDay = 1,
   onToggle,
 }: {
   pattern: number[];
   disabled?: boolean;
+  startDay?: number;
   onToggle: (weekday: number) => void;
 }) {
+  // Display order follows the company's week-start setting; the stored
+  // pattern stays ISO (1=Mon..7=Sun) either way.
+  const ordered = [...WEEKDAY_NUMS].sort(
+    (a, b) => ((a - startDay + 7) % 7) - ((b - startDay + 7) % 7)
+  );
   return (
     <div className="flex gap-1">
-      {WEEKDAY_LABELS.map((label, i) => {
-        const num = WEEKDAY_NUMS[i];
+      {ordered.map((num) => {
         const on = pattern.includes(num);
         return (
           <button
@@ -43,14 +44,14 @@ function WeekdayToggles({
             type="button"
             disabled={disabled}
             onClick={() => onToggle(num)}
-            title={`${["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"][i]}${on ? " — runs" : " — off"}`}
+            title={`${WEEKDAY_NAMES[num - 1]}${on ? " — runs" : " — off"}`}
             className={`flex h-7 w-7 items-center justify-center rounded border text-xs font-medium ${
               on
                 ? "border-brand-600 bg-brand-600 text-white"
                 : "border-slate-300 bg-white text-slate-500 hover:bg-slate-50"
             } disabled:cursor-not-allowed disabled:opacity-50`}
           >
-            {label}
+            {WEEKDAY_NAMES[num - 1][0]}
           </button>
         );
       })}
@@ -61,13 +62,11 @@ function WeekdayToggles({
 function TruckFormFields({
   name,
   setName,
-  locationId,
-  setLocationId,
   stopCap,
   setStopCap,
   pattern,
   setPattern,
-  stores,
+  startDay = 1,
   nameError,
   capError,
   patternError,
@@ -76,13 +75,11 @@ function TruckFormFields({
 }: {
   name: string;
   setName: (v: string) => void;
-  locationId: string;
-  setLocationId: (v: string) => void;
   stopCap: string;
   setStopCap: (v: string) => void;
   pattern: number[];
   setPattern: (v: number[]) => void;
-  stores: Store[];
+  startDay?: number;
   nameError?: string;
   capError?: string;
   patternError?: string;
@@ -119,24 +116,6 @@ function TruckFormFields({
 
       <div>
         <label className="mb-1 block text-xs font-medium text-slate-600">
-          Home location
-        </label>
-        <select
-          value={locationId}
-          onChange={(e) => setLocationId(e.target.value)}
-          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
-        >
-          <option value="">No home location</option>
-          {stores.map((s) => (
-            <option key={s.id} value={s.id}>
-              {locationLabel(s)}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div>
-        <label className="mb-1 block text-xs font-medium text-slate-600">
           Daily stop cap
         </label>
         <input
@@ -156,7 +135,7 @@ function TruckFormFields({
           <label className="mb-1 block text-xs font-medium text-slate-600">
             Runs on
           </label>
-          <WeekdayToggles pattern={pattern} onToggle={toggleDay} />
+          <WeekdayToggles pattern={pattern} startDay={startDay} onToggle={toggleDay} />
           {patternError && (
             <p className="mt-1 text-xs text-red-600">{patternError}</p>
           )}
@@ -173,22 +152,25 @@ const SAVE_ERROR = "Couldn't save the truck. Please try again.";
 export default function TrucksPanel({
   trucks,
   archivedTrucks,
+  weekStartDay,
   onClose,
   onChanged,
+  onWeekStartChanged,
   startInAddMode = false,
 }: {
   trucks: DeliveryTruckInfo[];
   archivedTrucks: ArchivedDeliveryTruck[];
+  weekStartDay: number;
   onClose: () => void;
   onChanged: () => void;
+  onWeekStartChanged: (day: number) => void;
   startInAddMode?: boolean;
 }) {
-  const [stores, setStores] = useState<Store[]>([]);
+  const [hubLocationId, setHubLocationId] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(startInAddMode);
 
   // Add form state
   const [addName, setAddName] = useState("");
-  const [addLocation, setAddLocation] = useState("");
   const [addCap, setAddCap] = useState("8");
   const [addPattern, setAddPattern] = useState<number[]>([1, 2, 3, 4, 5, 6]);
   const [addNameError, setAddNameError] = useState("");
@@ -206,7 +188,6 @@ export default function TrucksPanel({
   // Edit state: truck id -> draft fields
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
-  const [editLocation, setEditLocation] = useState("");
   const [editCap, setEditCap] = useState("8");
   const [editNameError, setEditNameError] = useState("");
   const [editCapError, setEditCapError] = useState("");
@@ -221,15 +202,16 @@ export default function TrucksPanel({
   const [rowError, setRowError] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [restoreSaving, setRestoreSaving] = useState<Set<string>>(new Set());
+  const [weekStartSaving, setWeekStartSaving] = useState(false);
+  const [weekStartError, setWeekStartError] = useState("");
 
   useEffect(() => {
     fetchStores(true).then((list) => {
       const usable = list.filter((s) => s.location_type !== "WAREHOUSE_QUARANTINE");
-      setStores(usable);
-      // Hub rule: default a new truck's home to the main warehouse.
+      // Hub rule: new trucks silently home at the main warehouse.
       const hub =
         usable.find((s) => s.location_type === "WAREHOUSE") ?? usable[0];
-      if (hub) setAddLocation((cur) => cur || hub.id);
+      if (hub) setHubLocationId(hub.id);
     });
   }, []);
 
@@ -244,7 +226,6 @@ export default function TrucksPanel({
   const startEdit = (t: DeliveryTruckInfo) => {
     setEditingId(t.id);
     setEditName(t.name);
-    setEditLocation(t.home_location_id ?? "");
     setEditCap(String(t.default_stop_cap));
     setEditNameError("");
     setEditCapError("");
@@ -299,7 +280,7 @@ export default function TrucksPanel({
     try {
       await createDeliveryTruck({
         name: addName.trim(),
-        homeLocationId: addLocation || null,
+        homeLocationId: hubLocationId,
         defaultStopCap: cap!,
         weeklyPattern: addPattern,
       });
@@ -316,7 +297,8 @@ export default function TrucksPanel({
     }
   };
 
-  const submitEdit = async (truckId: string) => {
+  const submitEdit = async (truck: DeliveryTruckInfo) => {
+    const truckId = truck.id;
     if (editInFlight.current) return;
     setEditNameError("");
     setEditCapError("");
@@ -343,7 +325,9 @@ export default function TrucksPanel({
       await updateDeliveryTruck({
         truckId,
         name: editName.trim(),
-        homeLocationId: editLocation || null,
+        // Home location is not editable in the UI — pass the truck's
+        // current value through unchanged.
+        homeLocationId: truck.home_location_id,
         defaultStopCap: cap!,
       });
       setEditingId(null);
@@ -430,12 +414,18 @@ export default function TrucksPanel({
     }
   };
 
-  const truckLocationName = (t: DeliveryTruckInfo | ArchivedDeliveryTruck) => {
-    if (!t.home_location_name) return "No home location";
-    const type = t.home_location_type;
-    const tag =
-      type === "WAREHOUSE" ? "Warehouse" : type === "STORE" ? "Store" : type ?? "";
-    return tag ? `${t.home_location_name} · ${tag}` : t.home_location_name;
+  const changeWeekStart = async (day: number) => {
+    if (weekStartSaving || day === weekStartDay) return;
+    setWeekStartError("");
+    setWeekStartSaving(true);
+    try {
+      await setDeliveryWeekStart(day);
+      onWeekStartChanged(day);
+    } catch {
+      setWeekStartError("Couldn't save that setting. Please try again.");
+    } finally {
+      setWeekStartSaving(false);
+    }
   };
 
   return (
@@ -473,13 +463,11 @@ export default function TrucksPanel({
                     <TruckFormFields
                       name={editName}
                       setName={setEditName}
-                      locationId={editLocation}
-                      setLocationId={setEditLocation}
                       stopCap={editCap}
                       setStopCap={setEditCap}
                       pattern={t.weekly_pattern}
                       setPattern={() => {}}
-                      stores={stores}
+                      startDay={weekStartDay}
                       nameError={editNameError}
                       capError={editCapError}
                       showPattern={false}
@@ -494,7 +482,7 @@ export default function TrucksPanel({
                       <button
                         type="button"
                         disabled={editSaving}
-                        onClick={() => submitEdit(t.id)}
+                        onClick={() => submitEdit(t)}
                         className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
                       >
                         {editSaving ? "Saving…" : "Save"}
@@ -516,7 +504,7 @@ export default function TrucksPanel({
                           {t.name}
                         </p>
                         <p className="text-xs text-slate-500">
-                          {truckLocationName(t)} · {t.default_stop_cap} stops/day
+                          {t.default_stop_cap} stops/day
                         </p>
                       </div>
                       <div className="flex shrink-0 gap-1">
@@ -539,6 +527,7 @@ export default function TrucksPanel({
                     <div className="mt-2 flex items-center gap-2">
                       <WeekdayToggles
                         pattern={t.weekly_pattern}
+                        startDay={weekStartDay}
                         disabled={patternSaving.has(t.id)}
                         onToggle={(num) => togglePatternDay(t, num)}
                       />
@@ -595,8 +584,6 @@ export default function TrucksPanel({
                 <TruckFormFields
                   name={addName}
                   setName={setAddName}
-                  locationId={addLocation}
-                  setLocationId={setAddLocation}
                   stopCap={addCap}
                   setStopCap={setAddCap}
                   pattern={addPattern}
@@ -604,7 +591,7 @@ export default function TrucksPanel({
                     setAddPattern(v);
                     setAddPatternError("");
                   }}
-                  stores={stores}
+                  startDay={weekStartDay}
                   nameError={addNameError}
                   capError={addCapError}
                   patternError={addPatternError}
@@ -664,9 +651,6 @@ export default function TrucksPanel({
                         <p className="truncate text-sm text-slate-600">
                           {t.name}
                         </p>
-                        <p className="text-xs text-slate-400">
-                          {truckLocationName(t)}
-                        </p>
                       </div>
                       <button
                         type="button"
@@ -682,6 +666,45 @@ export default function TrucksPanel({
               )}
             </div>
           )}
+
+          {/* Calendar settings */}
+          <div className="mt-6 border-t border-slate-200 pt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Calendar
+            </p>
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <span className="text-sm text-slate-700">Week starts on</span>
+              <div className="flex gap-1">
+                {[
+                  { day: 7, label: "Sunday" },
+                  { day: 1, label: "Monday" },
+                ].map((opt) => {
+                  const active = weekStartDay === opt.day;
+                  return (
+                    <button
+                      key={opt.day}
+                      type="button"
+                      disabled={weekStartSaving}
+                      onClick={() => changeWeekStart(opt.day)}
+                      className={`rounded-md border px-3 py-1.5 text-sm ${
+                        active
+                          ? "border-brand-600 bg-brand-600 text-white"
+                          : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                      } disabled:opacity-50`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            {weekStartSaving && (
+              <p className="mt-1 text-xs text-slate-400">Saving…</p>
+            )}
+            {weekStartError && (
+              <p className="mt-1 text-xs text-red-600">{weekStartError}</p>
+            )}
+          </div>
         </div>
       </aside>
     </div>
