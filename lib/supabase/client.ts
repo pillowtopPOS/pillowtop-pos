@@ -56,19 +56,52 @@ export function createClient() {
  * otherwise silently restore it. In-memory state (cached employee, etc.)
  * is dropped by the full navigation callers perform after this resolves.
  */
+function expireSupabaseAuthCookies() {
+  if (typeof document === "undefined") return;
+  const prefix = "sb-";
+  for (const part of document.cookie.split("; ")) {
+    const name = part.split("=")[0];
+    if (name.startsWith(prefix) && name.includes("auth-token")) {
+      document.cookie = `${name}=; Path=/; Max-Age=0`;
+      document.cookie = `${name}=; Path=/; Domain=${window.location.hostname}; Max-Age=0`;
+    }
+  }
+  // code-verifier chunks used by PKCE flows
+  for (const part of document.cookie.split("; ")) {
+    const name = part.split("=")[0];
+    if (name.startsWith(prefix) && name.includes("code-verifier")) {
+      document.cookie = `${name}=; Path=/; Max-Age=0`;
+    }
+  }
+}
+
+const timeout = (ms: number) =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
 export async function signOut() {
   const supabase = createClient();
   // Sign out even if the claim clear fails — a stale claim is a minor
-  // nuisance, a stuck session is not.
-  await supabase.auth
-    .updateUser({
-      data: {
-        active_store_id: null,
-        active_store_confirmed_at: null,
-      },
-    })
-    .catch(() => {});
+  // nuisance, a stuck session is not. Both SDK calls are time-bounded:
+  // the SDK performs its server logout BEFORE removing the local session,
+  // so an unbounded await can leave the user signed in forever.
+  await Promise.race([
+    supabase.auth
+      .updateUser({
+        data: {
+          active_store_id: null,
+          active_store_confirmed_at: null,
+        },
+      })
+      .catch(() => {}),
+    timeout(4000),
+  ]);
   // scope 'local' ends only this device's session — the default 'global'
   // would also kill the same user's sessions on other terminals.
-  await supabase.auth.signOut({ scope: "local" });
+  await Promise.race([
+    supabase.auth.signOut({ scope: "local" }).catch(() => {}),
+    timeout(4000),
+  ]);
+  // Guarantee the local session is gone even if the SDK stalled before
+  // its own cookie cleanup ran.
+  expireSupabaseAuthCookies();
 }

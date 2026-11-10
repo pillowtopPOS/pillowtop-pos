@@ -171,8 +171,13 @@ export default function Sidebar({
   // store list, mounted page state — is dropped with the session.
   async function handleSignOut() {
     setSigningOut(true);
-    await signOut();
-    window.location.href = "/login";
+    try {
+      await signOut();
+    } finally {
+      // Navigate no matter what — a failed sign-out must not trap the
+      // user on a page that still looks signed in.
+      window.location.href = "/login";
+    }
   }
 
   return (
