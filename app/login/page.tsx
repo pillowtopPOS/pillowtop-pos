@@ -32,10 +32,23 @@ export default function LoginPage() {
 
     if (error) {
       setMessage(error.message);
-    } else {
-      setMessage("Signed in. Redirecting…");
-      window.location.href = "/board";
+      return;
     }
+
+    // The credentials were accepted, but the session is written to
+    // cookies asynchronously-ish — verify it actually stuck before
+    // navigating, otherwise /board bounces straight back here with a
+    // fresh empty form and no explanation.
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData.session) {
+      setMessage(
+        "Signed in, but the session didn't stick. Please try again."
+      );
+      return;
+    }
+
+    setMessage("Signed in. Redirecting…");
+    window.location.href = "/board";
   }
 
   return (
