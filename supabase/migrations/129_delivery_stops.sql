@@ -290,6 +290,7 @@ declare
   v_stop_company uuid;
   v_stop_date date;
   v_stop_actor uuid;
+  v_prev_state public.journey_state;
 begin
   select id into emp_id
   from public.employees
@@ -348,6 +349,26 @@ begin
       where ws.id = v_written_sale_id;
     end if;
 
+    -- m129: a cancelled order must not keep a live delivery stop — the
+    -- slot frees immediately and the release is logged.
+    update public.delivery_stops
+    set status = 'CANCELLED',
+        cancelled_at = now(),
+        cancel_reason = 'Order is no longer scheduled',
+        updated_at = now()
+    where journey_id = new.journey_id
+      and status = 'BOOKED'
+    returning id, company_id, delivery_date into v_stop_id, v_stop_company, v_stop_date;
+
+    if v_stop_id is not null then
+      insert into public.delivery_stop_events (
+        company_id, stop_id, journey_id, action, from_date, reason, actor_id
+      ) values (
+        v_stop_company, v_stop_id, new.journey_id, 'CANCELLED',
+        v_stop_date, 'Order is no longer scheduled', null
+      );
+    end if;
+
     return new;
   end if;
 
@@ -380,6 +401,12 @@ begin
   then
     new_price := (new.event_data->>'amount')::numeric;
   end if;
+
+  -- m129: capture the state BEFORE this event moves it — needed below
+  -- to release a stop when the order leaves Scheduled.
+  select current_state into v_prev_state
+  from public.sleep_journeys
+  where id = new.journey_id;
 
   update public.sleep_journeys
   set current_state = target,
@@ -446,6 +473,33 @@ begin
     );
   end if;
 
+  -- m129: a BOOKED stop must never outlive the order being Scheduled.
+  -- Any event that moves the order OUT of Scheduled (other than the two
+  -- delivery lifecycle events, handled separately) cancels the stop and
+  -- frees the slot immediately.
+  if v_prev_state = 'Scheduled'
+     and target is distinct from 'Scheduled'
+     and new.event_type not in ('delivery_completed', 'delivery_unscheduled')
+  then
+    update public.delivery_stops
+    set status = 'CANCELLED',
+        cancelled_at = now(),
+        cancel_reason = 'Order is no longer scheduled',
+        updated_at = now()
+    where journey_id = new.journey_id
+      and status = 'BOOKED'
+    returning id, company_id, delivery_date into v_stop_id, v_stop_company, v_stop_date;
+
+    if v_stop_id is not null then
+      insert into public.delivery_stop_events (
+        company_id, stop_id, journey_id, action, from_date, reason, actor_id
+      ) values (
+        v_stop_company, v_stop_id, new.journey_id, 'CANCELLED',
+        v_stop_date, 'Order is no longer scheduled', null
+      );
+    end if;
+  end if;
+
   -- m129: Mark Delivered closes the order's open delivery stop and logs
   -- COMPLETED. Orders with no stop (legacy) match nothing.
   if new.event_type = 'delivery_completed' then
@@ -508,19 +562,25 @@ begin
 
   if new.event_type = 'delivery_scheduled' then
     v_date := nullif(new.event_data->>'delivery_date', '')::date;
+    -- created_at = now() proves the stop was written in THIS transaction
+    -- by the booking RPC — an old BOOKED row cannot satisfy the guard.
     if v_date is null or not exists (
       select 1 from public.delivery_stops ds
       where ds.journey_id = new.journey_id
         and ds.delivery_date = v_date
         and ds.status = 'BOOKED'
+        and ds.created_at = now()
     ) then
       raise exception 'Delivery scheduling must go through the delivery stop functions.';
     end if;
   else
+    -- cancelled_at = now() proves the cancellation happened in THIS
+    -- transaction — an old CANCELLED row cannot satisfy the guard.
     if not exists (
       select 1 from public.delivery_stops ds
       where ds.journey_id = new.journey_id
         and ds.status = 'CANCELLED'
+        and ds.cancelled_at = now()
     ) then
       raise exception 'Delivery scheduling must go through the delivery stop functions.';
     end if;
@@ -606,6 +666,7 @@ begin
 end;
 $$;
 
+revoke execute on function public.get_earliest_bookable_date(uuid) from public, anon;
 grant execute on function public.get_earliest_bookable_date(uuid) to authenticated;
 
 -- ============================================================================
@@ -634,6 +695,8 @@ declare
   v_capacity integer;
   v_booked integer;
   v_stop_id uuid;
+  v_stop_company uuid;
+  v_stop_date date;
 begin
   v_company_id := public.delivery_caller_company();
   if v_company_id is null then
@@ -680,6 +743,27 @@ begin
     raise exception 'That order is not ready to schedule a delivery.';
   end if;
 
+  -- Defensive: a stray BOOKED stop on a re-bookable order (data drift,
+  -- a bug, a manual fix) is released with a log row instead of hitting
+  -- the unique index as a raw database error.
+  update public.delivery_stops
+  set status = 'CANCELLED',
+      cancelled_at = now(),
+      cancel_reason = 'Released before rebooking',
+      updated_at = now()
+  where journey_id = p_journey_id
+    and status = 'BOOKED'
+  returning id, company_id, delivery_date into v_stop_id, v_stop_company, v_stop_date;
+
+  if v_stop_id is not null then
+    insert into public.delivery_stop_events (
+      company_id, stop_id, journey_id, action, from_date, reason, actor_id
+    ) values (
+      v_stop_company, v_stop_id, p_journey_id, 'CANCELLED',
+      v_stop_date, 'Released before rebooking', v_employee_id
+    );
+  end if;
+
   if p_date is null then
     raise exception 'Pick a delivery day.';
   end if;
@@ -716,8 +800,7 @@ begin
     and ds.delivery_date = p_date
     and ds.status in ('BOOKED', 'COMPLETED');
 
-  if v_capacity - v_booked <= 0
-     and not public.has_permission('delivery.manage_calendar') then
+  if v_capacity - v_booked <= 0 then
     raise exception 'That day is fully booked. Ask someone who manages the delivery calendar to add spots.';
   end if;
 
@@ -751,6 +834,7 @@ begin
 end;
 $$;
 
+revoke execute on function public.book_delivery_stop(uuid, date, text) from public, anon;
 grant execute on function public.book_delivery_stop(uuid, date, text) to authenticated;
 
 -- ============================================================================
@@ -857,8 +941,7 @@ begin
     and ds.status in ('BOOKED', 'COMPLETED')
     and ds.id <> v_stop.id;
 
-  if v_capacity - v_booked <= 0
-     and not public.has_permission('delivery.manage_calendar') then
+  if v_capacity - v_booked <= 0 then
     raise exception 'That day is fully booked. Ask someone who manages the delivery calendar to add spots.';
   end if;
 
@@ -898,6 +981,7 @@ begin
 end;
 $$;
 
+revoke execute on function public.reschedule_delivery_stop(uuid, date, text) from public, anon;
 grant execute on function public.reschedule_delivery_stop(uuid, date, text) to authenticated;
 
 -- ============================================================================
@@ -986,6 +1070,7 @@ begin
 end;
 $$;
 
+revoke execute on function public.cancel_delivery_stop(uuid, text) from public, anon;
 grant execute on function public.cancel_delivery_stop(uuid, text) to authenticated;
 
 -- ============================================================================
