@@ -632,6 +632,9 @@ export default function TrucksPanel({
                         <p className="truncate text-sm text-slate-600">
                           {t.name}
                         </p>
+                        <p className="text-xs text-slate-400">
+                          {t.default_stop_cap} stops/day
+                        </p>
                       </div>
                       <button
                         type="button"

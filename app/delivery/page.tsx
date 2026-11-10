@@ -140,6 +140,7 @@ export default function DeliveryPage() {
   const [weekStartDay, setWeekStartDay] = useState<1 | 7>(1);
   const weekStartRef = useRef<string | null>(null);
   const weekStartDayRef = useRef<1 | 7>(1);
+  const userIdRef = useRef<string | null>(null);
 
   const load = useCallback(async (startIso: string) => {
     setLoading(true);
@@ -148,7 +149,13 @@ export default function DeliveryPage() {
       const cal = await fetchDeliveryCalendar(startIso, addDays(startIso, 6));
       setCalendar(cal);
       try {
-        window.localStorage.setItem("delivery-calendar-anchor", startIso);
+        const uid = userIdRef.current;
+        if (uid) {
+          window.localStorage.setItem(
+            `delivery-calendar-anchor:${uid}`,
+            JSON.stringify({ date: startIso, savedAt: Date.now() })
+          );
+        }
       } catch {
         // storage unavailable — fine
       }
@@ -167,6 +174,7 @@ export default function DeliveryPage() {
         router.push("/login");
         return;
       }
+      userIdRef.current = session.user.id;
       // Anchor the first week on the business date in the caller's home
       // store timezone AND the company's week-start setting — both are
       // fetched before the first calendar call so there's no flash of
@@ -178,13 +186,28 @@ export default function DeliveryPage() {
       const startDay = (wkStart === 7 ? 7 : 1) as 1 | 7; // null -> Monday
       weekStartDayRef.current = startDay;
       setWeekStartDay(startDay);
-      // Reopen on the week the user was last viewing; fall back to today.
+      // Reopen on the week this user was last viewing; fall back to
+      // today. Keyed per user (shared store computers) and ignored when
+      // older than 14 days.
       let anchorDate = today ?? toISODay(new Date());
       try {
-        const saved = window.localStorage.getItem("delivery-calendar-anchor");
-        if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved)) anchorDate = saved;
+        const saved = window.localStorage.getItem(
+          `delivery-calendar-anchor:${session.user.id}`
+        );
+        if (saved) {
+          const { date, savedAt } = JSON.parse(saved) as {
+            date?: string;
+            savedAt?: number;
+          };
+          const fresh =
+            typeof savedAt === "number" &&
+            Date.now() - savedAt < 14 * 24 * 3600 * 1000;
+          if (fresh && date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            anchorDate = date;
+          }
+        }
       } catch {
-        // storage unavailable — use today
+        // storage unavailable or unreadable value — use today
       }
       const start = weekStartOf(anchorDate, startDay);
       weekStartRef.current = start;
@@ -442,11 +465,6 @@ export default function DeliveryPage() {
                 <tr key={truck.id}>
                   <td className="border border-slate-200 px-3 py-2">
                     <div className="font-medium text-slate-800">{truck.name}</div>
-                    {truck.home_location_name && (
-                      <div className="text-xs text-slate-500">
-                        {truck.home_location_name}
-                      </div>
-                    )}
                   </td>
                   {days.map((iso) => (
                     <Cell
