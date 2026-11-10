@@ -175,6 +175,12 @@ export default function DeliveryPage() {
         return;
       }
       userIdRef.current = session.user.id;
+      try {
+        // Remove the pre-per-user key — no longer read.
+        window.localStorage.removeItem("delivery-calendar-anchor");
+      } catch {
+        // storage unavailable — fine
+      }
       // Anchor the first week on the business date in the caller's home
       // store timezone AND the company's week-start setting — both are
       // fetched before the first calendar call so there's no flash of

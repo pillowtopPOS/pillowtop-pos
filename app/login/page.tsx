@@ -1,25 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/lib/supabase/database.types";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [supabase, setSupabase] = useState<SupabaseClient<Database> | null>(null);
 
-  useEffect(() => {
-    setSupabase(createClient());
-  }, []);
-
-  async function handleSubmit(e: React.FormEvent) {
+  // Inputs are deliberately UNCONTROLLED (defaultValue, read via
+  // FormData). A controlled input's value is owned by React state, and
+  // any late re-render — the old supabase-client effect, hydration,
+  // autofill — could write the empty state back over what the user (or
+  // password manager) typed, silently emptying the form before submit.
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!supabase) return;
+    const form = e.currentTarget;
+    const formData = new FormData(form);
+    const email = String(formData.get("email") ?? "");
+    const password = String(formData.get("password") ?? "");
+    if (!email || !password) return;
 
+    const supabase = createClient();
     setLoading(true);
     setMessage(null);
 
@@ -66,10 +67,10 @@ export default function LoginPage() {
           </label>
           <input
             id="email"
+            name="email"
             type="email"
             required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="username"
             className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
         </div>
@@ -80,10 +81,10 @@ export default function LoginPage() {
           </label>
           <input
             id="password"
+            name="password"
             type="password"
             required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
             className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
         </div>
