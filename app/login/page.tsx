@@ -1,11 +1,41 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+
+const SENSITIVE_PARAMS = [
+  "password", "pass", "pwd", "secret", "token", "email",
+];
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // False until hydration attaches onSubmit — a pre-hydration submit
+  // would otherwise fall through to a NATIVE form submission.
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    setReady(true);
+    // Credentials must never travel in a URL. If a link ever carried
+    // them, strip the query string immediately — without reading the
+    // values into the form.
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const hasSensitive = SENSITIVE_PARAMS.some((p) => params.has(p));
+      if (hasSensitive) {
+        window.history.replaceState(
+          null,
+          "",
+          window.location.pathname
+        );
+        setMessage(
+          "For your security, never put your password in a link. Please sign in below."
+        );
+      }
+    } catch {
+      // history API unavailable — leave the URL alone
+    }
+  }, []);
 
   // Inputs are deliberately UNCONTROLLED (defaultValue, read via
   // FormData). A controlled input's value is owned by React state, and
@@ -55,6 +85,7 @@ export default function LoginPage() {
   return (
     <main className="flex min-h-screen items-center justify-center p-8">
       <form
+        method="post"
         onSubmit={handleSubmit}
         className="w-full max-w-sm space-y-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
       >
@@ -95,7 +126,7 @@ export default function LoginPage() {
 
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || !ready}
           className="w-full rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
         >
           {loading ? "Signing in…" : "Sign in"}
