@@ -77,6 +77,8 @@ function Cell({
   day,
   canManage,
   saving,
+  highlight,
+  dimmed,
   onToggle,
 }: {
   truck: DeliveryTruckInfo;
@@ -84,13 +86,22 @@ function Cell({
   day?: DeliveryCalendarDay;
   canManage: boolean;
   saving: boolean;
+  highlight?: boolean;
+  dimmed?: boolean;
   onToggle: (truckId: string, iso: string, entry: DeliveryTruckDay) => void;
 }) {
   const entry: DeliveryTruckDay | undefined = day?.trucks.find(
     (t) => t.truck_id === truck.id
   );
+  const tdClass = `border border-slate-200 p-0 text-center${
+    highlight ? " bg-amber-50" : ""
+  }`;
   if (!entry) {
-    return <td className="border border-slate-200 px-3 py-2 text-center text-slate-300">—</td>;
+    return (
+      <td className={`${tdClass} text-slate-300`}>
+        <div className="px-3 py-2">—</div>
+      </td>
+    );
   }
   const tooltip = entry.source === "exception"
     ? "Click to go back to the usual schedule"
@@ -98,7 +109,7 @@ function Cell({
       ? "Click to turn off for this day"
       : "Click to turn on for this day";
   return (
-    <td className="border border-slate-200 p-0 text-center">
+    <td className={tdClass}>
       <button
         type="button"
         disabled={!canManage || saving}
@@ -108,7 +119,9 @@ function Cell({
           canManage
             ? "cursor-pointer hover:bg-slate-100"
             : "cursor-default"
-        } ${saving ? "opacity-50" : ""}`}
+        } ${saving ? "opacity-50" : ""} ${
+          dimmed ? "opacity-60" : ""
+        }`}
       >
         {entry.source === "exception" && (
           <span
@@ -124,10 +137,14 @@ function Cell({
   );
 }
 
+type ViewMode = "rolling" | "week";
+
 export default function DeliveryPage() {
   const router = useRouter();
   const [calendar, setCalendar] = useState<DeliveryCalendar | null>(null);
-  const [weekStart, setWeekStart] = useState<string | null>(null);
+  const [viewStart, setViewStart] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>("rolling");
+  const [todayIso, setTodayIso] = useState<string | null>(null);
   const [canManageTrucks, setCanManageTrucks] = useState(false);
   const [canManageCalendar, setCanManageCalendar] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -138,19 +155,26 @@ export default function DeliveryPage() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelAddMode, setPanelAddMode] = useState(false);
   const [weekStartDay, setWeekStartDay] = useState<1 | 7>(1);
-  const weekStartRef = useRef<string | null>(null);
+  const viewStartRef = useRef<string | null>(null);
+  const viewModeRef = useRef<ViewMode>("rolling");
   const weekStartDayRef = useRef<1 | 7>(1);
   const userIdRef = useRef<string | null>(null);
+  // Monotonic request id — a slow response for an old window/mode must
+  // never paint over the window the user is looking at now.
+  const loadSeq = useRef(0);
 
   const load = useCallback(async (startIso: string) => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     setError(null);
     try {
       const cal = await fetchDeliveryCalendar(startIso, addDays(startIso, 6));
+      if (seq !== loadSeq.current) return;
       setCalendar(cal);
       try {
         const uid = userIdRef.current;
-        if (uid) {
+        // Last-viewed week is remembered only in Calendar week mode.
+        if (uid && viewModeRef.current === "week") {
           window.localStorage.setItem(
             `delivery-calendar-anchor:${uid}`,
             JSON.stringify({ date: startIso, savedAt: Date.now() })
@@ -160,10 +184,11 @@ export default function DeliveryPage() {
         // storage unavailable — fine
       }
     } catch {
+      if (seq !== loadSeq.current) return;
       setError("We couldn't load the delivery calendar. Please try again.");
       setCalendar(null);
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   }, []);
 
@@ -181,43 +206,63 @@ export default function DeliveryPage() {
       } catch {
         // storage unavailable — fine
       }
-      // Anchor the first week on the business date in the caller's home
-      // store timezone AND the company's week-start setting — both are
-      // fetched before the first calendar call so there's no flash of
-      // the wrong week. The browser clock is only a fallback.
+      // "Today" comes from the business timezone; the browser clock is
+      // only a fallback. Both it and the week-start setting are fetched
+      // before the first calendar call so there's no flash of the wrong
+      // window.
       const [today, wkStart] = await Promise.all([
         fetchDeliveryBusinessToday(),
         fetchCompanyWeekStart(),
       ]);
+      const businessToday = today ?? toISODay(new Date());
+      setTodayIso(businessToday);
       const startDay = (wkStart === 7 ? 7 : 1) as 1 | 7; // null -> Monday
       weekStartDayRef.current = startDay;
       setWeekStartDay(startDay);
-      // Reopen on the week this user was last viewing; fall back to
-      // today. Keyed per user (shared store computers) and ignored when
-      // older than 14 days.
-      let anchorDate = today ?? toISODay(new Date());
+      // View mode is per user; default is the rolling "Next 7 days".
+      let mode: ViewMode = "rolling";
       try {
-        const saved = window.localStorage.getItem(
-          `delivery-calendar-anchor:${session.user.id}`
+        const savedMode = window.localStorage.getItem(
+          `delivery-calendar-mode:${session.user.id}`
         );
-        if (saved) {
-          const { date, savedAt } = JSON.parse(saved) as {
-            date?: string;
-            savedAt?: number;
-          };
-          const fresh =
-            typeof savedAt === "number" &&
-            Date.now() - savedAt < 14 * 24 * 3600 * 1000;
-          if (fresh && date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
-            anchorDate = date;
-          }
-        }
+        if (savedMode === "week" || savedMode === "rolling") mode = savedMode;
       } catch {
-        // storage unavailable or unreadable value — use today
+        // storage unavailable or unreadable — default rolling
       }
-      const start = weekStartOf(anchorDate, startDay);
-      weekStartRef.current = start;
-      setWeekStart(start);
+      viewModeRef.current = mode;
+      setViewMode(mode);
+      let start: string;
+      if (mode === "week") {
+        // Reopen on the week this user was last viewing in this mode;
+        // fall back to today. Keyed per user (shared store computers)
+        // and ignored when older than 14 days.
+        let anchorDate = businessToday;
+        try {
+          const saved = window.localStorage.getItem(
+            `delivery-calendar-anchor:${session.user.id}`
+          );
+          if (saved) {
+            const { date, savedAt } = JSON.parse(saved) as {
+              date?: string;
+              savedAt?: number;
+            };
+            const fresh =
+              typeof savedAt === "number" &&
+              Date.now() - savedAt < 14 * 24 * 3600 * 1000;
+            if (fresh && date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+              anchorDate = date;
+            }
+          }
+        } catch {
+          // storage unavailable or unreadable value — use today
+        }
+        start = weekStartOf(anchorDate, startDay);
+      } else {
+        // Rolling mode always opens on today.
+        start = businessToday;
+      }
+      viewStartRef.current = start;
+      setViewStart(start);
       const [cal, canManageTrucksPerm, canManageCalendarPerm] = await Promise.all([
         fetchDeliveryCalendar(start, addDays(start, 6)).catch(() => null),
         fetchDeliveryManageTrucks(),
@@ -235,9 +280,43 @@ export default function DeliveryPage() {
   }, [router]);
 
   const goTo = (startIso: string) => {
-    weekStartRef.current = startIso;
-    setWeekStart(startIso);
+    viewStartRef.current = startIso;
+    setViewStart(startIso);
     load(startIso);
+  };
+
+  // Switching modes re-anchors: Calendar week snaps to the week
+  // containing the currently visible first day; rolling jumps back to
+  // today. The mode itself is remembered per user.
+  const switchMode = (mode: ViewMode) => {
+    if (mode === viewModeRef.current) return;
+    viewModeRef.current = mode;
+    setViewMode(mode);
+    try {
+      const uid = userIdRef.current;
+      if (uid) {
+        window.localStorage.setItem(
+          `delivery-calendar-mode:${uid}`,
+          mode
+        );
+      }
+    } catch {
+      // storage unavailable — fine
+    }
+    const current = viewStartRef.current;
+    if (!current) return;
+    const target =
+      mode === "week"
+        ? weekStartOf(current, weekStartDayRef.current)
+        : (todayIso ?? current);
+    if (target !== current) goTo(target);
+  };
+
+  const goToday = () => {
+    const t = todayIso ?? toISODay(new Date());
+    goTo(viewModeRef.current === "week"
+      ? weekStartOf(t, weekStartDayRef.current)
+      : t);
   };
 
   // One click: exception -> clear back to pattern; pattern cell -> set the
@@ -259,7 +338,7 @@ export default function DeliveryPage() {
         iso,
         entry.source === "exception" ? null : !entry.on
       );
-      const current = weekStartRef.current;
+      const current = viewStartRef.current;
       if (current) await load(current);
     } catch {
       setCellError("Couldn't update that day. Please try again.");
@@ -282,7 +361,7 @@ export default function DeliveryPage() {
     setSavingDays((prev) => new Set(prev).add(iso));
     try {
       await setDayExtraSlots(iso, newExtra);
-      const current = weekStartRef.current;
+      const current = viewStartRef.current;
       if (current) await load(current);
     } catch {
       setCellError("Couldn't update that day. Please try again.");
@@ -295,8 +374,8 @@ export default function DeliveryPage() {
     }
   };
 
-  const days: string[] = weekStart
-    ? Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
+  const days: string[] = viewStart
+    ? Array.from({ length: 7 }, (_, i) => addDays(viewStart, i))
     : [];
   const dayByDate = new Map<string, DeliveryCalendarDay>(
     (calendar?.days ?? []).map((d) => [d.date, d])
@@ -309,36 +388,57 @@ export default function DeliveryPage() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold text-slate-900">Delivery</h1>
         <div className="flex items-center gap-2">
+          <div
+            className="flex rounded-md border border-slate-300 text-sm"
+            role="group"
+            aria-label="Calendar view"
+          >
+            {(
+              [
+                ["rolling", "Next 7 days"],
+                ["week", "Calendar week"],
+              ] as [ViewMode, string][]
+            ).map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => switchMode(mode)}
+                aria-pressed={viewMode === mode}
+                className={`px-3 py-1.5 ${
+                  viewMode === mode
+                    ? "bg-slate-900 font-medium text-white"
+                    : "text-slate-600 hover:bg-slate-50"
+                } ${mode === "rolling" ? "rounded-l-md" : "rounded-r-md border-l border-slate-300"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <button
-            onClick={() => weekStart && goTo(addDays(weekStart, -7))}
-            disabled={!weekStart || loading}
+            onClick={() => viewStart && goTo(addDays(viewStart, -7))}
+            disabled={!viewStart || loading}
             className="rounded-md border border-slate-300 p-1.5 text-slate-600 hover:bg-slate-50 disabled:opacity-40"
             aria-label="Previous week"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
           <button
-            onClick={() => {
-              const today = toISODay(new Date());
-              fetchDeliveryBusinessToday().then((t) =>
-                goTo(weekStartOf(t ?? today, weekStartDayRef.current))
-              );
-            }}
+            onClick={goToday}
             disabled={loading}
             className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-40"
           >
             Today
           </button>
           <button
-            onClick={() => weekStart && goTo(addDays(weekStart, 7))}
-            disabled={!weekStart || loading}
+            onClick={() => viewStart && goTo(addDays(viewStart, 7))}
+            disabled={!viewStart || loading}
             className="rounded-md border border-slate-300 p-1.5 text-slate-600 hover:bg-slate-50 disabled:opacity-40"
             aria-label="Next week"
           >
             <ChevronRight className="h-4 w-4" />
           </button>
           <span className="ml-2 text-sm font-medium text-slate-700">
-            {weekStart ? rangeLabel(weekStart, weekEnd) : ""}
+            {viewStart ? rangeLabel(viewStart, weekEnd) : ""}
           </span>
           {canManageTrucks && (
             <button
@@ -363,9 +463,9 @@ export default function DeliveryPage() {
       {!loading && error && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-6 text-center">
           <p className="text-sm text-red-700">{error}</p>
-          {weekStart && (
+          {viewStart && (
             <button
-              onClick={() => load(weekStart)}
+              onClick={() => load(viewStart)}
               className="mt-3 rounded-md border border-red-300 px-3 py-1.5 text-sm text-red-700 hover:bg-red-100"
             >
               Try again
@@ -403,15 +503,32 @@ export default function DeliveryPage() {
                 <th className="border border-slate-200 px-3 py-2 text-left font-medium text-slate-600">
                   Truck
                 </th>
-                {days.map((iso) => {
+                {days.map((iso, idx) => {
                   const d = dayByDate.get(iso);
                   const l = dayLabel(iso);
+                  const isToday = todayIso !== null && iso === todayIso;
+                  const isPast = todayIso !== null && iso < todayIso;
+                  const topLabel =
+                    viewMode === "rolling"
+                      ? idx === 0
+                        ? "Today"
+                        : idx === 1
+                          ? "Tomorrow"
+                          : l.weekday
+                      : isToday
+                        ? "Today"
+                        : l.weekday;
                   return (
                     <th
                       key={iso}
-                      className="border border-slate-200 px-3 py-2 text-center font-medium text-slate-700"
+                      aria-current={isToday ? "date" : undefined}
+                      className={`border border-slate-200 px-3 py-2 text-center font-medium text-slate-700 ${
+                        isToday ? "bg-amber-100" : isPast ? "bg-slate-100 opacity-60" : ""
+                      }`}
                     >
-                      <div>{l.weekday}</div>
+                      <div className={isToday ? "font-semibold text-amber-900" : ""}>
+                        {topLabel}
+                      </div>
                       <div className="text-xs font-normal text-slate-500">
                         {l.month} {l.dayNum}
                       </div>
@@ -480,6 +597,8 @@ export default function DeliveryPage() {
                       day={dayByDate.get(iso)}
                       canManage={canManageTrucks}
                       saving={savingCells.has(`${truck.id}|${iso}`)}
+                      highlight={todayIso !== null && iso === todayIso}
+                      dimmed={todayIso !== null && iso < todayIso}
                       onToggle={toggleCell}
                     />
                   ))}
@@ -513,7 +632,7 @@ export default function DeliveryPage() {
           startInAddMode={panelAddMode}
           onClose={() => setPanelOpen(false)}
           onChanged={() => {
-            const current = weekStartRef.current;
+            const current = viewStartRef.current;
             if (current) load(current);
           }}
         />
