@@ -279,10 +279,21 @@ export default function DeliveryPage() {
     });
   }, [router]);
 
+  // Navigation is instant in state and debounced for the fetch: every
+  // arrow/Today/mode click counts even while a request is in flight,
+  // and loadSeq makes sure only the latest window's data can paint.
+  const navTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const goTo = (startIso: string) => {
     viewStartRef.current = startIso;
     setViewStart(startIso);
-    load(startIso);
+    setLoading(true);
+    setError(null);
+    if (navTimer.current) clearTimeout(navTimer.current);
+    navTimer.current = setTimeout(() => {
+      navTimer.current = null;
+      const current = viewStartRef.current;
+      if (current) load(current);
+    }, 150);
   };
 
   // Switching modes re-anchors: Calendar week snaps to the week
@@ -382,12 +393,13 @@ export default function DeliveryPage() {
   );
   const trucks = calendar?.trucks ?? [];
   const weekEnd = days[days.length - 1] ?? "";
+  const tomorrowIso = todayIso ? addDays(todayIso, 1) : null;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold text-slate-900">Delivery</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
           <div
             className="flex rounded-md border border-slate-300 text-sm"
             role="group"
@@ -404,7 +416,7 @@ export default function DeliveryPage() {
                 type="button"
                 onClick={() => switchMode(mode)}
                 aria-pressed={viewMode === mode}
-                className={`px-3 py-1.5 ${
+                className={`whitespace-nowrap px-3 py-1.5 ${
                   viewMode === mode
                     ? "bg-slate-900 font-medium text-white"
                     : "text-slate-600 hover:bg-slate-50"
@@ -416,7 +428,7 @@ export default function DeliveryPage() {
           </div>
           <button
             onClick={() => viewStart && goTo(addDays(viewStart, -7))}
-            disabled={!viewStart || loading}
+            disabled={!viewStart}
             className="rounded-md border border-slate-300 p-1.5 text-slate-600 hover:bg-slate-50 disabled:opacity-40"
             aria-label="Previous week"
           >
@@ -424,20 +436,20 @@ export default function DeliveryPage() {
           </button>
           <button
             onClick={goToday}
-            disabled={loading}
+            disabled={!viewStart}
             className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-40"
           >
             Today
           </button>
           <button
             onClick={() => viewStart && goTo(addDays(viewStart, 7))}
-            disabled={!viewStart || loading}
+            disabled={!viewStart}
             className="rounded-md border border-slate-300 p-1.5 text-slate-600 hover:bg-slate-50 disabled:opacity-40"
             aria-label="Next week"
           >
             <ChevronRight className="h-4 w-4" />
           </button>
-          <span className="ml-2 text-sm font-medium text-slate-700">
+          <span className="ml-2 whitespace-nowrap text-sm font-medium text-slate-700">
             {viewStart ? rangeLabel(viewStart, weekEnd) : ""}
           </span>
           {canManageTrucks && (
@@ -447,7 +459,7 @@ export default function DeliveryPage() {
                 setPanelAddMode(false);
                 setPanelOpen(true);
               }}
-              className="ml-3 inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+              className="ml-3 inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
             >
               <Truck className="h-4 w-4" />
               Manage trucks
@@ -503,21 +515,21 @@ export default function DeliveryPage() {
                 <th className="border border-slate-200 px-3 py-2 text-left font-medium text-slate-600">
                   Truck
                 </th>
-                {days.map((iso, idx) => {
+                {days.map((iso) => {
                   const d = dayByDate.get(iso);
                   const l = dayLabel(iso);
                   const isToday = todayIso !== null && iso === todayIso;
                   const isPast = todayIso !== null && iso < todayIso;
-                  const topLabel =
-                    viewMode === "rolling"
-                      ? idx === 0
-                        ? "Today"
-                        : idx === 1
-                          ? "Tomorrow"
-                          : l.weekday
-                      : isToday
-                        ? "Today"
-                        : l.weekday;
+                  // "Today"/"Tomorrow" are earned by the actual date,
+                  // not the column position — a past or future window
+                  // must never claim them.
+                  const topLabel = isToday
+                    ? "Today"
+                    : viewMode === "rolling" &&
+                        tomorrowIso !== null &&
+                        iso === tomorrowIso
+                      ? "Tomorrow"
+                      : l.weekday;
                   return (
                     <th
                       key={iso}
