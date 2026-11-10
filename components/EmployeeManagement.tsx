@@ -837,6 +837,11 @@ function ExtraPermissions({
                               ? "Role allows"
                               : "Role does not allow"}
                           </p>
+                          {p.description && (
+                            <p className="text-xs text-slate-400">
+                              {p.description}
+                            </p>
+                          )}
                         </div>
                         <select
                           value={rowValue(p.key)}

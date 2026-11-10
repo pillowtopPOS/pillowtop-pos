@@ -15,6 +15,10 @@ import {
   PERMISSION_ROLES,
   setRolePermission,
 } from "@/lib/sleepTrial/permissions";
+import {
+  fetchCompanyWeekStart,
+  setCompanyWeekStart,
+} from "@/lib/delivery/queries";
 
 // Company-editable role grants that are not Sleep Trial scoped (plus the
 // exchange/inspection keys from Exchange Builder spec Section 12); they live
@@ -79,6 +83,11 @@ export default function CompanySettingsForm() {
   const [permGrants, setPermGrants] = useState<Set<string> | null>(null);
   const [permSaving, setPermSaving] = useState<string | null>(null);
   const [permError, setPermError] = useState<string | null>(null);
+  // week_start_day arrives with migration 128; hidden until it exists.
+  const [weekStartSupported, setWeekStartSupported] = useState(false);
+  const [weekStartDay, setWeekStartDay] = useState<1 | 7>(1);
+  const [weekStartSaving, setWeekStartSaving] = useState(false);
+  const [weekStartError, setWeekStartError] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([fetchCurrentEmployee(), fetchStores()]).then(([e, s]) => {
@@ -89,6 +98,14 @@ export default function CompanySettingsForm() {
       loadSettings(company);
     });
     fetchRolePermissionGrants().then(setPermGrants);
+    fetchCompanyWeekStart().then((d) => {
+      if (d === null) {
+        setWeekStartSupported(false);
+      } else {
+        setWeekStartSupported(true);
+        setWeekStartDay(d === 7 ? 7 : 1);
+      }
+    });
   }, []);
 
   async function loadSettings(company: string | undefined) {
@@ -175,6 +192,20 @@ export default function CompanySettingsForm() {
       setError(error.message);
     } else {
       setSettings((prev) => ({ ...prev, [key]: next }));
+    }
+  }
+
+  async function changeWeekStart(day: 1 | 7) {
+    if (weekStartSaving || day === weekStartDay) return;
+    setWeekStartError(null);
+    setWeekStartSaving(true);
+    try {
+      await setCompanyWeekStart(day);
+      setWeekStartDay(day);
+    } catch {
+      setWeekStartError("Couldn't save that setting. Please try again.");
+    } finally {
+      setWeekStartSaving(false);
     }
   }
 
@@ -275,6 +306,44 @@ export default function CompanySettingsForm() {
                 Business dates (for example sleep trial nights) are calculated
                 in this timezone. Individual stores can override it in Store
                 Management.
+              </p>
+            </div>
+          )}
+          {weekStartSupported && (
+            <div className="border-b border-slate-200 pb-4">
+              <span className="block text-sm font-medium text-slate-700">
+                Week starts on
+              </span>
+              <div className="mt-2 flex gap-2">
+                {([
+                  { day: 7 as const, label: "Sunday" },
+                  { day: 1 as const, label: "Monday" },
+                ]).map((opt) => (
+                  <button
+                    key={opt.day}
+                    type="button"
+                    disabled={weekStartSaving || !canEditPermissions}
+                    onClick={() => changeWeekStart(opt.day)}
+                    className={`rounded-md border px-3 py-1.5 text-sm ${
+                      weekStartDay === opt.day
+                        ? "border-brand-600 bg-brand-600 text-white"
+                        : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                    } disabled:opacity-50`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {weekStartSaving && (
+                <p className="mt-1 text-xs text-slate-400">Saving…</p>
+              )}
+              {weekStartError && (
+                <p className="mt-1 text-xs text-red-600">{weekStartError}</p>
+              )}
+              <p className="mt-1 text-xs text-slate-500">
+                Which day the company week begins on — calendars, reports,
+                and commissions all follow it.
+                {!canEditPermissions && " Only owners and admins can change this."}
               </p>
             </div>
           )}

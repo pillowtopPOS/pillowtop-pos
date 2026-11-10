@@ -2,24 +2,55 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/lib/supabase/database.types";
+
+const SENSITIVE_PARAMS = [
+  "password", "pass", "pwd", "secret", "token", "email",
+];
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [supabase, setSupabase] = useState<SupabaseClient<Database> | null>(null);
+  // False until hydration attaches onSubmit — a pre-hydration submit
+  // would otherwise fall through to a NATIVE form submission.
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    setSupabase(createClient());
+    setReady(true);
+    // Credentials must never travel in a URL. If a link ever carried
+    // them, strip the query string immediately — without reading the
+    // values into the form.
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const hasSensitive = SENSITIVE_PARAMS.some((p) => params.has(p));
+      if (hasSensitive) {
+        window.history.replaceState(
+          null,
+          "",
+          window.location.pathname
+        );
+        setMessage(
+          "For your security, never put your password in a link. Please sign in below."
+        );
+      }
+    } catch {
+      // history API unavailable — leave the URL alone
+    }
   }, []);
 
-  async function handleSubmit(e: React.FormEvent) {
+  // Inputs are deliberately UNCONTROLLED (defaultValue, read via
+  // FormData). A controlled input's value is owned by React state, and
+  // any late re-render — the old supabase-client effect, hydration,
+  // autofill — could write the empty state back over what the user (or
+  // password manager) typed, silently emptying the form before submit.
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!supabase) return;
+    const form = e.currentTarget;
+    const formData = new FormData(form);
+    const email = String(formData.get("email") ?? "");
+    const password = String(formData.get("password") ?? "");
+    if (!email || !password) return;
 
+    const supabase = createClient();
     setLoading(true);
     setMessage(null);
 
@@ -32,15 +63,29 @@ export default function LoginPage() {
 
     if (error) {
       setMessage(error.message);
-    } else {
-      setMessage("Signed in. Redirecting…");
-      window.location.href = "/board";
+      return;
     }
+
+    // The credentials were accepted, but the session is written to
+    // cookies asynchronously-ish — verify it actually stuck before
+    // navigating, otherwise /board bounces straight back here with a
+    // fresh empty form and no explanation.
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData.session) {
+      setMessage(
+        "Signed in, but the session didn't stick. Please try again."
+      );
+      return;
+    }
+
+    setMessage("Signed in. Redirecting…");
+    window.location.href = "/board";
   }
 
   return (
     <main className="flex min-h-screen items-center justify-center p-8">
       <form
+        method="post"
         onSubmit={handleSubmit}
         className="w-full max-w-sm space-y-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
       >
@@ -53,10 +98,10 @@ export default function LoginPage() {
           </label>
           <input
             id="email"
+            name="email"
             type="email"
             required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="username"
             className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
         </div>
@@ -67,10 +112,10 @@ export default function LoginPage() {
           </label>
           <input
             id="password"
+            name="password"
             type="password"
             required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
             className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
         </div>
@@ -81,7 +126,7 @@ export default function LoginPage() {
 
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || !ready}
           className="w-full rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
         >
           {loading ? "Signing in…" : "Sign in"}

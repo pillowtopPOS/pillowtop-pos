@@ -99,12 +99,13 @@ export async function setRolePermission(
   if (error) throw new Error(error.message);
 }
 
-export type PermissionGroup = "Sleep trial" | "Inventory" | "Unit ID";
+export type PermissionGroup = "Sleep trial" | "Inventory" | "Unit ID" | "Delivery";
 
 export type PermissionDef = {
   key: string;
   label: string;
   group: PermissionGroup;
+  description?: string;
 };
 
 // Every key is_valid_permission_key accepts (migration 104), grouped for
@@ -124,4 +125,16 @@ export const ALL_PERMISSIONS: PermissionDef[] = [
   { key: "units.swap", label: "Swap a unit on an order for another unit", group: "Unit ID" },
   { key: "units.void", label: "Void a unit", group: "Unit ID" },
   { key: "units.manage_settings", label: "Manage Unit ID settings and view the discrepancy report", group: "Unit ID" },
+  {
+    key: "delivery.manage_calendar",
+    label: "Add or remove delivery slots for a day",
+    group: "Delivery",
+    description: "Lets this person add or remove extra delivery spots on the delivery calendar.",
+  },
+  {
+    key: "delivery.manage_trucks",
+    label: "Manage delivery trucks and turn them on or off for a day",
+    group: "Delivery",
+    description: "Lets this person add, rename, and archive delivery trucks, set their weekly schedule, and turn a truck on or off for one day.",
+  },
 ];
