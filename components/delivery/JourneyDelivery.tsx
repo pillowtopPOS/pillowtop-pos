@@ -72,7 +72,7 @@ export default function JourneyDelivery({
 }) {
   const router = useRouter();
   const [delivery, setDelivery] = useState<JourneyDelivery | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [booking, setBooking] = useState<"book" | "reschedule" | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -93,7 +93,8 @@ export default function JourneyDelivery({
       const d = await fetchJourneyDelivery(journey.id);
       setDelivery(d);
     } catch {
-      setDelivery(null);
+      // Keep any previously loaded data on screen; a cold-load failure
+      // leaves delivery null and the section shows its retry state.
     }
   }, [journey.id]);
 
@@ -118,8 +119,14 @@ export default function JourneyDelivery({
         ? "Delivery rescheduled."
         : "Delivery booked."
     );
-    await refresh();
-    await onChanged();
+    try {
+      await refresh();
+      await onChanged();
+    } catch {
+      flashNotice(
+        "Delivery booked, but the page didn't refresh. Reload to see it."
+      );
+    }
   }
 
   async function submitCancel() {
@@ -177,8 +184,27 @@ export default function JourneyDelivery({
 
   return (
     <div className="mt-3 border-t border-slate-100 pt-3" data-testid="journey-delivery">
-      {loading && !delivery ? (
-        <p className="text-xs text-slate-400">Loading delivery…</p>
+      {!delivery ? (
+        loading ? (
+          <p className="text-xs text-slate-400">Loading delivery…</p>
+        ) : (
+          <div data-testid="delivery-load-error">
+            <p className="text-xs text-slate-600">
+              We couldn't load the delivery details. Try again.
+            </p>
+            <button
+              type="button"
+              data-testid="delivery-retry"
+              onClick={() => {
+                setLoading(true);
+                refresh().finally(() => setLoading(false));
+              }}
+              className="mt-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Retry
+            </button>
+          </div>
+        )
       ) : (
         <>
           {journey.current_state === "Scheduled" && stop && (

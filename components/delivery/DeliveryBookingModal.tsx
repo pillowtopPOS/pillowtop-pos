@@ -193,7 +193,13 @@ export default function DeliveryBookingModal({
       } else {
         await bookDeliveryStop(journeyId, selected, overrideReason);
       }
-      await onDone();
+      // The booking already succeeded — a refresh failure must never be
+      // reported as a failed booking. onDone shows its own notice.
+      try {
+        await onDone();
+      } catch {
+        // parent handles the notice; nothing to do here
+      }
       onClose();
     } catch (e: any) {
       // Show the server's plain-English refusal verbatim and refresh the
@@ -246,6 +252,11 @@ export default function DeliveryBookingModal({
 
         {loading ? (
           <p className="py-8 text-center text-sm text-slate-500">Loading days…</p>
+        ) : days.length === 0 ? (
+          <p className="py-8 text-center text-sm text-slate-500" data-testid="delivery-no-days">
+            No delivery days are set up yet. Ask a manager to set up trucks
+            and the weekly schedule.
+          </p>
         ) : (
           <div className="mt-3 grid max-h-72 grid-cols-4 gap-2 overflow-y-auto sm:grid-cols-7">
             {days.map((d) => {
@@ -287,11 +298,11 @@ export default function DeliveryBookingModal({
                       ? "No delivery"
                       : s === "full"
                         ? "Full"
-                        : s === "past_cutoff" && !canInsideCutoff
-                          ? "Past cutoff"
-                          : s === "past_cutoff"
-                            ? "Past cutoff"
-                            : `${open} open`}
+                        : s === "past_cutoff"
+                          ? canInsideCutoff
+                            ? "Override"
+                            : "Past cutoff"
+                          : `${open} open`}
                   </div>
                   {s === "full" && canManageCalendar && (
                     <span

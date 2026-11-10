@@ -121,8 +121,10 @@ export default function CompanySettingsForm() {
       } else {
         setCutoffSupported(true);
         setCutoffCanEdit(d.can_edit);
-        setCutoffNone(d.cutoff_time === null);
-        if (d.cutoff_time) setCutoffTime(d.cutoff_time.slice(0, 5));
+        const none = d.cutoff_time === null;
+        const time = d.cutoff_time ? d.cutoff_time.slice(0, 5) : "15:00";
+        setCutoffNone(none);
+        setCutoffTime(time);
       }
     });
   }, []);
@@ -230,8 +232,12 @@ export default function CompanySettingsForm() {
 
   // Same save path as the other company options: a direct companies
   // update under the owner/admin RLS policy. The RPC only reads.
-  async function changeDeliveryCutoff(nextTime: string, nextNone: boolean) {
-    if (!companyId || cutoffSaving) return;
+  // Returns true on success so callers can revert drafts on failure.
+  async function changeDeliveryCutoff(
+    nextTime: string,
+    nextNone: boolean
+  ): Promise<boolean> {
+    if (!companyId || cutoffSaving) return false;
     setCutoffError(null);
     setCutoffSaving(true);
     const supabase = createClient();
@@ -242,10 +248,11 @@ export default function CompanySettingsForm() {
     setCutoffSaving(false);
     if (error) {
       setCutoffError(error.message);
-    } else {
-      setCutoffTime(nextTime);
-      setCutoffNone(nextNone);
+      return false;
     }
+    setCutoffTime(nextTime);
+    setCutoffNone(nextNone);
+    return true;
   }
 
   const canEditPermissions =
@@ -409,10 +416,20 @@ export default function CompanySettingsForm() {
                     data-testid="delivery-cutoff-none"
                     checked={cutoffNone}
                     disabled={cutoffSaving || !cutoffCanEdit}
-                    onChange={(e) => {
+                    onChange={async (e) => {
                       const next = e.target.checked;
+                      const prev = { time: cutoffTime, none: cutoffNone };
                       setCutoffNone(next);
-                      if (next) changeDeliveryCutoff(cutoffTime, true);
+                      // Both directions save immediately; a failure
+                      // reverts the checkbox and time to what was shown.
+                      const ok = await changeDeliveryCutoff(
+                        cutoffTime,
+                        next
+                      );
+                      if (!ok) {
+                        setCutoffTime(prev.time);
+                        setCutoffNone(prev.none);
+                      }
                     }}
                     className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 disabled:opacity-50"
                   />
