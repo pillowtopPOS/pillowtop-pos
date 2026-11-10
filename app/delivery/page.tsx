@@ -530,6 +530,16 @@ export default function DeliveryPage() {
                         iso === tomorrowIso
                       ? "Tomorrow"
                       : l.weekday;
+                  const open = d
+                    ? Math.max(0, d.capacity - d.booked_count)
+                    : 0;
+                  const availLabel = !d
+                    ? ""
+                    : d.capacity === 0
+                      ? "Closed"
+                      : open === 0
+                        ? "Full"
+                        : `${open} open`;
                   return (
                     <th
                       key={iso}
@@ -547,7 +557,14 @@ export default function DeliveryPage() {
                       {d && (
                         <div className="mt-0.5 space-y-0.5">
                           <div className="text-xs font-normal text-slate-500">
-                            {d.booked_count} of {d.capacity} booked
+                            {availLabel}
+                          </div>
+                          {/* Reserved line — keeps the +/- controls
+                              aligned whether or not anything is booked. */}
+                          <div className="text-[11px] font-normal text-slate-400">
+                            {d.booked_count > 0
+                              ? `${d.booked_count} booked`
+                              : "\u00a0"}
                           </div>
                           {canManageCalendar && (
                             <div className="text-[11px] font-normal text-slate-400">
