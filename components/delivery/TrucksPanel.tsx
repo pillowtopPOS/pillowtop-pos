@@ -7,7 +7,6 @@ import {
   updateDeliveryTruck,
   setDeliveryTruckArchived,
   setTruckWeekdayPattern,
-  setDeliveryWeekStart,
   type DeliveryTruckInfo,
   type ArchivedDeliveryTruck,
 } from "@/lib/delivery/queries";
@@ -155,7 +154,6 @@ export default function TrucksPanel({
   weekStartDay,
   onClose,
   onChanged,
-  onWeekStartChanged,
   startInAddMode = false,
 }: {
   trucks: DeliveryTruckInfo[];
@@ -163,7 +161,6 @@ export default function TrucksPanel({
   weekStartDay: number;
   onClose: () => void;
   onChanged: () => void;
-  onWeekStartChanged: (day: number) => void;
   startInAddMode?: boolean;
 }) {
   const [hubLocationId, setHubLocationId] = useState<string | null>(null);
@@ -202,8 +199,6 @@ export default function TrucksPanel({
   const [rowError, setRowError] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [restoreSaving, setRestoreSaving] = useState<Set<string>>(new Set());
-  const [weekStartSaving, setWeekStartSaving] = useState(false);
-  const [weekStartError, setWeekStartError] = useState("");
 
   useEffect(() => {
     fetchStores(true).then((list) => {
@@ -411,20 +406,6 @@ export default function TrucksPanel({
         n.delete(truckId);
         return n;
       });
-    }
-  };
-
-  const changeWeekStart = async (day: number) => {
-    if (weekStartSaving || day === weekStartDay) return;
-    setWeekStartError("");
-    setWeekStartSaving(true);
-    try {
-      await setDeliveryWeekStart(day);
-      onWeekStartChanged(day);
-    } catch {
-      setWeekStartError("Couldn't save that setting. Please try again.");
-    } finally {
-      setWeekStartSaving(false);
     }
   };
 
@@ -667,44 +648,6 @@ export default function TrucksPanel({
             </div>
           )}
 
-          {/* Calendar settings */}
-          <div className="mt-6 border-t border-slate-200 pt-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Calendar
-            </p>
-            <div className="mt-2 flex items-center justify-between gap-3">
-              <span className="text-sm text-slate-700">Week starts on</span>
-              <div className="flex gap-1">
-                {[
-                  { day: 7, label: "Sunday" },
-                  { day: 1, label: "Monday" },
-                ].map((opt) => {
-                  const active = weekStartDay === opt.day;
-                  return (
-                    <button
-                      key={opt.day}
-                      type="button"
-                      disabled={weekStartSaving}
-                      onClick={() => changeWeekStart(opt.day)}
-                      className={`rounded-md border px-3 py-1.5 text-sm ${
-                        active
-                          ? "border-brand-600 bg-brand-600 text-white"
-                          : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
-                      } disabled:opacity-50`}
-                    >
-                      {opt.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            {weekStartSaving && (
-              <p className="mt-1 text-xs text-slate-400">Saving…</p>
-            )}
-            {weekStartError && (
-              <p className="mt-1 text-xs text-red-600">{weekStartError}</p>
-            )}
-          </div>
         </div>
       </aside>
     </div>

@@ -12,7 +12,7 @@ import {
   fetchDeliveryManageCalendar,
   setTruckDateState,
   setDayExtraSlots,
-  fetchDeliveryWeekStart,
+  fetchCompanyWeekStart,
   type DeliveryCalendar,
   type DeliveryCalendarDay,
   type DeliveryTruckDay,
@@ -147,6 +147,11 @@ export default function DeliveryPage() {
     try {
       const cal = await fetchDeliveryCalendar(startIso, addDays(startIso, 6));
       setCalendar(cal);
+      try {
+        window.localStorage.setItem("delivery-calendar-anchor", startIso);
+      } catch {
+        // storage unavailable — fine
+      }
     } catch {
       setError("We couldn't load the delivery calendar. Please try again.");
       setCalendar(null);
@@ -168,12 +173,20 @@ export default function DeliveryPage() {
       // the wrong week. The browser clock is only a fallback.
       const [today, wkStart] = await Promise.all([
         fetchDeliveryBusinessToday(),
-        fetchDeliveryWeekStart(),
+        fetchCompanyWeekStart(),
       ]);
-      const startDay = (wkStart === 7 ? 7 : 1) as 1 | 7;
+      const startDay = (wkStart === 7 ? 7 : 1) as 1 | 7; // null -> Monday
       weekStartDayRef.current = startDay;
       setWeekStartDay(startDay);
-      const start = weekStartOf(today ?? toISODay(new Date()), startDay);
+      // Reopen on the week the user was last viewing; fall back to today.
+      let anchorDate = today ?? toISODay(new Date());
+      try {
+        const saved = window.localStorage.getItem("delivery-calendar-anchor");
+        if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved)) anchorDate = saved;
+      } catch {
+        // storage unavailable — use today
+      }
+      const start = weekStartOf(anchorDate, startDay);
       weekStartRef.current = start;
       setWeekStart(start);
       const [cal, canManageTrucksPerm, canManageCalendarPerm] = await Promise.all([
@@ -478,18 +491,6 @@ export default function DeliveryPage() {
           onChanged={() => {
             const current = weekStartRef.current;
             if (current) load(current);
-          }}
-          onWeekStartChanged={(day) => {
-            const sd = (day === 7 ? 7 : 1) as 1 | 7;
-            weekStartDayRef.current = sd;
-            setWeekStartDay(sd);
-            // Re-anchor to the week containing the date already on
-            // screen — never jump to a random week.
-            const anchor = weekStartRef.current ?? toISODay(new Date());
-            const newStart = weekStartOf(anchor, sd);
-            weekStartRef.current = newStart;
-            setWeekStart(newStart);
-            load(newStart);
           }}
         />
       )}

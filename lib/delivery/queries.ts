@@ -177,21 +177,22 @@ export async function setTruckWeekdayPattern(
   if (error) throw error;
 }
 
-/** Company's delivery week-start day: 1 = Monday, 7 = Sunday (ISO).
- *  Defaults to 1 on any error so the grid always renders. */
-export async function fetchDeliveryWeekStart(): Promise<number> {
+/** Company's week-start day: 1 = Monday, 7 = Sunday (ISO).
+ *  Returns null when the RPC is missing (pre-migration 128) so callers
+ *  can hide the control; the Delivery page falls back to Monday. */
+export async function fetchCompanyWeekStart(): Promise<number | null> {
   const supabase = createClient();
   const { data, error } = await (supabase as any).rpc(
-    "get_delivery_week_start"
+    "get_company_week_start"
   );
-  if (error) return 1;
+  if (error) return null;
   return data === 7 ? 7 : 1;
 }
 
 /** Set the company's week-start day (1 = Monday, 7 = Sunday). */
-export async function setDeliveryWeekStart(day: number): Promise<void> {
+export async function setCompanyWeekStart(day: number): Promise<void> {
   const supabase = createClient();
-  const { error } = await (supabase as any).rpc("set_delivery_week_start", {
+  const { error } = await (supabase as any).rpc("set_company_week_start", {
     p_day: day,
   });
   if (error) throw error;
