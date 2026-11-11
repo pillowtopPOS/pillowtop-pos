@@ -127,8 +127,10 @@ revoke execute on function public.delivery_route_events_immutable()
 -- ============================================================================
 
 -- Company business "today". A delivery DAY is a company-level concept,
--- so this uses companies.business_timezone (the same clock the calendar
--- comments describe), not a per-warehouse store timezone.
+-- so this uses companies.business_timezone. Known limitation: booking
+-- (get_earliest_bookable_date) uses the fulfilling warehouse's store
+-- timezone instead; the two agree for single-timezone retailers and can
+-- differ by a day for multi-timezone companies near midnight.
 create or replace function public.delivery_company_today()
 returns date
 language sql
@@ -278,26 +280,38 @@ begin
     and ds.delivery_date = p_date
     and ds.status = 'BOOKED';
 
-  -- Stops released AFTER the day was last reviewed/closed: they keep
-  -- truck_id on the CANCELLED row, which is how the screen spots them.
+  -- Stops released AFTER the day was last reviewed/closed. CANCELLED
+  -- rows keep cancelled_at; SUPERSEDED rows (rescheduled away) only get
+  -- updated_at, so coalesce covers both. reason_kind tells the screen
+  -- whether the stop died ('cancelled') or moved to another day
+  -- ('moved', with moved_to_date of the journey's live BOOKED stop).
   select coalesce(jsonb_agg(jsonb_build_object(
       'stop_id', ds.id,
       'journey_id', ds.journey_id,
       'journey_number', sj.journey_number,
       'customer_name', trim(concat_ws(' ', cu.first_name, cu.last_name)),
       'truck_id', ds.truck_id,
+      'reason_kind', case when ds.status = 'CANCELLED' then 'cancelled' else 'moved' end,
+      'moved_to_date', case when ds.status = 'SUPERSEDED' then (
+        select ds2.delivery_date
+        from public.delivery_stops ds2
+        where ds2.journey_id = ds.journey_id and ds2.status = 'BOOKED'
+        order by ds2.delivery_date
+        limit 1
+      ) end,
       'cancel_reason', ds.cancel_reason,
-      'cancelled_at', ds.cancelled_at
-    ) order by ds.cancelled_at desc), '[]'::jsonb)
+      'cancelled_at', coalesce(ds.cancelled_at, ds.updated_at)
+    ) order by coalesce(ds.cancelled_at, ds.updated_at) desc), '[]'::jsonb)
   into v_released
   from public.delivery_stops ds
   join public.sleep_journeys sj on sj.id = ds.journey_id
   left join public.customers cu on cu.id = sj.customer_id
   where ds.company_id = v_company_id
     and ds.delivery_date = p_date
-    and ds.status = 'CANCELLED'
+    and ds.status in ('CANCELLED', 'SUPERSEDED')
     and ds.truck_id is not null
-    and ds.cancelled_at > coalesce(v_plan.reviewed_at, v_plan.closed_at, '-infinity'::timestamptz);
+    and coalesce(ds.cancelled_at, ds.updated_at)
+        > coalesce(v_plan.reviewed_at, v_plan.closed_at, '-infinity'::timestamptz);
 
   v_capacity := public.delivery_day_capacity(v_company_id, p_date);
   select count(*) into v_booked
@@ -387,18 +401,25 @@ begin
   if coalesce(v_plan.version, 0) <> coalesce(p_expected_version, -1) then
     raise exception 'This day was changed by someone else. Reload and try again.';
   end if;
+  if v_plan.status = 'CLOSED' then
+    raise exception 'This day is closed. Reopen it to change the route.';
+  end if;
 
   if p_stops is null or jsonb_typeof(p_stops) <> 'array' then
     raise exception 'Send the list of stops for this day.';
   end if;
 
   -- Snapshot every BOOKED stop's current route for the audit diff.
-  drop table if exists d132_route_old;
-  create temp table d132_route_old (
-    stop_id uuid primary key,
-    truck_id uuid,
-    route_position integer
-  ) on commit drop;
+  -- to_regclass guard avoids the NOTICE a bare DROP IF EXISTS raises.
+  if to_regclass('d132_route_old') is null then
+    create temp table d132_route_old (
+      stop_id uuid primary key,
+      truck_id uuid,
+      route_position integer
+    ) on commit drop;
+  else
+    truncate d132_route_old;
+  end if;
   insert into pg_temp.d132_route_old (stop_id, truck_id, route_position)
   select ds.id, ds.truck_id, ds.route_position
   from public.delivery_stops ds
@@ -459,51 +480,40 @@ begin
     raise exception 'Two stops cannot share the same position on a truck.';
   end if;
 
-  -- Apply the payload (tentative positions; renumbered below).
+  -- Clear EVERY BOOKED stop's route in one update first, so no
+  -- intermediate state can hold two stops at one (truck, position).
+  -- Stops missing from the payload, and payload stops with truck_id
+  -- null, stay unrouted.
   update public.delivery_stops ds
   set truck_id = null, route_position = null
   where ds.company_id = v_company_id
     and ds.delivery_date = p_date
-    and ds.status = 'BOOKED'
-    and not (ds.id = any(coalesce(v_stop_ids, '{}'::uuid[])));
+    and ds.status = 'BOOKED';
 
-  for v_item in
+  -- Compute final dense positions 1..n per truck in one update:
+  -- submitted position first, then booked order for stops submitted
+  -- without a position. Submitted gaps (1,3,5) collapse to 1,2,3.
+  with payload as (
     select (s->>'stop_id')::uuid as stop_id,
            nullif(s->>'truck_id', '')::uuid as truck_id,
-           (s->>'route_position')::integer as route_position
+           (s->>'route_position')::integer as submitted_pos
     from jsonb_array_elements(p_stops) s
-  loop
-    -- Null positions stay null until the renumber below; the unique
-    -- index ignores NULLs so concurrent same-truck nulls cannot collide.
-    update public.delivery_stops ds
-    set truck_id = v_item.truck_id,
-        route_position = case
-          when v_item.truck_id is null then null
-          else v_item.route_position
-        end
-    where ds.id = v_item.stop_id
-      and ds.company_id = v_company_id
-      and ds.status = 'BOOKED';
-  end loop;
-
-  -- Renumber positions 1..n per truck: submitted order first, then
-  -- booked order for stops submitted without a position.
-  with ranked as (
-    select ds.id,
+  ),
+  final as (
+    select p.stop_id, p.truck_id,
            row_number() over (
-             partition by ds.truck_id
-             order by ds.route_position, ds.created_at
+             partition by p.truck_id
+             order by p.submitted_pos nulls last, ds.created_at, p.stop_id
            ) as rn
-    from public.delivery_stops ds
-    where ds.company_id = v_company_id
-      and ds.delivery_date = p_date
-      and ds.status = 'BOOKED'
-      and ds.truck_id is not null
+    from payload p
+    join public.delivery_stops ds on ds.id = p.stop_id
+    where p.truck_id is not null
   )
   update public.delivery_stops ds
-  set route_position = r.rn
-  from ranked r
-  where ds.id = r.id;
+  set truck_id = f.truck_id,
+      route_position = f.rn
+  from final f
+  where ds.id = f.stop_id;
 
   -- Audit: one event per stop whose truck or final position changed.
   insert into public.delivery_route_events (
