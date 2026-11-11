@@ -2,8 +2,8 @@
 --
 -- ONE contact log, tied to the ORDER (journey_id) and the CUSTOMER
 -- (customer_id), serving SCHEDULING calls now and CONFIRMATION calls
--- (night-before window call) later. Extends journey_interactions — no
--- parallel table — so "when did we last talk to this person" has a
+-- (night-before window call) later. Extends journey_interactions - no
+-- parallel table - so "when did we last talk to this person" has a
 -- single source.
 --
 -- New columns (all nullable or defaulted; existing rows untouched, no
@@ -21,7 +21,7 @@
 -- CONFIRMATION rows may carry any non-null outcome text TODAY so the
 -- night-before slice can add its own outcome list. When that slice
 -- lands, tighten by replacing journey_interactions_contact_outcome_check
--- with the confirmed value list — no data rewrite needed because the
+-- with the confirmed value list - no data rewrite needed because the
 -- RPC is the only write path.
 --
 -- Hold is COMPUTED at read time (delivery_contact_key_state), never
@@ -30,7 +30,7 @@
 -- Safe to run twice (if not exists / create or replace).
 
 -- ============================================================================
--- 1. companies.delivery_contact_hold_days — "Waiting on customer" window.
+-- 1. companies.delivery_contact_hold_days - "Waiting on customer" window.
 --    0 disables holds entirely. Edited via get_/set_delivery_contact_hold_days
 --    (owner/admin, same rule as week_start_day / delivery cutoff).
 -- ============================================================================
@@ -91,15 +91,15 @@ comment on column public.journey_interactions.contact_outcome is
 comment on column public.journey_interactions.callback_after is
   'Company-local date the customer asked to be called back. Required for not_ready, allowed on every hold outcome (voicemail, no_answer, texted, will_call_back, not_ready), rejected for spoke/wrong_number. When set it defines hold_until (start of that day, company-local); when omitted the hold falls back to occurred_at + delivery_contact_hold_days.';
 comment on column public.journey_interactions.company_id is
-  'Denormalized company of the journey''s store, set server-side at insert. NULL = not a delivery contact (all pre-m134 rows). Reads must always filter on it — never join across companies.';
+  'Denormalized company of the journey''s store, set server-side at insert. NULL = not a delivery contact (all pre-m134 rows). Reads must always filter on it; never join across companies.';
 
 -- ============================================================================
--- 3. Indexes — justified by the read shapes below:
+-- 3. Indexes - justified by the read shapes below:
 --    * key_state / history look up a company''s delivery contacts by
 --      customer_id (fast path) and scan by occurred_at for phone matches
 --      and "latest contact" (company-scoped, delivery rows only).
 --    * delivery_stops (journey_id, created_at) serves the hold rule
---      "no stop created for any key journey after the contact" — the
+--      "no stop created for any key journey after the contact" - the
 --      existing indexes are partial (BOOKED only) or keyed by date.
 --    * customers expression index supports resolving "same person"
 --      lookups by normalized phone.
@@ -117,11 +117,11 @@ create index if not exists delivery_stops_journey_created
   on public.delivery_stops (journey_id, created_at);
 
 -- ============================================================================
--- 4. delivery_norm_phone — canonical phone for customer-key matching.
+-- 4. delivery_norm_phone - canonical phone for customer-key matching.
 --    Digits only; a leading 1 on an 11-digit number is dropped; must be
 --    exactly 10 digits; repeated-digit numbers and 1234567890 are junk.
 --    Resolved at READ time from customers.phone, so a corrected typo
---    heals history — no phone snapshot is stored.
+--    heals history - no phone snapshot is stored.
 -- ============================================================================
 
 create or replace function public.delivery_norm_phone(p_phone text)
@@ -146,7 +146,13 @@ begin
 end;
 $$;
 
-revoke execute on function public.delivery_norm_phone(text) from public, anon, authenticated;
+-- customers_norm_phone_idx evaluates this function on every INSERT or
+-- UPDATE of customers.phone under the CALLING user's rights, so
+-- authenticated (and service_role) must keep EXECUTE or order entry
+-- breaks with "permission denied for function". It is immutable and
+-- exposes nothing.
+revoke execute on function public.delivery_norm_phone(text) from public, anon;
+grant execute on function public.delivery_norm_phone(text) to authenticated, service_role;
 
 -- Functional index on the normalized phone expression (customers.phone
 -- itself is never indexed by content). Lets "find customers sharing this
@@ -155,7 +161,7 @@ create index if not exists customers_norm_phone_idx
   on public.customers ((public.delivery_norm_phone(phone)));
 
 -- ============================================================================
--- 5. delivery_contact_key_state — the computed hold + last-contact state
+-- 5. delivery_contact_key_state - the computed hold + last-contact state
 --    for one customer key inside one company.
 --
 --    Customer key = contact rows with company_id = p_company_id,
@@ -288,7 +294,7 @@ begin
     ) into v_newer;
 
     -- A stop created for ANY journey in the key after the contact
-    -- (booking counts — on this order or a sibling) clears the hold.
+    -- (booking counts - on this order or a sibling) clears the hold.
     select exists (
       select 1
       from public.delivery_stops ds
@@ -339,7 +345,7 @@ revoke execute on function public.delivery_contact_key_state(uuid, uuid, text, u
   from public, anon, authenticated;
 
 -- ============================================================================
--- 6. log_delivery_contact — the ONE write path for delivery contacts.
+-- 6. log_delivery_contact - the ONE write path for delivery contacts.
 --
 --    contact_outcome -> legacy journey_interactions mapping (so Journey
 --    Activity and "Last customer contact" keep working):
@@ -392,6 +398,8 @@ declare
   v_commitment text;
   v_interaction_id uuid;
   v_existing_id uuid;
+  v_existing_journey uuid;
+  v_existing_employee uuid;
 begin
   if not public.is_journey_visible(p_journey_id) then
     raise exception 'Not authorized to log a delivery contact for this order';
@@ -472,13 +480,13 @@ begin
       else 'customer' end;
     v_summary := 'Delivery scheduling ' ||
       case p_outcome
-        when 'spoke' then 'call — spoke with customer.'
-        when 'voicemail' then 'call — left voicemail.'
-        when 'no_answer' then 'call — no answer.'
+        when 'spoke' then 'call: spoke with customer.'
+        when 'voicemail' then 'call: left voicemail.'
+        when 'no_answer' then 'call: no answer.'
         when 'texted' then 'text sent.'
-        when 'will_call_back' then 'call — customer will call back.'
-        when 'not_ready' then 'call — not ready yet.'
-        else 'call — wrong number.' end;
+        when 'will_call_back' then 'call: customer will call back.'
+        when 'not_ready' then 'call: not ready yet.'
+        else 'call: wrong number.' end;
   else
     -- CONFIRMATION: provisional generic legacy mapping until the
     -- night-before slice defines its outcome list.
@@ -505,13 +513,21 @@ begin
     raise exception 'That delivery stop does not belong to this order';
   end if;
 
-  -- Idempotent retry: return the previously created row.
+  -- Idempotent retry: return the previously created row, but only when
+  -- it belongs to THIS order and THIS employee. A key seen on another
+  -- order (or by another user, including another company) is an error,
+  -- never a silent cross-order return of someone else's row id.
   if p_idempotency_key is not null then
-    select id into v_existing_id
+    select id, journey_id, created_by_employee_id
+      into v_existing_id, v_existing_journey, v_existing_employee
     from public.journey_interactions
     where idempotency_key = p_idempotency_key;
     if v_existing_id is not null then
-      return v_existing_id;
+      if v_existing_journey = p_journey_id
+         and v_existing_employee = v_employee_id then
+        return v_existing_id;
+      end if;
+      raise exception 'That request key was already used for a different order.';
     end if;
   end if;
 
@@ -534,10 +550,18 @@ begin
   returning id into v_interaction_id;
 
   if v_interaction_id is null then
-    select id into v_interaction_id
+    select id, journey_id, created_by_employee_id
+      into v_existing_id, v_existing_journey, v_existing_employee
     from public.journey_interactions
     where idempotency_key = p_idempotency_key;
-    return v_interaction_id;
+    if v_existing_id is not null then
+      if v_existing_journey = p_journey_id
+         and v_existing_employee = v_employee_id then
+        return v_existing_id;
+      end if;
+      raise exception 'That request key was already used for a different order.';
+    end if;
+    raise exception 'Could not log the delivery contact. Please try again.';
   end if;
 
   return v_interaction_id;
@@ -550,7 +574,7 @@ grant execute on function public.log_delivery_contact(uuid, text, text, text, da
   to authenticated;
 
 -- ============================================================================
--- 7. get_delivery_contact_history — contacts across the customer key for
+-- 7. get_delivery_contact_history - contacts across the customer key for
 --    one order, plus the computed hold state and a recency value for the
 --    "called N minutes ago" notice.
 -- ============================================================================
@@ -631,7 +655,7 @@ grant execute on function public.get_delivery_contact_history(uuid, integer)
   to authenticated;
 
 -- ============================================================================
--- 8. get_/set_delivery_contact_hold_days — company setting, owner/admin
+-- 8. get_/set_delivery_contact_hold_days - company setting, owner/admin
 --    edit (same rule as set_company_week_start / the delivery cutoff's
 --    can_edit flag).
 -- ============================================================================
@@ -708,7 +732,7 @@ revoke execute on function public.set_delivery_contact_hold_days(integer) from p
 grant execute on function public.set_delivery_contact_hold_days(integer) to authenticated;
 
 -- ============================================================================
--- 9. list_ready_journeys — same signature and existing keys, plus per-row
+-- 9. list_ready_journeys - same signature and existing keys, plus per-row
 --    delivery-contact state. create or replace keeps the (boolean) ->
 --    jsonb signature so grants survive; anon/public execute is revoked
 --    explicitly below (it was only implicitly blocked before).
@@ -742,7 +766,7 @@ begin
     v_active_store := null;
   end;
 
-  -- Caller's company via their home store — the same resolution
+  -- Caller's company via their home store - the same resolution
   -- has_permission and the rest of the app use. Null home store means
   -- no company rows, which is the safe direction.
   select s.company_id into v_company_id

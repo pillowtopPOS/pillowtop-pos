@@ -86,13 +86,20 @@ select 'function:list_ready_journeys(boolean)', count(*)
 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
 where n.nspname='public' and p.proname='list_ready_journeys';
 
--- 5. Privileges: delivery-contact RPCs revoked from public/anon, granted
---    authenticated. delivery_norm_phone and delivery_contact_key_state are
---    internal helpers — revoked from everyone.
+-- 5. Privileges. delivery_norm_phone sits inside the
+--    customers_norm_phone_idx expression, so Postgres evaluates it on
+--    every customers INSERT/UPDATE under the CALLING user's rights:
+--    anon/public must NOT execute it, authenticated and service_role
+--    MUST (otherwise order entry breaks with "permission denied for
+--    function"). The RPCs are revoked from public/anon and granted to
+--    authenticated. delivery_contact_key_state is internal-only: it is
+--    revoked from everyone and only runs inside security-definer
+--    functions, which check EXECUTE as the definer.
 select p.proname,
        has_function_privilege('anon', p.oid, 'EXECUTE') as anon_can_execute,
        has_function_privilege('public', p.oid, 'EXECUTE') as public_can_execute,
-       has_function_privilege('authenticated', p.oid, 'EXECUTE') as auth_can_execute
+       has_function_privilege('authenticated', p.oid, 'EXECUTE') as auth_can_execute,
+       has_function_privilege('service_role', p.oid, 'EXECUTE') as service_can_execute
 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
 where n.nspname='public'
   and p.proname in (

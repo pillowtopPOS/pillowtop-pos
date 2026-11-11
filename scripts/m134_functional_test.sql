@@ -220,14 +220,61 @@ select purpose, contact_outcome, stop_id, window_snapshot, company_id, outcome, 
 from public.journey_interactions where id = :'conf_id';
 select public.log_delivery_contact('d1000000-0000-0000-0000-0000000000a6','CONFIRMATION','confirmed',null,null,null,null,gen_random_uuid());
 
-\echo '=== S17: privilege check — anon/public cannot execute new RPCs ==='
+\echo '=== S17: privilege check - anon/public cannot execute new RPCs ==='
 select p.proname,
        has_function_privilege('anon', p.oid, 'EXECUTE') as anon_exec,
        has_function_privilege('public', p.oid, 'EXECUTE') as public_exec,
-       has_function_privilege('authenticated', p.oid, 'EXECUTE') as auth_exec
+       has_function_privilege('authenticated', p.oid, 'EXECUTE') as auth_exec,
+       has_function_privilege('service_role', p.oid, 'EXECUTE') as service_exec
 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
 where n.nspname='public' and p.proname in (
   'log_delivery_contact','get_delivery_contact_history',
   'get_delivery_contact_hold_days','set_delivery_contact_hold_days',
   'delivery_contact_key_state','delivery_norm_phone','list_ready_journeys')
 order by 1;
+
+\echo '=== S18: delivery_norm_phone under real roles (index expr runs as caller) ==='
+-- Mirror Supabase defaults the local harness lacks: authenticated and
+-- service_role hold table DML on public tables (SELECT is needed for
+-- RETURNING); service_role bypasses RLS.
+grant select, insert, update on public.customers to authenticated, service_role;
+-- The customers RLS policies call is_journey_visible/is_store_visible,
+-- which read sleep_journeys/stores/employees; Supabase grants SELECT on
+-- these to authenticated, the local harness does not.
+grant select on public.sleep_journeys, public.stores, public.employees, public.companies
+  to authenticated, service_role;
+alter role service_role bypassrls;
+
+set role authenticated;
+set test.uid = '11111111-1111-1111-1111-111111111111';
+-- Fixed id: RETURNING would re-read the row under the SELECT policy,
+-- which requires a visible journey the brand-new customer does not have.
+insert into public.customers (id, first_name, last_name, phone, email, street_address, city, state, zip_code)
+values ('c1000000-0000-0000-0000-000000000099','Role','Insert','555-123-4567','ri@x.test','1 Test St','Denver','CO','80201');
+update public.customers set phone = '555-987-6543' where id = 'c1000000-0000-0000-0000-000000000007';
+update public.customers set phone = '555-111-2222' where id = 'c1000000-0000-0000-0000-000000000099';
+-- customers.phone is NOT NULL, so the null-phone case is expected to
+-- fail on the constraint (still exercises the index path attempt).
+insert into public.customers (first_name, last_name, phone, email, street_address, city, state, zip_code)
+values ('Role','NullPhone',null,'rn@x.test','2 Test St','Denver','CO','80201');
+
+set role service_role;
+insert into public.customers (first_name, last_name, phone, email, street_address, city, state, zip_code)
+values ('Role','Service','555-222-3333','rs@x.test','3 Test St','Denver','CO','80201');
+select public.delivery_norm_phone('555-123-4567') as service_norm_ok;
+
+set role anon;
+select public.delivery_norm_phone('555-123-4567');
+reset role;
+select id, phone from public.customers where id = 'c1000000-0000-0000-0000-000000000099';
+
+\echo '=== S19: idempotency key is scoped to order + employee ==='
+set test.uid = '11111111-1111-1111-1111-111111111111';
+select public.log_delivery_contact('d1000000-0000-0000-0000-0000000000a1','SCHEDULING','voicemail',null,null,null,'m134-key-2',null,null) as k2_first \gset
+select public.log_delivery_contact('d1000000-0000-0000-0000-0000000000a1','SCHEDULING','voicemail',null,null,null,'m134-key-2',null,null) as k2_repeat;
+select count(*) as k2_rows from public.journey_interactions where idempotency_key = 'm134-key-2';
+select public.log_delivery_contact('d1000000-0000-0000-0000-0000000000a2','SCHEDULING','voicemail',null,null,null,'m134-key-2',null,null);
+set test.uid = '22222222-2222-2222-2222-222222222222';
+select public.log_delivery_contact('d1000000-0000-0000-0000-0000000000a1','SCHEDULING','voicemail',null,null,null,'m134-key-2',null,null);
+set test.uid = '33333333-3333-3333-3333-333333333333';
+select public.log_delivery_contact('d2000000-0000-0000-0000-0000000000b1','SCHEDULING','voicemail',null,null,null,'m134-key-2',null,null);
