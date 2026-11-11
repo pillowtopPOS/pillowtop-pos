@@ -5,12 +5,14 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import Modal from "@/components/Modal";
+import DeliveryBookingModal from "@/components/delivery/DeliveryBookingModal";
 import {
   fetchDeliveryDayPlan,
   fetchDeliveryManageCalendar,
   saveDeliveryDayRoute,
   closeDeliveryDay,
   reopenDeliveryDay,
+  cancelDeliveryStop,
   type DeliveryDayPlan,
   type DeliveryDayPlanStop,
   type DeliveryDayPlanTruck,
@@ -127,6 +129,12 @@ function DeliveryDayInner() {
   const [suggestMsg, setSuggestMsg] = useState<string | null>(null);
   const [closeConfirm, setCloseConfirm] = useState(false);
   const [pendingNav, setPendingNav] = useState<string | null>(null);
+  const [movingStop, setMovingStop] = useState<DeliveryDayPlanStop | null>(null);
+  const [cancellingStop, setCancellingStop] = useState<DeliveryDayPlanStop | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const loadSeq = useRef(0);
 
   const validDate = /^\d{4}-\d{2}-\d{2}$/.test(date);
@@ -153,6 +161,7 @@ function DeliveryDayInner() {
       setCanManage(perm);
       setDirty(false);
       setSuggestMsg(null);
+      setNotice(null);
     } catch {
       if (seq !== loadSeq.current) return;
       setError("We couldn't load this delivery day. Please try again.");
@@ -214,6 +223,8 @@ function DeliveryDayInner() {
   const isPast = !!plan && !!plan.today_local && date < plan.today_local;
   const isClosed = plan?.plan.status === "CLOSED";
   const canEdit = canManage && !isPast && !isClosed;
+  // Move/cancel are exits, not route edits: allowed on a CLOSED day too.
+  const canExit = canManage && !isPast;
   // A clean draft can still "save" once to clear the released-stops banner.
   const canMarkReviewed =
     canEdit && (plan?.released_after_review.length ?? 0) > 0;
@@ -411,6 +422,50 @@ function DeliveryDayInner() {
     }
   };
 
+  // After a stop leaves this day (cancelled or moved away): drop it from
+  // the draft but keep every other unsaved change and the dirty flag.
+  // The plan is refetched so version/counts/warnings/banner stay right —
+  // a dirty draft must never be thrown away by a full load().
+  const afterStopRemoved = async (stopId: string, msg: string) => {
+    if (!dirty) {
+      await load();
+      setNotice(msg);
+      return;
+    }
+    try {
+      const p = await fetchDeliveryDayPlan(date);
+      setPlan(p);
+      setDraft((prev) => {
+        if (!prev) return prev;
+        const next = cloneDraft(prev);
+        removeStop(next, stopId);
+        return next;
+      });
+      setNotice(msg);
+    } catch {
+      setActionError("The delivery changed but the plan couldn't refresh. Reload to see the latest.");
+    }
+  };
+
+  const submitCancel = async () => {
+    if (!cancellingStop || !cancelReason.trim() || cancelBusy) return;
+    setCancelBusy(true);
+    setCancelError(null);
+    try {
+      await cancelDeliveryStop(cancellingStop.stop_id, cancelReason.trim());
+      const stopId = cancellingStop.stop_id;
+      setCancellingStop(null);
+      setCancelReason("");
+      await afterStopRemoved(stopId, "Delivery cancelled.");
+    } catch (e) {
+      setCancelError(
+        (e as Error)?.message ?? "Couldn't cancel the delivery. Please try again."
+      );
+    } finally {
+      setCancelBusy(false);
+    }
+  };
+
   const requestClose = () => {
     if (warnings.length > 0) setCloseConfirm(true);
     else doClose();
@@ -485,6 +540,30 @@ function DeliveryDayInner() {
             </select>
           </div>
         ) : null}
+        {canExit && (
+          <div className="mt-1 flex w-full items-center gap-3 sm:mt-0 sm:w-auto">
+            <button
+              type="button"
+              data-testid={`delivery-day-move-${s.stop_id}`}
+              onClick={() => setMovingStop(s)}
+              className="text-xs text-slate-500 hover:text-slate-800 hover:underline"
+            >
+              Move to another day
+            </button>
+            <button
+              type="button"
+              data-testid={`delivery-day-cancel-${s.stop_id}`}
+              onClick={() => {
+                setCancellingStop(s);
+                setCancelReason("");
+                setCancelError(null);
+              }}
+              className="text-xs text-slate-500 hover:text-red-700 hover:underline"
+            >
+              Cancel delivery
+            </button>
+          </div>
+        )}
       </div>
     );
   };
@@ -574,6 +653,15 @@ function DeliveryDayInner() {
               className="mb-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600"
             >
               You can view this plan but not change it.
+            </p>
+          )}
+
+          {notice && (
+            <p
+              data-testid="delivery-day-notice"
+              className="mb-3 rounded-md border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-800"
+            >
+              {notice}
             </p>
           )}
 
@@ -812,6 +900,84 @@ function DeliveryDayInner() {
                 className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
                 Keep editing
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Move-to-another-day: reuses the booking modal in reschedule mode */}
+      {movingStop && (
+        <DeliveryBookingModal
+          journeyId={movingStop.journey_id}
+          customerName={movingStop.customer_name ?? ""}
+          journeyNumber={movingStop.journey_number}
+          deliveryAddress={movingStop.delivery_address}
+          mode="reschedule"
+          stopId={movingStop.stop_id}
+          currentDate={date}
+          onClose={() => setMovingStop(null)}
+          onDone={async () => {
+            const stopId = movingStop.stop_id;
+            setMovingStop(null);
+            await afterStopRemoved(stopId, "Delivery moved.");
+          }}
+        />
+      )}
+
+      {/* Cancel delivery — same wording as the order panel's cancel window */}
+      {cancellingStop && (
+        <Modal onClose={() => setCancellingStop(null)}>
+          <div
+            data-testid="delivery-day-cancel-modal"
+            className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-5 shadow-lg"
+          >
+            <h2 className="text-lg font-semibold text-slate-900">
+              Cancel delivery
+            </h2>
+            <p className="mt-1 text-sm text-slate-600">
+              {cancellingStop.customer_name}
+              {cancellingStop.journey_number
+                ? ` · ${cancellingStop.journey_number}`
+                : ""}
+              {` · ${dateLabel(date)}`}
+            </p>
+            <label
+              htmlFor="day-cancel-reason"
+              className="mt-3 block text-sm font-medium text-slate-700"
+            >
+              Reason for cancelling
+            </label>
+            <textarea
+              id="day-cancel-reason"
+              data-testid="delivery-day-cancel-reason"
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              rows={3}
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              placeholder="Why is this delivery being cancelled?"
+            />
+            {cancelError && (
+              <p className="mt-2 text-sm text-red-600">{cancelError}</p>
+            )}
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                data-testid="delivery-day-cancel-dismiss"
+                onClick={() => setCancellingStop(null)}
+                disabled={cancelBusy}
+                className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Keep delivery
+              </button>
+              <button
+                type="button"
+                data-testid="delivery-day-cancel-confirm"
+                onClick={submitCancel}
+                disabled={!cancelReason.trim() || cancelBusy}
+                className="flex-1 rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {cancelBusy ? "Cancelling…" : "Cancel delivery"}
               </button>
             </div>
           </div>
