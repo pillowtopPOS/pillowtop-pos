@@ -92,8 +92,12 @@ export default function CompanySettingsForm() {
   // delivery_cutoff_time arrives with migration 129; hidden until the
   // read RPC exists.
   const [cutoffSupported, setCutoffSupported] = useState(false);
-  const [cutoffTime, setCutoffTime] = useState("15:00");
+  const [cutoffTime, setCutoffTime] = useState("17:00");
   const [cutoffNone, setCutoffNone] = useState(false);
+  // The last value the server confirmed. Unticking "No cutoff" restores
+  // this into the time box (or 5:00 PM when nothing was ever saved) and
+  // waits for Save — it never writes by itself.
+  const [cutoffSavedTime, setCutoffSavedTime] = useState<string | null>(null);
   const [cutoffCanEdit, setCutoffCanEdit] = useState(false);
   const [cutoffSaving, setCutoffSaving] = useState(false);
   const [cutoffError, setCutoffError] = useState<string | null>(null);
@@ -122,9 +126,10 @@ export default function CompanySettingsForm() {
         setCutoffSupported(true);
         setCutoffCanEdit(d.can_edit);
         const none = d.cutoff_time === null;
-        const time = d.cutoff_time ? d.cutoff_time.slice(0, 5) : "15:00";
+        const time = d.cutoff_time ? d.cutoff_time.slice(0, 5) : "17:00";
         setCutoffNone(none);
         setCutoffTime(time);
+        setCutoffSavedTime(d.cutoff_time ? time : null);
       }
     });
   }, []);
@@ -252,6 +257,7 @@ export default function CompanySettingsForm() {
     }
     setCutoffTime(nextTime);
     setCutoffNone(nextNone);
+    setCutoffSavedTime(nextNone ? null : nextTime);
     return true;
   }
 
@@ -418,19 +424,22 @@ export default function CompanySettingsForm() {
                     disabled={cutoffSaving || !cutoffCanEdit}
                     onChange={async (e) => {
                       const next = e.target.checked;
-                      const prev = { time: cutoffTime, none: cutoffNone };
-                      setCutoffNone(next);
-                      // "No cutoff" clears the saved time; the draft falls
-                      // back to the 15:00 default so unticking later (with
-                      // or without a reload) restores the same value.
-                      const ok = await changeDeliveryCutoff(
-                        next ? "15:00" : cutoffTime,
-                        next
-                      );
-                      if (!ok) {
-                        setCutoffTime(prev.time);
-                        setCutoffNone(prev.none);
+                      if (!next) {
+                        // Unticking never saves: pre-fill the last saved
+                        // time (5:00 PM when none was ever saved) and let
+                        // the user press Save.
+                        setCutoffNone(false);
+                        setCutoffTime(cutoffSavedTime ?? "17:00");
+                        return;
                       }
+                      // Ticking saves immediately; a failure reverts.
+                      const prev = cutoffNone;
+                      setCutoffNone(true);
+                      const ok = await changeDeliveryCutoff(
+                        cutoffSavedTime ?? "17:00",
+                        true
+                      );
+                      if (!ok) setCutoffNone(prev);
                     }}
                     className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 disabled:opacity-50"
                   />
