@@ -38,15 +38,25 @@ function actorLabel(name: string | null): string {
 // One plain-English line per stop-history row.
 function historyLine(e: JourneyDeliveryEvent): string {
   const who = `by ${actorLabel(e.actor_name)}, ${shortStamp(e.created_at)}`;
+  const overrideNote =
+    (e.action === "BOOKED" || e.action === "RESCHEDULED") &&
+    e.override &&
+    e.reason
+      ? `. Inside cutoff: ${e.reason}`
+      : "";
   switch (e.action) {
     case "BOOKED":
-      return e.to_date
-        ? `Booked for ${dayLabel(e.to_date)} ${who}`
-        : `Booked ${who}`;
+      return (
+        (e.to_date
+          ? `Booked for ${dayLabel(e.to_date)} ${who}`
+          : `Booked ${who}`) + overrideNote
+      );
     case "RESCHEDULED":
-      return `Moved from ${e.from_date ? dayLabel(e.from_date) : "?"} to ${
-        e.to_date ? dayLabel(e.to_date) : "?"
-      } ${who}`;
+      return (
+        `Moved from ${e.from_date ? dayLabel(e.from_date) : "?"} to ${
+          e.to_date ? dayLabel(e.to_date) : "?"
+        } ${who}` + overrideNote
+      );
     case "CANCELLED":
       if (!e.actor_name && e.reason === "Order is no longer scheduled") {
         return "Released by the system: order is no longer scheduled";
@@ -181,6 +191,14 @@ export default function JourneyDelivery({
   const customerName = journey.customer
     ? `${journey.customer.first_name} ${journey.customer.last_name}`
     : "Customer";
+  const deliveryAddress = [
+    journey.customer?.street_address,
+    [journey.customer?.city, journey.customer?.state, journey.customer?.zip_code]
+      .filter(Boolean)
+      .join(" "),
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   return (
     <div className="mt-3 border-t border-slate-100 pt-3" data-testid="journey-delivery">
@@ -320,6 +338,7 @@ export default function JourneyDelivery({
           journeyId={journey.id}
           customerName={customerName}
           journeyNumber={journey.journey_number ?? null}
+          deliveryAddress={deliveryAddress || null}
           mode={booking}
           stopId={stop?.id}
           currentDate={stop?.delivery_date}
