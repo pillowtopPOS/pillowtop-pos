@@ -19,7 +19,7 @@ export default function MyWorkPage() {
   const [showAllStores, setShowAllStores] = useState(false);
   const [contactJourney, setContactJourney] = useState<ReadyJourney | null>(null);
   const lastLoadAt = useRef(0);
-  const loadRef = useRef<(allStores?: boolean) => Promise<void>>(async () => {});
+  const loadRef = useRef<(allStores?: boolean, quiet?: boolean) => Promise<void>>(async () => {});
 
   const [pageError, setPageError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -46,12 +46,15 @@ export default function MyWorkPage() {
     });
   }, [router]);
 
-  async function load(allStores = showAllStores) {
-    setLoading(true);
+  // quiet=true swaps the data in without the loading spinner, for
+  // background refreshes (tab focus, post-save) where blanking the
+  // list would be jarring.
+  async function load(allStores = showAllStores, quiet = false) {
+    if (!quiet) setLoading(true);
     const data = await fetchMyWork({ allStores });
     lastLoadAt.current = Date.now();
     setItems(data);
-    setLoading(false);
+    if (!quiet) setLoading(false);
     // Keep the sidebar badge equal to exactly what this page renders.
     window.dispatchEvent(
       new CustomEvent<number>("my-work-count", { detail: data.length })
@@ -64,7 +67,7 @@ export default function MyWorkPage() {
   useEffect(() => {
     function onFocus() {
       if (Date.now() - lastLoadAt.current > 60_000) {
-        loadRef.current();
+        loadRef.current(undefined, true);
       }
     }
     window.addEventListener("focus", onFocus);
@@ -482,7 +485,7 @@ export default function MyWorkPage() {
           journeyId={contactJourney.journey_id}
           customerName={contactJourney.customer_name}
           onClose={() => setContactJourney(null)}
-          onSaved={load}
+          onSaved={() => load(showAllStores, true)}
         />
       )}
     </main>

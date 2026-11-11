@@ -152,11 +152,21 @@ export async function setDeliveryContactHoldDays(days: number): Promise<void> {
 }
 
 // Hold days are fetched once and cached for the session; the setting
-// changes rarely and a stale value only affects a date prefill.
+// changes rarely and a stale value only affects a date prefill. Only a
+// successful fetch is cached - a failure clears the slot so the next
+// call retries instead of sticking on null for the whole session.
 let holdDaysCache: Promise<DeliveryContactHoldDays | null> | null = null;
 export function getDeliveryContactHoldDaysCached(): Promise<DeliveryContactHoldDays | null> {
   if (!holdDaysCache) {
-    holdDaysCache = fetchDeliveryContactHoldDays().catch(() => null);
+    holdDaysCache = fetchDeliveryContactHoldDays()
+      .then((d) => {
+        if (d === null) holdDaysCache = null;
+        return d;
+      })
+      .catch(() => {
+        holdDaysCache = null;
+        return null;
+      });
   }
   return holdDaysCache;
 }

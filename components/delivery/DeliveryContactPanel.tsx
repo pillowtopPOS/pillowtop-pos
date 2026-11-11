@@ -116,7 +116,7 @@ export default function DeliveryContactPanel({
                   {lc.employee_name ?? "Someone"}{" "}
                   {lc.contact_outcome === "texted" ? "texted" : "called"}{" "}
                   {lc.customer_name ?? customerName ?? "the customer"}{" "}
-                  {relativeMinutesLabel(recentMin)}{" "}
+                  {relativeMinutesLabel(recentMin)},{" "}
                   {pastOutcomePhrase(lc.contact_outcome)}.
                 </p>
               )}
@@ -127,8 +127,8 @@ export default function DeliveryContactPanel({
                   data-testid="contact-panel-held"
                 >
                   We are waiting on the customer
-                  {lc?.occurred_at
-                    ? ` (since ${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(lc.occurred_at).getDay()] ?? ""})`
+                  {lc?.occurred_at && contactWhenLabel(lc.occurred_at)
+                    ? ` (since ${contactWhenLabel(lc.occurred_at)})`
                     : ""}
                   . You can still schedule.
                 </p>

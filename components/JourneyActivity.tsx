@@ -1249,20 +1249,29 @@ function AddUpdateModal({
       // Delivery scheduling/delivery call attempts go through the one
       // delivery contact write path (m134) so My Work holds, history,
       // and "last contact" all see them. The follow-up, when asked for,
-      // is still created against the returned interaction id.
+      // is still created against the returned interaction id. A pinned
+      // note or a chosen contact falls back to the normal path so no
+      // field is dropped.
       const isDeliveryCall =
         type === "called_customer" &&
         callResult !== null &&
-        (topic === "scheduling" || topic === "delivery");
+        (topic === "scheduling" || topic === "delivery") &&
+        !pin &&
+        !contactId;
 
       if (isDeliveryCall && callResult) {
         const contactOutcome =
           CALL_RESULT_TO_CONTACT_OUTCOME[callResult.label] ?? "no_answer";
         const prefix = callResult.summaryPrefix;
-        const note =
+        let note =
           prefix && summary.trim().startsWith(prefix)
             ? summary.trim().slice(prefix.length).trim()
             : summary.trim();
+        if (commitment.trim()) {
+          note = note
+            ? `${note} Promised: ${commitment.trim()}`
+            : `Promised: ${commitment.trim()}`;
+        }
         const interactionId = await logDeliveryContact({
           journey_id: journey.id,
           purpose: "SCHEDULING",
