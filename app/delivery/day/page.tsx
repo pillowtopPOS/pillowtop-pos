@@ -337,7 +337,7 @@ function DeliveryDayInner() {
     }
     d.unrouted = sorted.slice(idx);
     setDraft(d);
-    setDirty(true);
+    if (moved > 0) setDirty(true);
     setSuggestMsg(
       moved > 0
         ? "Rough grouping by zip — review it before saving."
@@ -449,30 +449,32 @@ function DeliveryDayInner() {
           </div>
         </div>
         {editable ? (
-          <div className="mt-1 flex w-full items-center gap-1 sm:mt-0 sm:w-auto">
-            <button
-              type="button"
-              data-testid={`delivery-day-up-${s.stop_id}`}
-              disabled={index === 0}
-              onClick={() => moveStop(s.stop_id, -1)}
-              className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40"
-            >
-              Up
-            </button>
-            <button
-              type="button"
-              data-testid={`delivery-day-down-${s.stop_id}`}
-              disabled={index === listLen - 1}
-              onClick={() => moveStop(s.stop_id, 1)}
-              className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40"
-            >
-              Down
-            </button>
+          <div className="mt-1 flex w-full flex-col gap-1 sm:mt-0 sm:w-auto sm:flex-row sm:items-center">
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                data-testid={`delivery-day-up-${s.stop_id}`}
+                disabled={index === 0}
+                onClick={() => moveStop(s.stop_id, -1)}
+                className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+              >
+                Up
+              </button>
+              <button
+                type="button"
+                data-testid={`delivery-day-down-${s.stop_id}`}
+                disabled={index === listLen - 1}
+                onClick={() => moveStop(s.stop_id, 1)}
+                className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+              >
+                Down
+              </button>
+            </div>
             <select
               data-testid={`delivery-day-truck-select-${s.stop_id}`}
               value={listKey ?? ""}
               onChange={(e) => setStopTruck(s.stop_id, e.target.value || null)}
-              className="min-w-0 flex-1 rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 sm:w-auto sm:flex-none"
+              className="w-full rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 sm:w-auto"
             >
               <option value="">Unrouted</option>
               {allTrucks.map((t) => (
