@@ -313,18 +313,17 @@ function DeliveryDayInner() {
       mutate((d) => {
         for (const a of sug.assignments) {
           for (const id of a.stop_ids) {
+            // Only stops still unrouted IN THE DRAFT move; anything the
+            // user already placed by hand stays exactly where it is.
+            const loc = locateStop(d, id);
+            if (!loc || loc.key !== null) continue;
             const stop = findStop(d, id);
             if (!stop) continue;
             removeStop(d, id);
             pushStop(d, stop, a.truck_id);
           }
         }
-        for (const id of sug.overflow) {
-          const stop = findStop(d, id);
-          if (!stop) continue;
-          removeStop(d, id);
-          d.unrouted.push(stop);
-        }
+        // Overflow stays unrouted — no action needed.
       });
       setSuggestNote(true);
     } catch {
@@ -353,16 +352,33 @@ function DeliveryDayInner() {
   };
 
   const doClose = async () => {
-    if (!plan || busy) return;
+    if (!plan || !draft || busy) return;
     setBusy(true);
     setActionError(null);
     setCloseConfirm(false);
+    // A dirty draft is saved first — closing must never discard unsaved
+    // route work. The close then uses the version save returned.
+    let saved = false;
     try {
-      await closeDeliveryDay(date, plan.plan.version);
+      const version = dirty
+        ? await saveDeliveryDayRoute(date, plan.plan.version, buildPayload(draft))
+        : plan.plan.version;
+      saved = dirty;
+      await closeDeliveryDay(date, version);
       await load();
     } catch (e) {
-      if (isConflict(e)) setConflict(true);
-      else setActionError((e as Error)?.message ?? "Couldn't close the day. Please try again.");
+      if (isConflict(e)) {
+        setConflict(true);
+      } else {
+        const msg =
+          (e as Error)?.message ?? "Couldn't close the day. Please try again.";
+        if (saved) {
+          // The route save already landed — reload so the screen shows
+          // the saved state, then surface the close error.
+          await load();
+        }
+        setActionError(msg);
+      }
     } finally {
       setBusy(false);
     }
