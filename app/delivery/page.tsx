@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, Truck } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -605,6 +606,16 @@ export default function DeliveryPage() {
                               </button>
                             </div>
                           )}
+                        </div>
+                      )}
+                      {d && d.booked_count > 0 && (
+                        <div className="pt-0.5">
+                          <Link
+                            href={`/delivery/day?date=${iso}`}
+                            className="text-[11px] font-medium text-blue-700 hover:underline"
+                          >
+                            Plan day
+                          </Link>
                         </div>
                       )}
                     </th>

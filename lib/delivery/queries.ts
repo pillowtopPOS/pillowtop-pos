@@ -351,3 +351,175 @@ export async function fetchDeliveryCutoff(): Promise<{
   if (error || !data) return null;
   return data as { cutoff_time: string | null; can_edit: boolean };
 }
+
+// ---------------------------------------------------------------------------
+// D1-c1: day plan — close and assign (migration 132)
+// ---------------------------------------------------------------------------
+
+export type DeliveryDayPlanInfo = {
+  status: "OPEN" | "CLOSED" | string;
+  version: number;
+  closed_at: string | null;
+  closed_by_name: string | null;
+  reopened_at: string | null;
+  reviewed_at: string | null;
+};
+
+export type DeliveryDayPlanTruck = {
+  truck_id: string;
+  name: string;
+  stop_cap: number;
+  on: boolean;
+  assigned_off: boolean;
+};
+
+export type DeliveryDayPlanStop = {
+  stop_id: string;
+  journey_id: string;
+  journey_number: string | null;
+  customer_name: string | null;
+  phone: string | null;
+  street_address: string | null;
+  street_address_line_2: string | null;
+  city: string | null;
+  state: string | null;
+  zip_code: string | null;
+  delivery_address: string | null;
+  truck_id: string | null;
+  route_position: number | null;
+  booked_by: string | null;
+  booked_by_name: string | null;
+  booked_at: string;
+  inside_cutoff: boolean;
+  window_start: string | null;
+  window_end: string | null;
+};
+
+export type DeliveryDayReleasedStop = {
+  stop_id: string;
+  journey_id: string;
+  journey_number: string | null;
+  customer_name: string | null;
+  truck_id: string | null;
+  reason_kind: "cancelled" | "moved" | string;
+  moved_to_date: string | null;
+  cancel_reason: string | null;
+  cancelled_at: string | null;
+};
+
+export type DeliveryDayPlan = {
+  plan: DeliveryDayPlanInfo;
+  trucks: DeliveryDayPlanTruck[];
+  stops: DeliveryDayPlanStop[];
+  released_after_review: DeliveryDayReleasedStop[];
+  capacity: number;
+  booked_count: number;
+  today_local: string;
+};
+
+export type DeliveryAssignmentSuggestion = {
+  assignments: { truck_id: string; name: string; stop_ids: string[] }[];
+  overflow: string[];
+};
+
+/** Full day plan for the close-and-assign screen. Read is allowed for
+ *  anyone who can see the delivery calendar. */
+export async function fetchDeliveryDayPlan(
+  date: string
+): Promise<DeliveryDayPlan> {
+  const supabase = createClient();
+  const { data, error } = await (supabase as any).rpc(
+    "get_delivery_day_plan",
+    { p_date: date }
+  );
+  if (error) throw error;
+  const d = data as DeliveryDayPlan | null;
+  return {
+    plan: d?.plan ?? {
+      status: "OPEN",
+      version: 0,
+      closed_at: null,
+      closed_by_name: null,
+      reopened_at: null,
+      reviewed_at: null,
+    },
+    trucks: d?.trucks ?? [],
+    stops: d?.stops ?? [],
+    released_after_review: d?.released_after_review ?? [],
+    capacity: d?.capacity ?? 0,
+    booked_count: d?.booked_count ?? 0,
+    today_local: d?.today_local ?? "",
+  };
+}
+
+export type DeliveryRouteStopInput = {
+  stop_id: string;
+  truck_id: string | null;
+  route_position: number | null;
+};
+
+/** Save the whole route draft for a day. Returns the new plan version.
+ *  Throws the RPC's plain-language errors for the caller to show. */
+export async function saveDeliveryDayRoute(
+  date: string,
+  expectedVersion: number,
+  stops: DeliveryRouteStopInput[]
+): Promise<number> {
+  const supabase = createClient();
+  const { data, error } = await (supabase as any).rpc(
+    "save_delivery_day_route",
+    {
+      p_date: date,
+      p_expected_version: expectedVersion,
+      p_stops: stops,
+    }
+  );
+  if (error) throw error;
+  return data as number;
+}
+
+/** Close a day for routing. Returns the new plan version. */
+export async function closeDeliveryDay(
+  date: string,
+  expectedVersion: number
+): Promise<number> {
+  const supabase = createClient();
+  const { data, error } = await (supabase as any).rpc(
+    "close_delivery_day",
+    { p_date: date, p_expected_version: expectedVersion }
+  );
+  if (error) throw error;
+  return data as number;
+}
+
+/** Reopen a closed day. Assignments and order are kept. */
+export async function reopenDeliveryDay(
+  date: string,
+  expectedVersion: number
+): Promise<number> {
+  const supabase = createClient();
+  const { data, error } = await (supabase as any).rpc(
+    "reopen_delivery_day",
+    { p_date: date, p_expected_version: expectedVersion }
+  );
+  if (error) throw error;
+  return data as number;
+}
+
+/** Read-only zip-grouping proposal. Saves nothing; the caller applies
+ *  it to the on-screen draft. */
+export async function suggestDeliveryAssignments(
+  date: string
+): Promise<DeliveryAssignmentSuggestion> {
+  const supabase = createClient();
+  const { data, error } = await (supabase as any).rpc(
+    "suggest_delivery_assignments",
+    { p_date: date }
+  );
+  if (error) throw error;
+  const d = data as DeliveryAssignmentSuggestion | null;
+  return {
+    assignments: d?.assignments ?? [],
+    overflow: d?.overflow ?? [],
+  };
+}
