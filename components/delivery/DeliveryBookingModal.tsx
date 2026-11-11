@@ -105,6 +105,7 @@ export default function DeliveryBookingModal({
   const [addingSpot, setAddingSpot] = useState<string | null>(null);
   const [spotAddedFor, setSpotAddedFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [initFailed, setInitFailed] = useState(false);
   const pageCache = useRef<Map<string, DeliveryCalendarDay[]>>(new Map());
   const loadSeq = useRef(0);
 
@@ -150,36 +151,34 @@ export default function DeliveryBookingModal({
 
   // First page of data: journey delivery info + permissions, then the
   // first week of days starting tomorrow (warehouse timezone).
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const [dj, manageCal, insideCutoff] = await Promise.all([
-          fetchJourneyDelivery(journeyId),
-          fetchDeliveryManageCalendar(),
-          fetchDeliveryBookInsideCutoff(),
-        ]);
-        if (!alive) return;
-        setDelivery(dj);
-        setCanManageCalendar(manageCal);
-        setCanInsideCutoff(insideCutoff);
-        const t = dj.earliest.today_local
-          ? addDays(dj.earliest.today_local, 1)
-          : addDays(new Date().toISOString().slice(0, 10), 1);
-        setTomorrow(t);
-        setWeekOffset(0);
-      } catch {
-        if (alive) {
-          setError("We couldn't load the delivery days. Please try again.");
-        }
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
+  const loadInitial = useCallback(async () => {
+    setLoading(true);
+    setInitFailed(false);
+    setError(null);
+    try {
+      const [dj, manageCal, insideCutoff] = await Promise.all([
+        fetchJourneyDelivery(journeyId),
+        fetchDeliveryManageCalendar(),
+        fetchDeliveryBookInsideCutoff(),
+      ]);
+      setDelivery(dj);
+      setCanManageCalendar(manageCal);
+      setCanInsideCutoff(insideCutoff);
+      const t = dj.earliest.today_local
+        ? addDays(dj.earliest.today_local, 1)
+        : addDays(new Date().toISOString().slice(0, 10), 1);
+      setTomorrow(t);
+      setWeekOffset(0);
+    } catch {
+      setInitFailed(true);
+    } finally {
+      setLoading(false);
+    }
   }, [journeyId]);
+
+  useEffect(() => {
+    loadInitial();
+  }, [loadInitial]);
 
   // Load (or reuse the cached) page whenever the week changes.
   useEffect(() => {
@@ -360,7 +359,21 @@ export default function DeliveryBookingModal({
 
         {/* Scrollable day area */}
         <div className="flex-1 overflow-y-auto px-5 py-4 sm:px-8">
-          {loading ? (
+          {initFailed ? (
+            <div className="py-10 text-center" data-testid="delivery-load-error">
+              <p className="text-sm text-slate-600">
+                We couldn't load the delivery days. Try again.
+              </p>
+              <button
+                type="button"
+                data-testid="delivery-retry"
+                onClick={loadInitial}
+                className="mt-3 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Retry
+              </button>
+            </div>
+          ) : loading ? (
             <p className="py-10 text-center text-sm text-slate-500">
               Loading days…
             </p>
@@ -369,13 +382,15 @@ export default function DeliveryBookingModal({
               Loading days…
             </p>
           ) : days.length === 0 ? (
-            <p
-              className="py-10 text-center text-sm text-slate-500"
-              data-testid="delivery-no-days"
-            >
-              No delivery days are set up yet. Ask a manager to set up trucks
-              and the weekly schedule.
-            </p>
+            error ? null : (
+              <p
+                className="py-10 text-center text-sm text-slate-500"
+                data-testid="delivery-no-days"
+              >
+                No delivery days are set up yet. Ask a manager to set up trucks
+                and the weekly schedule.
+              </p>
+            )
           ) : (
             <>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
@@ -575,15 +590,16 @@ export default function DeliveryBookingModal({
                 </div>
               )}
 
-              {error && (
-                <p
-                  className="mt-3 text-sm text-red-600"
-                  data-testid="delivery-booking-error"
-                >
-                  {error}
-                </p>
-              )}
             </>
+          )}
+
+          {error && !initFailed && (
+            <p
+              className="mt-3 text-sm text-red-600"
+              data-testid="delivery-booking-error"
+            >
+              {error}
+            </p>
           )}
         </div>
 

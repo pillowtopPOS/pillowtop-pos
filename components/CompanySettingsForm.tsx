@@ -420,10 +420,11 @@ export default function CompanySettingsForm() {
                       const next = e.target.checked;
                       const prev = { time: cutoffTime, none: cutoffNone };
                       setCutoffNone(next);
-                      // Both directions save immediately; a failure
-                      // reverts the checkbox and time to what was shown.
+                      // "No cutoff" clears the saved time; the draft falls
+                      // back to the 15:00 default so unticking later (with
+                      // or without a reload) restores the same value.
                       const ok = await changeDeliveryCutoff(
-                        cutoffTime,
+                        next ? "15:00" : cutoffTime,
                         next
                       );
                       if (!ok) {
