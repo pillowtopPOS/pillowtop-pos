@@ -11,7 +11,6 @@ import {
   saveDeliveryDayRoute,
   closeDeliveryDay,
   reopenDeliveryDay,
-  suggestDeliveryAssignments,
   type DeliveryDayPlan,
   type DeliveryDayPlanStop,
   type DeliveryDayPlanTruck,
@@ -125,7 +124,7 @@ function DeliveryDayInner() {
   const [conflict, setConflict] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [suggestNote, setSuggestNote] = useState(false);
+  const [suggestMsg, setSuggestMsg] = useState<string | null>(null);
   const [closeConfirm, setCloseConfirm] = useState(false);
   const [pendingNav, setPendingNav] = useState<string | null>(null);
   const loadSeq = useRef(0);
@@ -153,7 +152,7 @@ function DeliveryDayInner() {
       setDraft(buildDraft(p));
       setCanManage(perm);
       setDirty(false);
-      setSuggestNote(false);
+      setSuggestMsg(null);
     } catch {
       if (seq !== loadSeq.current) return;
       setError("We couldn't load this delivery day. Please try again.");
@@ -215,6 +214,9 @@ function DeliveryDayInner() {
   const isPast = !!plan && !!plan.today_local && date < plan.today_local;
   const isClosed = plan?.plan.status === "CLOSED";
   const canEdit = canManage && !isPast && !isClosed;
+  // A clean draft can still "save" once to clear the released-stops banner.
+  const canMarkReviewed =
+    canEdit && (plan?.released_after_review.length ?? 0) > 0;
 
   // Truck columns: every truck from the plan plus any truck the draft
   // references that the plan didn't list (archived-after-assignment edge).
@@ -281,7 +283,7 @@ function DeliveryDayInner() {
       return next;
     });
     setDirty(true);
-    setSuggestNote(false);
+    setSuggestMsg(null);
   };
 
   const moveStop = (stopId: string, dir: -1 | 1) => {
@@ -304,33 +306,43 @@ function DeliveryDayInner() {
     });
   };
 
-  const applySuggestion = async () => {
-    if (busy) return;
-    setBusy(true);
-    setActionError(null);
-    try {
-      const sug = await suggestDeliveryAssignments(date);
-      mutate((d) => {
-        for (const a of sug.assignments) {
-          for (const id of a.stop_ids) {
-            // Only stops still unrouted IN THE DRAFT move; anything the
-            // user already placed by hand stays exactly where it is.
-            const loc = locateStop(d, id);
-            if (!loc || loc.key !== null) continue;
-            const stop = findStop(d, id);
-            if (!stop) continue;
-            removeStop(d, id);
-            pushStop(d, stop, a.truck_id);
-          }
-        }
-        // Overflow stays unrouted — no action needed.
-      });
-      setSuggestNote(true);
-    } catch {
-      setActionError("Couldn't build a suggestion. Please try again.");
-    } finally {
-      setBusy(false);
+  // Draft-only suggestion: unrouted stops sorted by zip then booked
+  // order fill each ON truck's remaining room in contiguous blocks.
+  // Stops already on a truck in the draft never move. Never saves.
+  const applySuggestion = () => {
+    if (!draft || busy) return;
+    const d = cloneDraft(draft);
+    const sorted = [...d.unrouted].sort((a, b) => {
+      if (a.zip_code == null && b.zip_code == null)
+        return a.booked_at.localeCompare(b.booked_at);
+      if (a.zip_code == null) return 1;
+      if (b.zip_code == null) return -1;
+      return (
+        a.zip_code.localeCompare(b.zip_code) ||
+        a.booked_at.localeCompare(b.booked_at)
+      );
+    });
+    let idx = 0;
+    let moved = 0;
+    for (const t of allTrucks) {
+      if (!t.on) continue;
+      const room = Math.max(0, t.stop_cap - (d.trucks[t.truck_id]?.length ?? 0));
+      const take = sorted.slice(idx, idx + room);
+      idx += take.length;
+      for (const s of take) {
+        removeStop(d, s.stop_id);
+        pushStop(d, s, t.truck_id);
+        moved += 1;
+      }
     }
+    d.unrouted = sorted.slice(idx);
+    setDraft(d);
+    setDirty(true);
+    setSuggestMsg(
+      moved > 0
+        ? "Rough grouping by zip — review it before saving."
+        : "No unrouted stops fit on the trucks — nothing changed."
+    );
   };
 
   const isConflict = (e: unknown) =>
@@ -437,7 +449,7 @@ function DeliveryDayInner() {
           </div>
         </div>
         {editable ? (
-          <div className="flex items-center gap-1">
+          <div className="mt-1 flex w-full items-center gap-1 sm:mt-0 sm:w-auto">
             <button
               type="button"
               data-testid={`delivery-day-up-${s.stop_id}`}
@@ -460,7 +472,7 @@ function DeliveryDayInner() {
               data-testid={`delivery-day-truck-select-${s.stop_id}`}
               value={listKey ?? ""}
               onChange={(e) => setStopTruck(s.stop_id, e.target.value || null)}
-              className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-700"
+              className="min-w-0 flex-1 rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 sm:w-auto sm:flex-none"
             >
               <option value="">Unrouted</option>
               {allTrucks.map((t) => (
@@ -602,9 +614,15 @@ function DeliveryDayInner() {
             </div>
           )}
 
-          {suggestNote && canEdit && (
-            <p className="mb-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
-              Rough grouping by zip — review it before saving.
+          {suggestMsg && canEdit && (
+            <p
+              className={`mb-3 rounded-md border px-3 py-2 text-sm ${
+                suggestMsg.startsWith("No ")
+                  ? "border-slate-200 bg-slate-50 text-slate-600"
+                  : "border-blue-200 bg-blue-50 text-blue-800"
+              }`}
+            >
+              {suggestMsg}
             </p>
           )}
 
@@ -728,10 +746,14 @@ function DeliveryDayInner() {
                     type="button"
                     data-testid="delivery-day-save"
                     onClick={doSave}
-                    disabled={!dirty || busy}
+                    disabled={(!dirty && !canMarkReviewed) || busy}
                     className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
                   >
-                    Save route{dirty ? " •" : ""}
+                    {dirty
+                      ? "Save route •"
+                      : canMarkReviewed
+                        ? "Mark reviewed"
+                        : "Save route"}
                   </button>
                 </>
               )}
