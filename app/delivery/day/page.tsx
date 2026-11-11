@@ -477,9 +477,9 @@ function DeliveryDayInner() {
       <div
         key={s.stop_id}
         data-testid={`delivery-day-stop-${s.stop_id}`}
-        className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-100 px-3 py-2 last:border-b-0"
+        className="flex gap-3 border-b border-slate-100 px-3 py-2 last:border-b-0"
       >
-        <span className="w-6 shrink-0 text-center text-xs font-semibold text-slate-400">
+        <span className="w-6 shrink-0 pt-0.5 text-center text-xs font-semibold text-slate-400">
           {index + 1}
         </span>
         <div className="min-w-0 flex-1">
@@ -502,68 +502,72 @@ function DeliveryDayInner() {
             {s.phone ? ` · ${s.phone}` : ""}
             {s.booked_by_name ? ` · booked by ${s.booked_by_name}` : ""}
           </div>
-        </div>
-        {editable ? (
-          <div className="mt-1 flex w-full flex-col gap-1 sm:mt-0 sm:w-auto sm:flex-row sm:items-center">
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                data-testid={`delivery-day-up-${s.stop_id}`}
-                disabled={index === 0}
-                onClick={() => moveStop(s.stop_id, -1)}
-                className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40"
-              >
-                Up
-              </button>
-              <button
-                type="button"
-                data-testid={`delivery-day-down-${s.stop_id}`}
-                disabled={index === listLen - 1}
-                onClick={() => moveStop(s.stop_id, 1)}
-                className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40"
-              >
-                Down
-              </button>
+          {(editable || canExit) && (
+            <div className="mt-1 flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-2">
+              {editable && (
+                <>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      data-testid={`delivery-day-up-${s.stop_id}`}
+                      disabled={index === 0}
+                      onClick={() => moveStop(s.stop_id, -1)}
+                      className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                    >
+                      Up
+                    </button>
+                    <button
+                      type="button"
+                      data-testid={`delivery-day-down-${s.stop_id}`}
+                      disabled={index === listLen - 1}
+                      onClick={() => moveStop(s.stop_id, 1)}
+                      className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                    >
+                      Down
+                    </button>
+                  </div>
+                  <select
+                    data-testid={`delivery-day-truck-select-${s.stop_id}`}
+                    value={listKey ?? ""}
+                    onChange={(e) => setStopTruck(s.stop_id, e.target.value || null)}
+                    className="w-full rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 sm:w-32"
+                  >
+                    <option value="">Unrouted</option>
+                    {allTrucks.map((t) => (
+                      <option key={t.truck_id} value={t.truck_id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+              {canExit && (
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    data-testid={`delivery-day-move-${s.stop_id}`}
+                    onClick={() => setMovingStop(s)}
+                    className="text-xs text-slate-500 hover:text-slate-800 hover:underline"
+                  >
+                    Move to another day
+                  </button>
+                  <button
+                    type="button"
+                    data-testid={`delivery-day-cancel-${s.stop_id}`}
+                    onClick={() => {
+                      setCancellingStop(s);
+                      setCancelReason("");
+                      setCancelError(null);
+                    }}
+                    className="text-xs text-slate-500 hover:text-red-700 hover:underline"
+                  >
+                    Cancel delivery
+                  </button>
+                </div>
+              )}
             </div>
-            <select
-              data-testid={`delivery-day-truck-select-${s.stop_id}`}
-              value={listKey ?? ""}
-              onChange={(e) => setStopTruck(s.stop_id, e.target.value || null)}
-              className="w-full rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 sm:w-auto"
-            >
-              <option value="">Unrouted</option>
-              {allTrucks.map((t) => (
-                <option key={t.truck_id} value={t.truck_id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        ) : null}
-        {canExit && (
-          <div className="mt-1 flex w-full items-center gap-3 sm:mt-0 sm:w-auto">
-            <button
-              type="button"
-              data-testid={`delivery-day-move-${s.stop_id}`}
-              onClick={() => setMovingStop(s)}
-              className="text-xs text-slate-500 hover:text-slate-800 hover:underline"
-            >
-              Move to another day
-            </button>
-            <button
-              type="button"
-              data-testid={`delivery-day-cancel-${s.stop_id}`}
-              onClick={() => {
-                setCancellingStop(s);
-                setCancelReason("");
-                setCancelError(null);
-              }}
-              className="text-xs text-slate-500 hover:text-red-700 hover:underline"
-            >
-              Cancel delivery
-            </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     );
   };
