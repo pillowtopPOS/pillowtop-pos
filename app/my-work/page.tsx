@@ -1,17 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { fetchMyWork, completeFollowUp, FOLLOW_UP_METHOD_LABELS, type MyWorkItem } from "@/lib/journeys/queries";
+import { fetchMyWork, completeFollowUp, FOLLOW_UP_METHOD_LABELS, type MyWorkItem, type ReadyJourney } from "@/lib/journeys/queries";
 import { exceptionTypeLabel } from "@/lib/journeys/sleepTrial";
 import { READY_SCHEDULING_STALE_DAYS } from "@/lib/constants";
+import DeliveryContactModal from "@/components/delivery/DeliveryContactModal";
+import {
+  holdUntilDayLabel,
+  myWorkContactLine,
+} from "@/lib/delivery/contacts";
 
 export default function MyWorkPage() {
   const router = useRouter();
   const [items, setItems] = useState<MyWorkItem[]>([]);
   const [showAllStores, setShowAllStores] = useState(false);
+  const [contactJourney, setContactJourney] = useState<ReadyJourney | null>(null);
+  const lastLoadAt = useRef(0);
+  const loadRef = useRef<(allStores?: boolean) => Promise<void>>(async () => {});
 
   const [pageError, setPageError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -41,6 +49,7 @@ export default function MyWorkPage() {
   async function load(allStores = showAllStores) {
     setLoading(true);
     const data = await fetchMyWork({ allStores });
+    lastLoadAt.current = Date.now();
     setItems(data);
     setLoading(false);
     // Keep the sidebar badge equal to exactly what this page renders.
@@ -48,6 +57,19 @@ export default function MyWorkPage() {
       new CustomEvent<number>("my-work-count", { detail: data.length })
     );
   }
+  loadRef.current = load;
+
+  // Refetch when the tab regains focus and the data is over a minute old,
+  // so a call logged elsewhere shows up without a manual reload.
+  useEffect(() => {
+    function onFocus() {
+      if (Date.now() - lastLoadAt.current > 60_000) {
+        loadRef.current();
+      }
+    }
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
 
   async function handleComplete(id: string) {
     try {
@@ -197,7 +219,50 @@ export default function MyWorkPage() {
                             {readyDays === 1 ? "" : "s"}
                           </span>
                         )}
+                      {r.held && (
+                        <span
+                          data-testid={`my-work-pill-held-${r.journey_id}`}
+                          className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-xs font-normal text-sky-800"
+                        >
+                          Waiting on customer
+                          {r.hold_until
+                            ? ` until ${holdUntilDayLabel(r.hold_until)}`
+                            : ""}
+                        </span>
+                      )}
+                      {r.callback_due && (
+                        <span
+                          data-testid={`my-work-pill-callback-${r.journey_id}`}
+                          className="ml-2 rounded-full bg-teal-100 px-2 py-0.5 text-xs font-normal text-teal-800"
+                        >
+                          Callback due
+                        </span>
+                      )}
+                      {r.bad_number && (
+                        <span
+                          data-testid={`my-work-pill-badnumber-${r.journey_id}`}
+                          className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-normal text-red-800"
+                        >
+                          Bad number, needs new contact info
+                        </span>
+                      )}
                     </p>
+                    {myWorkContactLine(
+                      r.last_contact ?? null,
+                      r.journey_id,
+                      r.customer_name
+                    ) && (
+                      <p
+                        className="mt-0.5 text-xs text-slate-600"
+                        data-testid={`my-work-contact-line-${r.journey_id}`}
+                      >
+                        {myWorkContactLine(
+                          r.last_contact ?? null,
+                          r.journey_id,
+                          r.customer_name
+                        )}
+                      </p>
+                    )}
                     <p className="mt-1 text-xs text-slate-600">
                       {readyText}
                       {r.store_name ? ` at ${r.store_name}` : ""}
@@ -207,12 +272,22 @@ export default function MyWorkPage() {
                         : ""}
                     </p>
                   </div>
-                  <Link
-                    href={`/board?journey=${r.journey_id}&book=1`}
-                    className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                  >
-                    View Journey
-                  </Link>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      data-testid={`my-work-contact-btn-${r.journey_id}`}
+                      onClick={() => setContactJourney(r)}
+                      className="min-h-[40px] rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      Customer Contacted
+                    </button>
+                    <Link
+                      href={`/board?journey=${r.journey_id}&book=1`}
+                      className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      View Journey
+                    </Link>
+                  </div>
                 </div>
               );
             }
@@ -400,6 +475,15 @@ export default function MyWorkPage() {
             );
           })}
         </div>
+      )}
+
+      {contactJourney && (
+        <DeliveryContactModal
+          journeyId={contactJourney.journey_id}
+          customerName={contactJourney.customer_name}
+          onClose={() => setContactJourney(null)}
+          onSaved={load}
+        />
       )}
     </main>
   );

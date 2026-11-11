@@ -20,6 +20,10 @@ import {
   fetchDeliveryCutoff,
   setCompanyWeekStart,
 } from "@/lib/delivery/queries";
+import {
+  fetchDeliveryContactHoldDays,
+  setDeliveryContactHoldDays,
+} from "@/lib/delivery/contacts";
 
 // Company-editable role grants that are not Sleep Trial scoped (plus the
 // exchange/inspection keys from Exchange Builder spec Section 12); they live
@@ -101,6 +105,14 @@ export default function CompanySettingsForm() {
   const [cutoffCanEdit, setCutoffCanEdit] = useState(false);
   const [cutoffSaving, setCutoffSaving] = useState(false);
   const [cutoffError, setCutoffError] = useState<string | null>(null);
+  // delivery_contact_hold_days arrives with migration 134; hidden until
+  // the read RPC exists. Saved only via the Save button, never on change.
+  const [holdSupported, setHoldSupported] = useState(false);
+  const [holdDays, setHoldDays] = useState(2);
+  const [holdDraft, setHoldDraft] = useState("2");
+  const [holdCanEdit, setHoldCanEdit] = useState(false);
+  const [holdSaving, setHoldSaving] = useState(false);
+  const [holdError, setHoldError] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([fetchCurrentEmployee(), fetchStores()]).then(([e, s]) => {
@@ -130,6 +142,16 @@ export default function CompanySettingsForm() {
         setCutoffNone(none);
         setCutoffTime(time);
         setCutoffSavedTime(d.cutoff_time ? time : null);
+      }
+    });
+    fetchDeliveryContactHoldDays().then((d) => {
+      if (d === null) {
+        setHoldSupported(false);
+      } else {
+        setHoldSupported(true);
+        setHoldCanEdit(d.can_edit);
+        setHoldDays(d.hold_days);
+        setHoldDraft(String(d.hold_days));
       }
     });
   }, []);
@@ -259,6 +281,26 @@ export default function CompanySettingsForm() {
     setCutoffNone(nextNone);
     setCutoffSavedTime(nextNone ? null : nextTime);
     return true;
+  }
+
+  async function changeHoldDays() {
+    if (holdSaving || !holdCanEdit) return;
+    const days = parseInt(holdDraft, 10);
+    if (!Number.isInteger(days) || days < 0 || days > 14) {
+      setHoldError("Enter a whole number from 0 to 14.");
+      return;
+    }
+    setHoldError(null);
+    setHoldSaving(true);
+    try {
+      await setDeliveryContactHoldDays(days);
+      setHoldDays(days);
+      setHoldDraft(String(days));
+    } catch (e: any) {
+      setHoldError(e?.message ?? "Couldn't save that setting. Please try again.");
+    } finally {
+      setHoldSaving(false);
+    }
   }
 
   const canEditPermissions =
@@ -468,6 +510,55 @@ export default function CompanySettingsForm() {
                 tomorrow. The clock is the timezone of the warehouse each
                 order ships from.
                 {!cutoffCanEdit && " Only owners and admins can change this."}
+              </p>
+            </div>
+          )}
+          {holdSupported && (
+            <div className="border-b border-slate-200 pb-4">
+              <label
+                htmlFor="settings-hold-days"
+                className="block text-sm font-medium text-slate-700"
+              >
+                Waiting on customer days
+              </label>
+              <div className="mt-2 flex items-center gap-3">
+                <input
+                  id="settings-hold-days"
+                  data-testid="settings-hold-days"
+                  type="number"
+                  min={0}
+                  max={14}
+                  step={1}
+                  value={holdDraft}
+                  disabled={holdSaving || !holdCanEdit}
+                  onChange={(e) => {
+                    setHoldDraft(e.target.value);
+                    setHoldError(null);
+                  }}
+                  className="w-20 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm disabled:opacity-50"
+                />
+                {holdCanEdit && (
+                  <button
+                    type="button"
+                    data-testid="settings-hold-days-save"
+                    disabled={holdSaving || holdDraft === String(holdDays)}
+                    onClick={changeHoldDays}
+                    className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                  >
+                    {holdSaving ? "Saving…" : "Save"}
+                  </button>
+                )}
+              </div>
+              {holdSaving && (
+                <p className="mt-1 text-xs text-slate-400">Saving…</p>
+              )}
+              {holdError && (
+                <p className="mt-1 text-xs text-red-600">{holdError}</p>
+              )}
+              <p className="mt-1 text-xs text-slate-500">
+                After a call that does not reach the customer, show Waiting on
+                customer for this many days. 0 turns it off.
+                {!holdCanEdit && " Only owners and admins can change this."}
               </p>
             </div>
           )}

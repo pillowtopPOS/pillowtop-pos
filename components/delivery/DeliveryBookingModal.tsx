@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
 import Modal from "@/components/Modal";
+import DeliveryContactPanel from "@/components/delivery/DeliveryContactPanel";
 import {
   bookDeliveryStop,
   fetchDeliveryBookInsideCutoff,
@@ -355,6 +356,16 @@ export default function DeliveryBookingModal({
               </p>
             )}
           </div>
+        </div>
+
+        {/* Contact panel: fetched fresh when the window opens. Warns
+            and informs only; booking is never affected. */}
+        <div className="border-b border-slate-100 px-5 pb-3 sm:px-8">
+          <DeliveryContactPanel
+            journeyId={journeyId}
+            customerName={customerName}
+            journeyNumber={journeyNumber}
+          />
         </div>
 
         {/* Scrollable day area */}

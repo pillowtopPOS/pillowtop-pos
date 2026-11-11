@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Modal from "@/components/Modal";
 import DeliveryBookingModal from "@/components/delivery/DeliveryBookingModal";
+import DeliveryContactPanel from "@/components/delivery/DeliveryContactPanel";
 import {
   cancelDeliveryStop,
   fetchJourneyDelivery,
@@ -291,6 +292,17 @@ export default function JourneyDelivery({
               Book delivery
             </button>
           )}
+
+          {/* Call log: Ready to Schedule gets the Log a call button;
+              Scheduled shows history only until the confirmation slice. */}
+          <div className="mt-3">
+            <DeliveryContactPanel
+              journeyId={journey.id}
+              customerName={customerName}
+              journeyNumber={journey.journey_number ?? null}
+              showLogButton={journey.current_state === "Ready to Schedule"}
+            />
+          </div>
 
           {releasedBySystem && (
             <p

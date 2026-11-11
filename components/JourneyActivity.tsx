@@ -30,6 +30,7 @@ import {
 } from "@/lib/journeys/interactions";
 import { localTodayISO } from "@/lib/dates";
 import { createClient } from "@/lib/supabase/client";
+import { logDeliveryContact } from "@/lib/delivery/contacts";
 import {
   activityEventAuthor,
   activityEventDetail,
@@ -1098,6 +1099,16 @@ export default function JourneyActivity({
 
 // ============================================================
 // Add Update modal (source doc §12): seconds, not minutes.
+// Add Update call-attempt label -> delivery contact_outcome (m134).
+// "No voicemail" logs as no_answer: the customer was not reached.
+const CALL_RESULT_TO_CONTACT_OUTCOME: Record<string, string> = {
+  "Spoke with customer": "spoke",
+  "No answer": "no_answer",
+  "Left voicemail": "voicemail",
+  "No voicemail": "no_answer",
+  "Wrong number": "wrong_number",
+};
+
 // Communication → topic → what happened → what happens next.
 // ============================================================
 
@@ -1235,23 +1246,58 @@ function AddUpdateModal({
             }
           : null;
 
-      await recordJourneyInteraction({
-        journey_id: journey.id,
-        interaction_type: type,
-        summary: summary.trim(),
-        idempotency_key: keys.interaction,
-        topic,
-        topic_label: topic ? topicLabel : null,
-        contact_id: contactId || null,
-        outcome,
-        waiting_on: waitingOn,
-        commitment_made: commitment.trim() || null,
-        request_category: type === "customer_request" ? requestCategory || null : null,
-        is_internal: type === "internal_note",
-        importance: pin ? "important" : "normal",
-        pinned_until: pin ? pinUntilDate : null,
-        follow_up: followUp,
-      });
+      // Delivery scheduling/delivery call attempts go through the one
+      // delivery contact write path (m134) so My Work holds, history,
+      // and "last contact" all see them. The follow-up, when asked for,
+      // is still created against the returned interaction id.
+      const isDeliveryCall =
+        type === "called_customer" &&
+        callResult !== null &&
+        (topic === "scheduling" || topic === "delivery");
+
+      if (isDeliveryCall && callResult) {
+        const contactOutcome =
+          CALL_RESULT_TO_CONTACT_OUTCOME[callResult.label] ?? "no_answer";
+        const prefix = callResult.summaryPrefix;
+        const note =
+          prefix && summary.trim().startsWith(prefix)
+            ? summary.trim().slice(prefix.length).trim()
+            : summary.trim();
+        const interactionId = await logDeliveryContact({
+          journey_id: journey.id,
+          purpose: "SCHEDULING",
+          outcome: contactOutcome,
+          note: note || null,
+          idempotency_key: keys.interaction,
+        });
+        if (followUp) {
+          await scheduleInteractionFollowUp({
+            interaction_id: interactionId,
+            due_at: followUp.due_at,
+            method: followUp.method ?? null,
+            notes: followUp.notes ?? null,
+            idempotency_key: keys.followUp,
+          });
+        }
+      } else {
+        await recordJourneyInteraction({
+          journey_id: journey.id,
+          interaction_type: type,
+          summary: summary.trim(),
+          idempotency_key: keys.interaction,
+          topic,
+          topic_label: topic ? topicLabel : null,
+          contact_id: contactId || null,
+          outcome,
+          waiting_on: waitingOn,
+          commitment_made: commitment.trim() || null,
+          request_category: type === "customer_request" ? requestCategory || null : null,
+          is_internal: type === "internal_note",
+          importance: pin ? "important" : "normal",
+          pinned_until: pin ? pinUntilDate : null,
+          follow_up: followUp,
+        });
+      }
       onSaved();
     } catch (e: any) {
       setError(e.message ?? "Failed to save interaction");

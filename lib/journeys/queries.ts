@@ -1273,6 +1273,12 @@ export type ReadyJourney = {
   ready_at: string | null;
   assigned_employee_name: string | null;
   item_summary: string | null;
+  // m134 delivery-contact fields (absent until the migration is live).
+  last_contact?: import("@/lib/delivery/contacts").DeliveryContactLastContact | null;
+  held?: boolean;
+  hold_until?: string | null;
+  callback_due?: boolean;
+  bad_number?: boolean;
 };
 
 export type MyWorkItem =
@@ -1434,6 +1440,13 @@ export async function fetchMyWork(opts?: {
   items.sort((a, b) => {
     const d = rank(a) - rank(b);
     if (d !== 0) return d;
+    // Within the ready section only, held ("Waiting on customer") rows
+    // sink below rows that still need a call. callback_due and
+    // bad_number do NOT sink - they are more visible, not less.
+    if (a.kind === "ready_for_scheduling" && b.kind === "ready_for_scheduling") {
+      const held = Number(!!a.data.held) - Number(!!b.data.held);
+      if (held !== 0) return held;
+    }
     const ta = new Date(sortKey(a)).getTime();
     const tb = new Date(sortKey(b)).getTime();
     const t = a.kind === "opportunity" ? tb - ta : ta - tb;
