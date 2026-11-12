@@ -6,9 +6,10 @@
 
 export type WindowSpan = { start: number; end: number };
 
-/** Round to the nearest 15 minutes; exact halves round up. */
-export function round15(minutes: number): number {
-  return Math.floor(minutes / 15 + 0.5) * 15;
+/** Round to the nearest 30 minutes; exact halves round up. Suggested
+ *  starts land on half-hour marks; hand edits keep 15-minute steps. */
+export function round30(minutes: number): number {
+  return Math.floor(minutes / 30 + 0.5) * 30;
 }
 
 /**
@@ -37,7 +38,7 @@ export function suggestWindows(
   const clampStart = (s: number) =>
     Math.max(dayStart, Math.min(s, dayEnd - windowLen));
   if (n === 1) {
-    const start = clampStart(dayStart + round15((span - windowLen) / 2));
+    const start = clampStart(dayStart + round30((span - windowLen) / 2));
     return [{ start, end: start + windowLen }];
   }
   if (n * windowLen <= span) {
@@ -48,7 +49,7 @@ export function suggestWindows(
   }
   const step = (span - windowLen) / (n - 1);
   return Array.from({ length: n }, (_, i) => {
-    const raw = i === n - 1 ? dayEnd - windowLen : dayStart + round15(i * step);
+    const raw = i === n - 1 ? dayEnd - windowLen : dayStart + round30(i * step);
     const start = clampStart(raw);
     return { start, end: start + windowLen };
   });

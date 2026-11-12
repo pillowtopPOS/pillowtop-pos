@@ -4,7 +4,7 @@
 import {
   suggestWindows,
   fillMissingWindows,
-  round15,
+  round30,
   timeStrToMinutes,
   minutesToLabel,
   windowLabel,
@@ -29,13 +29,14 @@ const E = 1140; // 7:00 PM
 const span = (s: number, e: number): WindowSpan => ({ start: s, end: e });
 const list = (arr: [number, number][]) => arr.map(([s, e]) => span(s, e));
 
-// 1. 8 stops, 3h
+// 1. 8 stops, 3h — suggested starts on 30-minute marks:
+// 10:00, 11:00, 11:30, 12:30, 1:30, 2:30, 3:00, 4:00 (last ends 7 PM).
 console.log("8 stops, 3h (day 10AM-7PM):");
 eq(
   suggestWindows(8, D, E, 180),
   list([
-    [600, 780], [645, 825], [705, 885], [750, 930],
-    [810, 990], [855, 1035], [915, 1095], [960, 1140],
+    [600, 780], [660, 840], [690, 870], [750, 930],
+    [810, 990], [870, 1050], [900, 1080], [960, 1140],
   ]),
   "matches spec"
 );
@@ -62,13 +63,14 @@ eq(
   list([[600, 780], [690, 870], [780, 960], [870, 1050], [960, 1140]]),
   "matches spec"
 );
-// 7. 12 stops, 4h
+// 7. 12 stops, 4h — 30-minute rounding makes stops 5 and 6 collide at
+// 12:30 (both round to the same mark); that is expected with 12 windows.
 console.log("12 stops, 4h:");
 eq(
   suggestWindows(12, D, E, 240),
   list([
-    [600, 840], [630, 870], [660, 900], [675, 915], [705, 945],
-    [735, 975], [765, 1005], [795, 1035], [825, 1065], [840, 1080],
+    [600, 840], [630, 870], [660, 900], [690, 930], [720, 960],
+    [750, 990], [750, 990], [780, 1020], [810, 1050], [840, 1080],
     [870, 1110], [900, 1140],
   ]),
   "matches spec"
@@ -92,12 +94,12 @@ eq(filled[5], all8[5], "slot 5 = spacing position 5");
 eq(filled[7], all8[7], "slot 7 = spacing position 7");
 
 // Clamping: 9AM-5PM day, 4 stops, 3h. span 480 < n*L 720 -> overlap.
-// step = (480-180)/3 = 100 -> starts 540, 540+round15(100)=645,
-// 540+round15(200)=735, last forced 1020-180=840; all inside the day.
+// step = (480-180)/3 = 100 -> round30 gives offsets 0, 90, 210; starts
+// 540, 630, 750, last forced 1020-180=840; all inside the day.
 console.log("clamp 9AM-5PM, 4 stops, 3h:");
 eq(
   suggestWindows(4, T(9), T(17), 180),
-  list([[540, 720], [645, 825], [735, 915], [840, 1020]]),
+  list([[540, 720], [630, 810], [750, 930], [840, 1020]]),
   "matches spec"
 );
 // Edge: window longer than the day -> full day for everyone.
@@ -107,8 +109,9 @@ eq(
   "L > span gives full day"
 );
 eq(suggestWindows(0, D, E, 180), [], "n=0 empty");
-eq(round15(7.5), 15, "round15 half up");
-eq(round15(22.5), 30, "round15 half up 2");
+eq(round30(45), 60, "round30 half up");
+eq(round30(44), 30, "round30 down");
+eq(round30(75), 90, "round30 half up 2");
 eq(timeStrToMinutes("10:00:00"), 600, "time parse HH:MM:SS");
 eq(timeStrToMinutes("9:30"), 570, "time parse HH:MM");
 eq(minutesToLabel(750), "12:30 PM", "label");
