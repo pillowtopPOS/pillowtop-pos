@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import Modal from "@/components/Modal";
+import TempErrorBoundary from "@/components/TempErrorBoundary";
 import DeliveryBookingModal from "@/components/delivery/DeliveryBookingModal";
 import {
   fetchDeliveryDayPlan,
@@ -814,6 +815,16 @@ function DeliveryDayInner() {
                     >
                       Done
                     </button>
+                    {problem === "end_not_after_start" && (
+                      <span className="text-red-600">
+                        End must be after the start.
+                      </span>
+                    )}
+                    {problem === "incomplete" && (
+                      <span className="text-red-600">
+                        Pick both a start and an end, or clear the window.
+                      </span>
+                    )}
                   </div>
                 );
               }
@@ -1484,7 +1495,10 @@ export default function DeliveryDayPage() {
         </div>
       }
     >
-      <DeliveryDayInner />
+      {/* TEMPORARY diagnostic boundary for the prod removeChild crash. */}
+      <TempErrorBoundary>
+        <DeliveryDayInner />
+      </TempErrorBoundary>
     </Suspense>
   );
 }

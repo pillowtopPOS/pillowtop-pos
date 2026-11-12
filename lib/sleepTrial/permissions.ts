@@ -127,9 +127,9 @@ export const ALL_PERMISSIONS: PermissionDef[] = [
   { key: "units.manage_settings", label: "Manage Unit ID settings and view the discrepancy report", group: "Unit ID" },
   {
     key: "delivery.manage_calendar",
-    label: "Add or remove delivery slots for a day",
+    label: "Manage the delivery day plan",
     group: "Delivery",
-    description: "Lets this person add or remove extra delivery spots on the delivery calendar.",
+    description: "Lets this person add or remove extra delivery spots, assign stops to trucks, reorder routes, and close or reopen a delivery day.",
   },
   {
     key: "delivery.book_inside_cutoff",
@@ -142,5 +142,17 @@ export const ALL_PERMISSIONS: PermissionDef[] = [
     label: "Manage delivery trucks and turn them on or off for a day",
     group: "Delivery",
     description: "Lets this person add, rename, and archive delivery trucks, set their weekly schedule, and turn a truck on or off for one day.",
+  },
+  {
+    key: "delivery.set_windows",
+    label: "Set delivery arrival windows",
+    group: "Delivery",
+    description: "Lets this person change the arrival window on a delivery stop, even after the day is closed. It does not let them reorder routes or close the day.",
+  },
+  {
+    key: "delivery.log_confirmation_calls",
+    label: "Log night-before delivery confirmation calls",
+    group: "Delivery",
+    description: "Lets this person record confirmation calls and see the delivery call list.",
   },
 ];

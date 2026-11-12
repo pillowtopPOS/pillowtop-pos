@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import TimezonePicker from "@/components/TimezonePicker";
+import TempErrorBoundary from "@/components/TempErrorBoundary";
 import {
   fetchCurrentEmployee,
   fetchStores,
@@ -456,6 +457,8 @@ export default function CompanySettingsForm() {
   );
 
   return (
+    // TEMPORARY diagnostic boundary for the prod removeChild crash.
+    <TempErrorBoundary>
     <main className="min-h-screen bg-slate-50 p-8">
       <div className="mx-auto max-w-2xl rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
         <h1 className="text-2xl font-semibold text-slate-900">Company Settings</h1>
@@ -953,5 +956,6 @@ export default function CompanySettingsForm() {
         )}
       </div>
     </main>
+    </TempErrorBoundary>
   );
 }
