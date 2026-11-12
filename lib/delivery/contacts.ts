@@ -283,6 +283,21 @@ export function myWorkContactLine(
   )}, ${when}`;
 }
 
+/** Strip the auto-generated delivery-contact sentence from a stored
+ *  summary so history shows only what the person actually typed.
+ *  Generated forms: "Delivery scheduling call: <result>." and
+ *  "Delivery scheduling text sent." Anything left (like an appended
+ *  "Promised: ...") is kept; empty means show no note. */
+export function contactDisplayNote(note: string | null): string | null {
+  if (!note) return null;
+  const cleaned = note
+    .replace(/Delivery scheduling call:[^.]*\./g, "")
+    .replace(/Delivery scheduling text sent\./g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return cleaned || null;
+}
+
 /** "Waiting on customer until Fri" day label from an ISO timestamp. */
 export function holdUntilDayLabel(iso: string | null): string {
   if (!iso) return "";

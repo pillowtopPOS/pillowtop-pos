@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -93,7 +93,7 @@ function hiddenByInProgressAction(
   return out;
 }
 
-export default function BoardPage() {
+function BoardContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [user, setUser] = useState<any>(null);
@@ -1217,6 +1217,20 @@ export default function BoardPage() {
         </Modal>
       )}
     </main>
+  );
+}
+
+export default function BoardPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen items-center justify-center p-8">
+          <p className="text-sm text-slate-500">Loading…</p>
+        </main>
+      }
+    >
+      <BoardContent />
+    </Suspense>
   );
 }
 

@@ -201,23 +201,23 @@ export default function MyWorkPage() {
                   key={r.journey_id}
                   className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4"
                 >
-                  <div>
-                    <p className="text-sm font-medium text-slate-900">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium break-words text-slate-900">
                       <span className={ACTION_CLS}>Ready to schedule:</span>{" "}
                       {r.customer_name ?? "Unknown customer"}
                       {r.journey_number && (
-                        <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-normal text-slate-600">
+                        <span className="ml-2 inline-block max-w-full whitespace-normal break-words rounded-full bg-white px-2 py-0.5 text-xs font-normal text-slate-600">
                           {r.journey_number}
                         </span>
                       )}
                       {r.ready_after_wait_at && (
-                        <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-normal text-emerald-700">
+                        <span className="ml-2 inline-block max-w-full whitespace-normal break-words rounded-full bg-white px-2 py-0.5 text-xs font-normal text-emerald-700">
                           Stock ready
                         </span>
                       )}
                       {readyDays !== null &&
                         readyDays >= READY_SCHEDULING_STALE_DAYS && (
-                          <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-normal text-amber-800">
+                          <span className="ml-2 inline-block max-w-full whitespace-normal break-words rounded-full bg-amber-100 px-2 py-0.5 text-xs font-normal text-amber-800">
                             Waiting {readyDays} day
                             {readyDays === 1 ? "" : "s"}
                           </span>
@@ -225,7 +225,7 @@ export default function MyWorkPage() {
                       {r.held && (
                         <span
                           data-testid={`my-work-pill-held-${r.journey_id}`}
-                          className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-xs font-normal text-sky-800"
+                          className="ml-2 inline-block max-w-full whitespace-normal break-words rounded-full bg-sky-100 px-2 py-0.5 text-xs font-normal text-sky-800"
                         >
                           Waiting on customer
                           {r.hold_until
@@ -236,7 +236,7 @@ export default function MyWorkPage() {
                       {r.callback_due && (
                         <span
                           data-testid={`my-work-pill-callback-${r.journey_id}`}
-                          className="ml-2 rounded-full bg-teal-100 px-2 py-0.5 text-xs font-normal text-teal-800"
+                          className="ml-2 inline-block max-w-full whitespace-normal break-words rounded-full bg-teal-100 px-2 py-0.5 text-xs font-normal text-teal-800"
                         >
                           Callback due
                         </span>
@@ -244,7 +244,7 @@ export default function MyWorkPage() {
                       {r.bad_number && (
                         <span
                           data-testid={`my-work-pill-badnumber-${r.journey_id}`}
-                          className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-normal text-red-800"
+                          className="ml-2 inline-block max-w-full whitespace-normal break-words rounded-full bg-red-100 px-2 py-0.5 text-xs font-normal text-red-800"
                         >
                           Bad number, needs new contact info
                         </span>
@@ -256,7 +256,7 @@ export default function MyWorkPage() {
                       r.customer_name
                     ) && (
                       <p
-                        className="mt-0.5 text-xs text-slate-600"
+                        className="mt-0.5 break-words text-xs text-slate-600"
                         data-testid={`my-work-contact-line-${r.journey_id}`}
                       >
                         {myWorkContactLine(

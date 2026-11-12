@@ -6,6 +6,7 @@ import {
   CONTACT_OUTCOME_LABELS,
   contactWhenLabel,
   getDeliveryContactHistory,
+  contactDisplayNote,
   pastOutcomePhrase,
   relativeMinutesLabel,
   type DeliveryContactHistory,
@@ -82,42 +83,46 @@ export default function DeliveryContactPanel({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0">
               {lc ? (
-                <p
-                  className="text-xs text-slate-700"
-                  data-testid="contact-panel-last"
-                >
-                  <span className="font-medium">
-                    {lc.employee_name ?? "Someone"}
-                  </span>{" "}
-                  {lc.contact_outcome === "texted" ? "texted" : "called"}{" "}
-                  {lc.customer_name ?? customerName ?? "the customer"}
-                  {!lc.on_this_order && lc.journey_number
-                    ? ` about order ${lc.journey_number}`
-                    : ""}
-                  {", "}
-                  {pastOutcomePhrase(lc.contact_outcome)}
-                  {", "}
-                  {contactWhenLabel(lc.occurred_at)}
-                </p>
+                showRecent ? (
+                  // Under an hour old: the notice carries the same facts
+                  // as the plain last-contact line, so only it shows.
+                  <p
+                    className="mt-1 rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800"
+                    data-testid="contact-panel-recent-notice"
+                  >
+                    <span data-testid="contact-panel-last">
+                      {lc.employee_name ?? "Someone"}{" "}
+                      {lc.contact_outcome === "texted" ? "texted" : "called"}{" "}
+                      {lc.customer_name ?? customerName ?? "the customer"}{" "}
+                      {relativeMinutesLabel(recentMin)},{" "}
+                      {pastOutcomePhrase(lc.contact_outcome)}.
+                    </span>
+                  </p>
+                ) : (
+                  <p
+                    className="text-xs text-slate-700"
+                    data-testid="contact-panel-last"
+                  >
+                    <span className="font-medium">
+                      {lc.employee_name ?? "Someone"}
+                    </span>{" "}
+                    {lc.contact_outcome === "texted" ? "texted" : "called"}{" "}
+                    {lc.customer_name ?? customerName ?? "the customer"}
+                    {!lc.on_this_order && lc.journey_number
+                      ? ` about order ${lc.journey_number}`
+                      : ""}
+                    {", "}
+                    {pastOutcomePhrase(lc.contact_outcome)}
+                    {", "}
+                    {contactWhenLabel(lc.occurred_at)}
+                  </p>
+                )
               ) : (
                 <p
                   className="text-xs text-slate-500"
                   data-testid="contact-panel-last"
                 >
                   No calls logged yet.
-                </p>
-              )}
-
-              {showRecent && lc && (
-                <p
-                  className="mt-1 rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800"
-                  data-testid="contact-panel-recent-notice"
-                >
-                  {lc.employee_name ?? "Someone"}{" "}
-                  {lc.contact_outcome === "texted" ? "texted" : "called"}{" "}
-                  {lc.customer_name ?? customerName ?? "the customer"}{" "}
-                  {relativeMinutesLabel(recentMin)},{" "}
-                  {pastOutcomePhrase(lc.contact_outcome)}.
                 </p>
               )}
 
@@ -177,7 +182,9 @@ export default function DeliveryContactPanel({
                   {!h.on_this_order && h.journey_number
                     ? ` · on order ${h.journey_number}`
                     : ""}
-                  {h.note ? ` · ${h.note}` : ""}
+                  {contactDisplayNote(h.note)
+                    ? ` · ${contactDisplayNote(h.note)}`
+                    : ""}
                 </li>
               ))}
             </ul>
