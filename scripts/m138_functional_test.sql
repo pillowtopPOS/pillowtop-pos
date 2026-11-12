@@ -72,9 +72,11 @@ values
   ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','e1000000-0000-0000-0000-000000000007','delivery.set_windows',true),
   ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','e1000000-0000-0000-0000-000000000008','delivery.log_confirmation_calls',false);
 
+-- Truck uuids ascend f...001 < f...002 but sort_order is REVERSED on
+-- purpose: the call list must follow sort_order, not uuid order.
 insert into public.delivery_trucks (id, company_id, name, default_stop_cap, weekly_pattern, sort_order) values
-  ('f1000000-0000-0000-0000-000000000001','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','Truck 1',10,'{1,2,3,4,5,6,7}',1),
-  ('f1000000-0000-0000-0000-000000000002','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','Truck 2',10,'{1,2,3,4,5,6,7}',2),
+  ('f1000000-0000-0000-0000-000000000001','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','Truck 1',10,'{1,2,3,4,5,6,7}',2),
+  ('f1000000-0000-0000-0000-000000000002','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','Truck 2',10,'{1,2,3,4,5,6,7}',1),
   ('f2000000-0000-0000-0000-000000000001','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','B Truck',5,'{1,2,3,4,5,6,7}',1);
 
 -- Ben shares Ann's phone on purpose: same customer key for hold tests.
@@ -367,6 +369,35 @@ select i->>'status' as st_after_move
 from jsonb_array_elements((:'list_d1e'::jsonb)->'items') i
 where i->>'stop_id' = :'s3';
 set role authenticated;
+\echo '-- list order follows truck sort_order, then route_position, unrouted last'
+reset role;
+-- Fourth stop on d1, unrouted (JA6 gets a fresh BOOKED row).
+insert into public.delivery_stops
+  (id, company_id, store_id, journey_id, delivery_date, status)
+values
+  ('e5000000-0000-0000-0000-0000000000c5','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+   'a1000000-0000-0000-0000-000000000001','d1000000-0000-0000-0000-0000000000a6',
+   (now() at time zone 'America/Denver')::date + 3,'BOOKED');
+-- Truck2 has sort_order 1 (lower uuid is Truck1 with sort_order 2):
+-- s2 pos1 and s1 pos2 on Truck2, s3 pos1 on Truck1, JA6 unrouted.
+update public.delivery_stops set truck_id='f1000000-0000-0000-0000-000000000002', route_position=1 where id=:'s2';
+update public.delivery_stops set truck_id='f1000000-0000-0000-0000-000000000002', route_position=2 where id=:'s1';
+update public.delivery_stops set truck_id='f1000000-0000-0000-0000-000000000001', route_position=1 where id=:'s3';
+set role authenticated;
+set test.uid = '11111111-1111-1111-1111-111111111111';
+select public.get_delivery_confirmation_list(:'d1'::date, 'all') as ord_list \gset
+reset role;
+select (select jsonb_agg(t.item->>'stop_id' order by t.ord)
+        from jsonb_array_elements((:'ord_list'::jsonb)->'items')
+             with ordinality as t(item, ord)
+       ) as actual_order,
+       (select jsonb_agg(t.item->>'stop_id' order by t.ord)
+        from jsonb_array_elements((:'ord_list'::jsonb)->'items')
+             with ordinality as t(item, ord)
+       ) = jsonb_build_array(:'s2', :'s1', :'s3',
+             'e5000000-0000-0000-0000-0000000000c5') as order_ok;
+set role authenticated;
+set test.uid = '11111111-1111-1111-1111-111111111111';
 \echo '-- reschedule: new stop shows not_called'
 set test.uid = '11111111-1111-1111-1111-111111111111';
 select public.reschedule_delivery_stop(:'s3', :'d2'::date) as s3_new \gset

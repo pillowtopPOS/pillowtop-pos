@@ -785,6 +785,7 @@ begin
         nullif(trim(concat_ws(' ', cu.city, cu.state, cu.zip_code)), '')
       )), '') as delivery_address,
       t.name as truck_name,
+      t.sort_order as truck_sort_order,
       ae.name as assigned_employee_name
     from public.delivery_stops ds
     join public.sleep_journeys sj on sj.id = ds.journey_id
@@ -824,7 +825,9 @@ begin
     group by ji.stop_id
   )
   select coalesce(jsonb_agg(x.jb order by
-      x.truck_id nulls last, x.route_position nulls last, x.customer_name),
+      x.truck_sort_order nulls last, x.truck_name nulls last,
+      x.truck_id nulls last,
+      x.route_position nulls last, x.customer_name, x.stop_id),
     '[]'::jsonb)
   into v_items
   from (
@@ -877,8 +880,11 @@ begin
         ) end
       ) as jb,
       s.truck_id,
+      s.truck_sort_order,
+      s.truck_name,
       s.route_position,
-      s.customer_name
+      s.customer_name,
+      s.stop_id
     from stops s
     left join conf c on c.stop_id = s.stop_id
     left join public.employees be on be.id = c.last_employee_id
