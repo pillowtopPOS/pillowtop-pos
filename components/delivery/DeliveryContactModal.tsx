@@ -2,17 +2,19 @@
 
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
+import CopyButton from "@/components/CopyButton";
 import {
   CONTACT_OUTCOMES,
   HOLD_OUTCOMES,
   addDaysToISODate,
   contactWhenLabel,
+  formatPhoneDisplay,
   getDeliveryContactHistory,
   getDeliveryContactHoldDaysCached,
-  holdUntilDayLabel,
   localTodayISO,
   logDeliveryContact,
   pastOutcomePhrase,
+  phoneTelHref,
   relativeMinutesLabel,
   type ContactOutcome,
   type DeliveryContactHistory,
@@ -25,11 +27,13 @@ import {
 export default function DeliveryContactModal({
   journeyId,
   customerName,
+  customerPhone,
   onClose,
   onSaved,
 }: {
   journeyId: string;
   customerName?: string | null;
+  customerPhone?: string | null;
   onClose: () => void;
   onSaved?: () => void | Promise<void>;
 }) {
@@ -92,27 +96,21 @@ export default function DeliveryContactModal({
     !saving &&
     (!callbackRequired || callbackAfter.length > 0);
 
-  // Top-of-box warning: held or contacted within the last hour. Purely
-  // informational - Save is never disabled by it.
+  // Top-of-box heads-up: held or contacted within the last hour.
+  // Purely informational - Save is never disabled by it.
   const lc = history?.last_contact ?? null;
+  const mins = history?.recent_contact_minutes ?? null;
   const banner = (() => {
     if (!lc) return null;
     const who = lc.employee_name ?? "Someone";
     const cust = lc.customer_name ?? customerName ?? "the customer";
     const verb = lc.contact_outcome === "texted" ? "texted" : "called";
-    if (history?.held) {
-      const until = holdUntilDayLabel(history.hold_until);
-      return `${who} ${verb} ${cust} ${contactWhenLabel(
-        lc.occurred_at
-      )}, ${pastOutcomePhrase(lc.contact_outcome)}. Already contacted${
-        until ? `, wait until ${until}` : ""
-      }. You can still log another contact.`;
-    }
-    const mins = history?.recent_contact_minutes;
-    if (mins != null && mins <= 60) {
-      return `${who} ${verb} ${cust} ${relativeMinutesLabel(
-        mins
-      )}, ${pastOutcomePhrase(lc.contact_outcome)}.`;
+    if (history?.held || (mins !== null && mins <= 60)) {
+      return `Heads up: ${who} ${verb} ${cust} ${
+        history?.held
+          ? contactWhenLabel(lc.occurred_at)
+          : relativeMinutesLabel(mins)
+      }, ${pastOutcomePhrase(lc.contact_outcome)}.`;
     }
     return null;
   })();
@@ -155,10 +153,21 @@ export default function DeliveryContactModal({
         <p className="mt-0.5 text-sm text-slate-500">
           {customerName ? `${customerName} · ` : ""}How did it go?
         </p>
+        {customerPhone?.trim() && (
+          <p className="mt-1 flex flex-wrap items-center gap-2 text-sm">
+            <a
+              href={`tel:${phoneTelHref(customerPhone)}`}
+              className="inline-flex min-h-[40px] items-center font-medium text-brand-700 hover:underline"
+            >
+              {formatPhoneDisplay(customerPhone)}
+            </a>
+            <CopyButton value={formatPhoneDisplay(customerPhone)} />
+          </p>
+        )}
 
         {banner && (
           <p
-            className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+            className="mt-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900"
             data-testid="contact-modal-banner"
           >
             {banner}

@@ -299,6 +299,7 @@ export default function JourneyDelivery({
             <DeliveryContactPanel
               journeyId={journey.id}
               customerName={customerName}
+              customerPhone={journey.customer?.phone ?? null}
               journeyNumber={journey.journey_number ?? null}
               showLogButton={journey.current_state === "Ready to Schedule"}
             />
@@ -349,6 +350,7 @@ export default function JourneyDelivery({
         <DeliveryBookingModal
           journeyId={journey.id}
           customerName={customerName}
+          customerPhone={journey.customer?.phone ?? null}
           journeyNumber={journey.journey_number ?? null}
           deliveryAddress={deliveryAddress || null}
           mode={booking}

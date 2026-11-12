@@ -8,9 +8,12 @@ import { fetchMyWork, completeFollowUp, FOLLOW_UP_METHOD_LABELS, type MyWorkItem
 import { exceptionTypeLabel } from "@/lib/journeys/sleepTrial";
 import { READY_SCHEDULING_STALE_DAYS } from "@/lib/constants";
 import DeliveryContactModal from "@/components/delivery/DeliveryContactModal";
+import CopyButton from "@/components/CopyButton";
 import {
+  formatPhoneDisplay,
   holdUntilDayLabel,
   myWorkContactLine,
+  phoneTelHref,
 } from "@/lib/delivery/contacts";
 
 export default function MyWorkPage() {
@@ -208,11 +211,11 @@ export default function MyWorkPage() {
                       {r.held && (
                         <span
                           data-testid={`my-work-pill-held-${r.journey_id}`}
-                          className="ml-2 inline-block max-w-full whitespace-normal break-words rounded-full bg-violet-600 px-2 py-0.5 text-xs font-medium text-white"
+                          className="ml-2 inline-block max-w-full whitespace-normal break-words rounded-full border border-indigo-300 bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-900"
                         >
-                          Already contacted
-                          {r.hold_until
-                            ? `, wait until ${holdUntilDayLabel(r.hold_until)}`
+                          Reached out
+                          {r.hold_until && holdUntilDayLabel(r.hold_until)
+                            ? `, check back ${holdUntilDayLabel(r.hold_until)}`
                             : ""}
                         </span>
                       )}
@@ -238,7 +241,7 @@ export default function MyWorkPage() {
                           data-testid={`my-work-pill-callback-${r.journey_id}`}
                           className="ml-2 inline-block max-w-full whitespace-normal break-words rounded-full bg-teal-100 px-2 py-0.5 text-xs font-normal text-teal-800"
                         >
-                          Callback due
+                          Time to check back
                         </span>
                       )}
                       {r.bad_number && (
@@ -263,6 +266,35 @@ export default function MyWorkPage() {
                           r.last_contact ?? null,
                           r.journey_id,
                           r.customer_name
+                        )}
+                      </p>
+                    )}
+                    {(r.customer_phone?.trim() ||
+                      (r.customer_email?.includes("@") ?? false)) && (
+                      <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600">
+                        {r.customer_phone?.trim() && (
+                          <span className="inline-flex flex-wrap items-center gap-1.5">
+                            <a
+                              href={`tel:${phoneTelHref(r.customer_phone)}`}
+                              data-testid={`my-work-phone-${r.journey_id}`}
+                              className="inline-flex min-h-[40px] items-center font-medium text-brand-700 hover:underline"
+                            >
+                              {formatPhoneDisplay(r.customer_phone)}
+                            </a>
+                            <CopyButton
+                              value={formatPhoneDisplay(r.customer_phone)}
+                              testId={`my-work-phone-copy-${r.journey_id}`}
+                            />
+                          </span>
+                        )}
+                        {r.customer_email?.includes("@") && (
+                          <a
+                            href={`mailto:${r.customer_email.trim()}`}
+                            data-testid={`my-work-email-${r.journey_id}`}
+                            className="inline-flex min-h-[40px] items-center break-all text-brand-700 hover:underline"
+                          >
+                            {r.customer_email.trim()}
+                          </a>
                         )}
                       </p>
                     )}
@@ -484,6 +516,7 @@ export default function MyWorkPage() {
         <DeliveryContactModal
           journeyId={contactJourney.journey_id}
           customerName={contactJourney.customer_name}
+          customerPhone={contactJourney.customer_phone}
           onClose={() => setContactJourney(null)}
           onSaved={() => load(showAllStores, true)}
         />

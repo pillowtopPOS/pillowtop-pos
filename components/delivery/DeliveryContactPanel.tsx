@@ -7,7 +7,6 @@ import {
   contactWhenLabel,
   getDeliveryContactHistory,
   contactDisplayNote,
-  holdUntilDayLabel,
   pastOutcomePhrase,
   relativeMinutesLabel,
   type DeliveryContactHistory,
@@ -19,11 +18,13 @@ import {
 export default function DeliveryContactPanel({
   journeyId,
   customerName,
+  customerPhone,
   journeyNumber,
   showLogButton = true,
 }: {
   journeyId: string;
   customerName?: string | null;
+  customerPhone?: string | null;
   journeyNumber?: string | null;
   // Scheduled orders show history only; the confirmation-call slice
   // will add its own log action.
@@ -127,23 +128,9 @@ export default function DeliveryContactPanel({
                 </p>
               )}
 
-              {data?.held && (
-                <p
-                  className="mt-1 rounded-md bg-violet-100 px-2 py-1 text-xs font-medium text-violet-900"
-                  data-testid="contact-panel-held"
-                >
-                  Already contacted. We are waiting on the customer
-                  {data.hold_until && holdUntilDayLabel(data.hold_until)
-                    ? ` until ${holdUntilDayLabel(data.hold_until)}`
-                    : ""}
-                  . You can still schedule.
-                </p>
-              )}
-              {data?.callback_due && (
-                <p className="mt-1 rounded-md bg-sky-50 px-2 py-1 text-xs text-sky-800">
-                  Callback date reached.
-                </p>
-              )}
+              {/* No held or callback-due notices here: inside the
+                  scheduling window and order panel the panel only
+                  informs, it never suggests not scheduling. */}
               {data?.bad_number && (
                 <p className="mt-1 rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800">
                   Last call hit a wrong number. Check the phone number before
@@ -197,6 +184,7 @@ export default function DeliveryContactPanel({
         <DeliveryContactModal
           journeyId={journeyId}
           customerName={customerName ?? lc?.customer_name ?? null}
+          customerPhone={customerPhone}
           onClose={() => setLogging(false)}
           onSaved={() => setReloadKey((k) => k + 1)}
         />

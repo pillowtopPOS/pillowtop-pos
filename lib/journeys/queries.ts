@@ -1273,6 +1273,9 @@ export type ReadyJourney = {
   ready_at: string | null;
   assigned_employee_name: string | null;
   item_summary: string | null;
+  // m136: customer's own contact info for quick call/email from My Work.
+  customer_phone?: string | null;
+  customer_email?: string | null;
   // m134 delivery-contact fields (absent until the migration is live).
   last_contact?: import("@/lib/delivery/contacts").DeliveryContactLastContact | null;
   held?: boolean;

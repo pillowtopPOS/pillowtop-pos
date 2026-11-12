@@ -4,6 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
 import Modal from "@/components/Modal";
 import DeliveryContactPanel from "@/components/delivery/DeliveryContactPanel";
+import CopyButton from "@/components/CopyButton";
+import {
+  formatPhoneDisplay,
+  phoneTelHref,
+} from "@/lib/delivery/contacts";
 import {
   bookDeliveryStop,
   fetchDeliveryBookInsideCutoff,
@@ -72,6 +77,7 @@ type DayState =
 export default function DeliveryBookingModal({
   journeyId,
   customerName,
+  customerPhone,
   journeyNumber,
   deliveryAddress,
   mode,
@@ -82,6 +88,7 @@ export default function DeliveryBookingModal({
 }: {
   journeyId: string;
   customerName: string;
+  customerPhone?: string | null;
   journeyNumber: string | null;
   // One-line street, city, state, zip — null/empty means no address on
   // file (warning only, never a block).
@@ -314,6 +321,17 @@ export default function DeliveryBookingModal({
                 {customerName}
                 {journeyNumber ? ` · ${journeyNumber}` : ""}
               </p>
+              {customerPhone?.trim() && (
+                <p className="mt-0.5 flex flex-wrap items-center gap-2 text-sm">
+                  <a
+                    href={`tel:${phoneTelHref(customerPhone)}`}
+                    className="inline-flex min-h-[40px] items-center font-medium text-brand-700 hover:underline"
+                  >
+                    {formatPhoneDisplay(customerPhone)}
+                  </a>
+                  <CopyButton value={formatPhoneDisplay(customerPhone)} />
+                </p>
+              )}
               {hasAddress ? (
                 <p className="mt-0.5 text-xs text-slate-500">{deliveryAddress}</p>
               ) : (
@@ -364,6 +382,7 @@ export default function DeliveryBookingModal({
           <DeliveryContactPanel
             journeyId={journeyId}
             customerName={customerName}
+            customerPhone={customerPhone}
             journeyNumber={journeyNumber}
           />
         </div>
