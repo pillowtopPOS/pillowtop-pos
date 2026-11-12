@@ -18,12 +18,25 @@ import {
 import {
   fetchCompanyWeekStart,
   fetchDeliveryCutoff,
+  fetchDeliveryDaySettings,
   setCompanyWeekStart,
+  setDeliveryDaySettings,
+  type DeliverySettings,
 } from "@/lib/delivery/queries";
+import {
+  minutesToLabel,
+  minutesToTimeStr,
+  timeStrToMinutes,
+} from "@/lib/delivery/windows";
 import {
   fetchDeliveryContactHoldDays,
   setDeliveryContactHoldDays,
 } from "@/lib/delivery/contacts";
+
+// 15-minute time choices for the delivery day fields, 12h labels.
+const DAY_TIME_OPTIONS = Array.from({ length: 96 }, (_, i) => i * 15).map(
+  (m) => ({ value: minutesToTimeStr(m), label: minutesToLabel(m) })
+);
 
 // Company-editable role grants that are not Sleep Trial scoped (plus the
 // exchange/inspection keys from Exchange Builder spec Section 12); they live
@@ -113,6 +126,18 @@ export default function CompanySettingsForm() {
   const [holdCanEdit, setHoldCanEdit] = useState(false);
   const [holdSaving, setHoldSaving] = useState(false);
   const [holdError, setHoldError] = useState<string | null>(null);
+  // Delivery day settings (delivery_day_start/end, window hours, day
+  // mode) arrive with migration 137 and read through
+  // get_delivery_calendar. Saved only via the Save button.
+  const [daySettings, setDaySettings] = useState<DeliverySettings | null>(null);
+  const [dayStart, setDayStart] = useState("09:00");
+  const [dayEnd, setDayEnd] = useState("17:00");
+  const [windowChoice, setWindowChoice] = useState<"2" | "3" | "4" | "custom">("3");
+  const [windowCustomDraft, setWindowCustomDraft] = useState("4");
+  const [dayMode, setDayMode] = useState<"window" | "day_only">("window");
+  const [daySaving, setDaySaving] = useState(false);
+  const [daySaved, setDaySaved] = useState(false);
+  const [dayError, setDayError] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([fetchCurrentEmployee(), fetchStores()]).then(([e, s]) => {
@@ -152,6 +177,21 @@ export default function CompanySettingsForm() {
         setHoldCanEdit(d.can_edit);
         setHoldDays(d.hold_days);
         setHoldDraft(String(d.hold_days));
+      }
+    });
+    fetchDeliveryDaySettings().then((d) => {
+      if (d) {
+        setDaySettings(d);
+        setDayStart((d.delivery_day_start ?? "09:00").slice(0, 5));
+        setDayEnd((d.delivery_day_end ?? "17:00").slice(0, 5));
+        const hrs = d.delivery_window_hours ?? 3;
+        if (hrs === 2 || hrs === 3 || hrs === 4) {
+          setWindowChoice(String(hrs) as "2" | "3" | "4");
+        } else {
+          setWindowChoice("custom");
+          setWindowCustomDraft(String(hrs));
+        }
+        setDayMode(d.delivery_day_mode === "day_only" ? "day_only" : "window");
       }
     });
   }, []);
@@ -303,8 +343,51 @@ export default function CompanySettingsForm() {
     }
   }
 
+  async function changeDaySettings() {
+    if (daySaving || !canEditPermissions) return;
+    let hours: number;
+    if (windowChoice === "custom") {
+      hours = parseInt(windowCustomDraft, 10);
+      if (!Number.isInteger(hours) || hours < 1 || hours > 8) {
+        setDayError("Enter a whole number from 1 to 8 for the window length.");
+        return;
+      }
+    } else {
+      hours = parseInt(windowChoice, 10);
+    }
+    setDayError(null);
+    setDaySaving(true);
+    try {
+      await setDeliveryDaySettings({
+        dayStart,
+        dayEnd,
+        windowHours: hours,
+        dayMode,
+      });
+      setDaySaved(true);
+      const fresh = await fetchDeliveryDaySettings();
+      if (fresh) setDaySettings(fresh);
+    } catch (e: any) {
+      setDayError(e?.message ?? "Couldn't save that setting. Please try again.");
+    } finally {
+      setDaySaving(false);
+    }
+  }
+
   const canEditPermissions =
     employee?.role === "owner" || employee?.role === "admin";
+
+  const dayHoursNow =
+    windowChoice === "custom"
+      ? parseInt(windowCustomDraft, 10)
+      : parseInt(windowChoice, 10);
+  const dayFormDirty =
+    !!daySettings &&
+    (dayStart !== (daySettings.delivery_day_start ?? "").slice(0, 5) ||
+      dayEnd !== (daySettings.delivery_day_end ?? "").slice(0, 5) ||
+      dayMode !==
+        (daySettings.delivery_day_mode === "day_only" ? "day_only" : "window") ||
+      dayHoursNow !== daySettings.delivery_window_hours);
 
   function permGranted(role: string, permissionKey: string): boolean {
     // Owner always holds every permission, whether or not a row exists.
@@ -559,6 +642,169 @@ export default function CompanySettingsForm() {
                 After a call that does not reach the customer, show Waiting on
                 customer for this many days. 0 turns it off.
                 {!holdCanEdit && " Only owners and admins can change this."}
+              </p>
+            </div>
+          )}
+          {daySettings && (
+            <div className="border-b border-slate-200 pb-4">
+              <span className="block text-sm font-medium text-slate-700">
+                Delivery hours
+              </span>
+              <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label
+                    htmlFor="settings-day-start"
+                    className="block text-xs font-medium text-slate-600"
+                  >
+                    Drivers start at
+                  </label>
+                  <select
+                    id="settings-day-start"
+                    data-testid="settings-day-start"
+                    value={dayStart}
+                    disabled={daySaving || !canEditPermissions}
+                    onChange={(e) => {
+                      setDayStart(e.target.value);
+                      setDaySaved(false);
+                      setDayError(null);
+                    }}
+                    className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm disabled:opacity-50"
+                  >
+                    {DAY_TIME_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label
+                    htmlFor="settings-day-end"
+                    className="block text-xs font-medium text-slate-600"
+                  >
+                    Drivers finish at
+                  </label>
+                  <select
+                    id="settings-day-end"
+                    data-testid="settings-day-end"
+                    value={dayEnd}
+                    disabled={daySaving || !canEditPermissions}
+                    onChange={(e) => {
+                      setDayEnd(e.target.value);
+                      setDaySaved(false);
+                      setDayError(null);
+                    }}
+                    className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm disabled:opacity-50"
+                  >
+                    {DAY_TIME_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="mt-3">
+                <span className="block text-xs font-medium text-slate-600">
+                  Arrival window length
+                </span>
+                <div className="mt-1 flex items-center gap-2">
+                  <select
+                    id="settings-window-length"
+                    data-testid="settings-window-length"
+                    value={windowChoice}
+                    disabled={daySaving || !canEditPermissions}
+                    onChange={(e) => {
+                      setWindowChoice(e.target.value as typeof windowChoice);
+                      setDaySaved(false);
+                      setDayError(null);
+                    }}
+                    className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm disabled:opacity-50"
+                  >
+                    <option value="2">2 hours</option>
+                    <option value="3">3 hours</option>
+                    <option value="4">4 hours</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                  {windowChoice === "custom" && (
+                    <span className="flex items-center gap-1 text-sm text-slate-600">
+                      <input
+                        id="settings-window-custom"
+                        data-testid="settings-window-custom"
+                        type="number"
+                        min={1}
+                        max={8}
+                        step={1}
+                        value={windowCustomDraft}
+                        disabled={daySaving || !canEditPermissions}
+                        onChange={(e) => {
+                          setWindowCustomDraft(e.target.value);
+                          setDaySaved(false);
+                          setDayError(null);
+                        }}
+                        className="w-16 rounded-md border border-slate-300 bg-white px-2 py-2 text-sm disabled:opacity-50"
+                      />
+                      hours
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="mt-3">
+                <span className="block text-xs font-medium text-slate-600">
+                  Arrival windows
+                </span>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {(
+                    [
+                      { value: "window" as const, label: "Give customers an arrival window" },
+                      { value: "day_only" as const, label: "Day only, no arrival windows" },
+                    ]
+                  ).map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      data-testid={`settings-day-mode-${opt.value}`}
+                      disabled={daySaving || !canEditPermissions}
+                      onClick={() => {
+                        setDayMode(opt.value);
+                        setDaySaved(false);
+                        setDayError(null);
+                      }}
+                      className={`rounded-md border px-3 py-1.5 text-sm ${
+                        dayMode === opt.value
+                          ? "border-brand-600 bg-brand-600 text-white"
+                          : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                      } disabled:opacity-50`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {canEditPermissions && (
+                <button
+                  type="button"
+                  data-testid="settings-day-save"
+                  disabled={daySaving || !dayFormDirty}
+                  onClick={changeDaySettings}
+                  className="mt-3 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                >
+                  {daySaving ? "Saving…" : "Save"}
+                </button>
+              )}
+              {daySaving && (
+                <p className="mt-1 text-xs text-slate-400">Saving…</p>
+              )}
+              {daySaved && !daySaving && (
+                <p className="mt-1 text-xs text-slate-500">Saved</p>
+              )}
+              {dayError && (
+                <p className="mt-1 text-xs text-red-600">{dayError}</p>
+              )}
+              <p className="mt-1 text-xs text-slate-500">
+                Used to suggest arrival windows. You can always set any window
+                by hand.
+                {!canEditPermissions && " Only owners and admins can change this."}
               </p>
             </div>
           )}

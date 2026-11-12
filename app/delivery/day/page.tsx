@@ -9,7 +9,10 @@ import DeliveryBookingModal from "@/components/delivery/DeliveryBookingModal";
 import {
   fetchDeliveryDayPlan,
   fetchDeliveryManageCalendar,
+  fetchDeliveryDaySettings,
+  fetchDeliverySetWindows,
   saveDeliveryDayRoute,
+  setDeliveryStopWindows,
   closeDeliveryDay,
   reopenDeliveryDay,
   cancelDeliveryStop,
@@ -17,7 +20,17 @@ import {
   type DeliveryDayPlanStop,
   type DeliveryDayPlanTruck,
   type DeliveryRouteStopInput,
+  type DeliverySettings,
+  type DeliveryStopWindowInput,
 } from "@/lib/delivery/queries";
+import {
+  fillMissingWindows,
+  minutesToLabel,
+  minutesToTimeStr,
+  suggestWindows,
+  timeStrToMinutes,
+  windowLabel,
+} from "@/lib/delivery/windows";
 
 const MONTHS = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -110,6 +123,28 @@ function buildPayload(d: Draft): DeliveryRouteStopInput[] {
   return out;
 }
 
+// Arrival-window editor choices: 6:00 AM to 10:00 PM in 15-minute steps.
+const WINDOW_EDIT_OPTIONS = Array.from({ length: 65 }, (_, i) => 360 + i * 15);
+
+// Unsaved window edits, keyed by stop_id. "HH:MM" strings or null;
+// `suggested` marks machine-filled values not yet saved.
+type WinDraftEntry = { start: string | null; end: string | null; suggested?: boolean };
+type WinDraft = Record<string, WinDraftEntry>;
+
+function savedWindow(s: DeliveryDayPlanStop): { start: string | null; end: string | null } {
+  return {
+    start: s.window_start ? s.window_start.slice(0, 5) : null,
+    end: s.window_end ? s.window_end.slice(0, 5) : null,
+  };
+}
+
+function sameWindow(
+  a: { start: string | null; end: string | null },
+  b: { start: string | null; end: string | null }
+): boolean {
+  return a.start === b.start && a.end === b.end;
+}
+
 type Warning = { kind: string; text: string };
 
 function DeliveryDayInner() {
@@ -120,6 +155,11 @@ function DeliveryDayInner() {
   const [plan, setPlan] = useState<DeliveryDayPlan | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [canManage, setCanManage] = useState(false);
+  const [canSetWindows, setCanSetWindows] = useState(false);
+  const [daySettings, setDaySettings] = useState<DeliverySettings | null>(null);
+  const [winDraft, setWinDraft] = useState<WinDraft>({});
+  const [winEditing, setWinEditing] = useState<string | null>(null);
+  const [resuggestTruck, setResuggestTruck] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -151,14 +191,21 @@ function DeliveryDayInner() {
     setActionError(null);
     setConflict(false);
     try {
-      const [p, perm] = await Promise.all([
+      const [p, perm, permWin, settings] = await Promise.all([
         fetchDeliveryDayPlan(date),
         fetchDeliveryManageCalendar(),
+        fetchDeliverySetWindows(),
+        fetchDeliveryDaySettings(),
       ]);
       if (seq !== loadSeq.current) return;
       setPlan(p);
       setDraft(buildDraft(p));
       setCanManage(perm);
+      setCanSetWindows(permWin);
+      setDaySettings(settings);
+      setWinDraft({});
+      setWinEditing(null);
+      setResuggestTruck(null);
       setDirty(false);
       setSuggestMsg(null);
       setNotice(null);
@@ -184,9 +231,30 @@ function DeliveryDayInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const isPast = !!plan && !!plan.today_local && date < plan.today_local;
+  const isClosed = plan?.plan.status === "CLOSED";
+  // Windows show only in 'window' day mode; day_only hides all of it.
+  const showWindows =
+    !!daySettings && daySettings.delivery_day_mode !== "day_only";
+  // Window edits need set_windows OR manage_calendar, and work on CLOSED
+  // days (the RPC supports it) but never on past days.
+  const canEditWindows =
+    (canSetWindows || canManage) && !isPast && showWindows;
+  const winLenMin = Math.round(
+    (daySettings?.delivery_window_hours ?? 3) * 60
+  );
+  const dayStartMin =
+    timeStrToMinutes(daySettings?.delivery_day_start) ?? 0;
+  const dayEndMin =
+    timeStrToMinutes(daySettings?.delivery_day_end) ?? 24 * 60;
+  // winDraft only ever holds real changes (equal values are removed on
+  // write), so its size IS the unsaved-window-change count.
+  const winDirtyCount = Object.keys(winDraft).length;
+
   // Unsaved-changes guard: browser unload + in-app anchor clicks.
+  // Covers route AND window drafts.
   useEffect(() => {
-    if (!dirty) return;
+    if (!(dirty || winDirtyCount > 0)) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       e.preventDefault();
     };
@@ -218,10 +286,8 @@ function DeliveryDayInner() {
       window.removeEventListener("beforeunload", onBeforeUnload);
       document.removeEventListener("click", onClick, true);
     };
-  }, [dirty]);
+  }, [dirty, winDirtyCount]);
 
-  const isPast = !!plan && !!plan.today_local && date < plan.today_local;
-  const isClosed = plan?.plan.status === "CLOSED";
   const canEdit = canManage && !isPast && !isClosed;
   // Move/cancel are exits, not route edits: allowed on a CLOSED day too.
   const canExit = canManage && !isPast;
@@ -356,22 +422,179 @@ function DeliveryDayInner() {
     );
   };
 
+  // ---- arrival window draft -------------------------------------------
+  // winDraft holds ONLY unsaved changes; a value equal to the stop's
+  // saved window removes the entry, so the draft size is the change count.
+
+  const winValue = (s: DeliveryDayPlanStop): WinDraftEntry =>
+    winDraft[s.stop_id] ?? { ...savedWindow(s) };
+
+  const setWinEntry = (
+    stop: DeliveryDayPlanStop,
+    start: string | null,
+    end: string | null,
+    suggested = false
+  ) => {
+    setWinDraft((prev) => {
+      const next = { ...prev };
+      const entry = { start, end, suggested };
+      if (sameWindow(entry, savedWindow(stop))) delete next[stop.stop_id];
+      else next[stop.stop_id] = entry;
+      return next;
+    });
+  };
+
+  // Per-stop inline edit. Picking a start auto-fills the end at the
+  // company window length; the person can still change the end.
+  const editWinStart = (stop: DeliveryDayPlanStop, startHHMM: string) => {
+    const startMin = timeStrToMinutes(startHHMM);
+    if (startMin === null) return;
+    const endMin = Math.min(
+      startMin + winLenMin,
+      WINDOW_EDIT_OPTIONS[WINDOW_EDIT_OPTIONS.length - 1]
+    );
+    setWinEntry(stop, startHHMM, minutesToTimeStr(Math.max(360, endMin)));
+  };
+
+  const editWinEnd = (stop: DeliveryDayPlanStop, endHHMM: string) => {
+    if (!endHHMM) return;
+    const cur = winValue(stop);
+    setWinEntry(stop, cur.start, endHHMM);
+  };
+
+  const clearWin = (stop: DeliveryDayPlanStop) => {
+    setWinEntry(stop, null, null);
+    setWinEditing(null);
+  };
+
+  // Suggest windows for one truck's stops, in route order. Only fills
+  // stops that currently have no window; spacing is computed over ALL
+  // stops on the truck so hand-set windows keep their place.
+  const applyTruckWindows = (truckId: string, all = false) => {
+    if (!draft || !daySettings || busy) return;
+    const stops = draft.trucks[truckId] ?? [];
+    if (stops.length === 0) return;
+    const dStart = timeStrToMinutes(daySettings.delivery_day_start) ?? 0;
+    const dEnd = timeStrToMinutes(daySettings.delivery_day_end) ?? 24 * 60;
+    const current = stops.map((s) => {
+      const w = winValue(s);
+      const sm = timeStrToMinutes(w.start);
+      const em = timeStrToMinutes(w.end);
+      return sm !== null && em !== null ? { start: sm, end: em } : null;
+    });
+    const filled = all
+      ? stops.map((_, i) =>
+          suggestWindows(stops.length, dStart, dEnd, winLenMin)[i]
+        )
+      : fillMissingWindows(current, dStart, dEnd, winLenMin);
+    setWinDraft((prev) => {
+      const next = { ...prev };
+      stops.forEach((s, i) => {
+        const sug = filled[i];
+        if (!sug) return;
+        const entry = {
+          start: minutesToTimeStr(sug.start),
+          end: minutesToTimeStr(sug.end),
+          suggested: true,
+        };
+        if (sameWindow(entry, savedWindow(s))) delete next[s.stop_id];
+        else next[s.stop_id] = entry;
+      });
+      return next;
+    });
+  };
+
   const isConflict = (e: unknown) =>
     /changed by someone else/i.test((e as Error)?.message ?? "");
 
+  const winSaveItems = (): DeliveryStopWindowInput[] => {
+    if (!draft) return [];
+    const live = new Set(
+      [...Object.values(draft.trucks).flat(), ...draft.unrouted].map(
+        (s) => s.stop_id
+      )
+    );
+    return Object.entries(winDraft)
+      .filter(([id]) => live.has(id))
+      .map(([id, w]) => ({
+        stop_id: id,
+        window_start: w.start,
+        window_end: w.end,
+      }));
+  };
+
   const doSave = async () => {
     if (!plan || !draft || busy) return;
+    const items = winSaveItems();
+    // canMarkReviewed keeps the old "save a clean draft to clear the
+    // released-stops banner" path working through the same button.
+    const doRoute = canEdit && (dirty || canMarkReviewed);
+    const doWindows = items.length > 0 && canEditWindows;
+    if (!doRoute && !doWindows) return;
     setBusy(true);
     setActionError(null);
+    setNotice(null);
+    let routeNote = "";
+    let winNote = "";
     try {
-      await saveDeliveryDayRoute(date, plan.plan.version, buildPayload(draft));
+      if (doRoute) {
+        try {
+          await saveDeliveryDayRoute(date, plan.plan.version, buildPayload(draft));
+          routeNote = "Route saved.";
+        } catch (e) {
+          if (isConflict(e)) {
+            setConflict(true);
+            return;
+          }
+          throw e;
+        }
+      }
+      if (doWindows) {
+        try {
+          const n = await setDeliveryStopWindows(date, items);
+          winNote = n > 0 ? `Windows saved (${n} stop${n === 1 ? "" : "s"}).` : "No window changes to save.";
+          setWinDraft({});
+          setWinEditing(null);
+        } catch (e) {
+          // Route may already be saved: reload to show it, keep the
+          // window draft, and report both results separately.
+          const msg = (e as Error)?.message ?? "Couldn't save the windows. Please try again.";
+          winNote = routeNote
+            ? `Windows were not saved: ${msg}`
+            : msg;
+          const keepWin = winDraft;
+          await load();
+          setWinDraft(keepWin);
+          setActionError(routeNote ? `${routeNote} ${winNote}` : winNote);
+          return;
+        }
+      }
       await load();
+      if (routeNote || winNote) setNotice([routeNote, winNote].filter(Boolean).join(" "));
     } catch (e) {
-      if (isConflict(e)) setConflict(true);
-      else setActionError((e as Error)?.message ?? "Couldn't save the route. Please try again.");
+      setActionError(
+        routeNote
+          ? `${routeNote} ${(e as Error)?.message ?? "Couldn't save. Please try again."}`
+          : ((e as Error)?.message ?? "Couldn't save. Please try again.")
+      );
+      if (routeNote) {
+        // Route landed; refresh so the screen matches, keep drafts.
+        const keepWin = winDraft;
+        await load();
+        setWinDraft(keepWin);
+      }
     } finally {
       setBusy(false);
     }
+  };
+
+  const discardChanges = () => {
+    if (!plan) return;
+    setDraft(buildDraft(plan));
+    setWinDraft({});
+    setWinEditing(null);
+    setDirty(false);
+    setResuggestTruck(null);
   };
 
   const doClose = async () => {
@@ -427,7 +650,18 @@ function DeliveryDayInner() {
   // The plan is refetched so version/counts/warnings/banner stay right —
   // a dirty draft must never be thrown away by a full load().
   const afterStopRemoved = async (stopId: string, msg: string) => {
-    if (!dirty) {
+    // A gone stop must not linger in the window draft — the windows RPC
+    // would reject its id on save.
+    setWinDraft((prev) => {
+      if (!(stopId in prev)) return prev;
+      const next = { ...prev };
+      delete next[stopId];
+      return next;
+    });
+    setWinEditing((cur) => (cur === stopId ? null : cur));
+    // Full reload only when nothing else is unsaved; window drafts for
+    // other stops must survive a stop leaving the day.
+    if (!dirty && winDirtyCount === 0) {
       await load();
       setNotice(msg);
       return;
@@ -502,6 +736,99 @@ function DeliveryDayInner() {
             {s.phone ? ` · ${s.phone}` : ""}
             {s.booked_by_name ? ` · booked by ${s.booked_by_name}` : ""}
           </div>
+          {showWindows &&
+            (() => {
+              const w = winValue(s);
+              const wStart = timeStrToMinutes(w.start);
+              const wEnd = timeStrToMinutes(w.end);
+              const hasWin = wStart !== null && wEnd !== null;
+              const outside =
+                hasWin && (wStart < dayStartMin || wEnd > dayEndMin);
+              const canEditWin = canEditWindows && !busy;
+              if (winEditing === s.stop_id && canEditWin) {
+                return (
+                  <div
+                    data-testid={`delivery-day-window-editor-${s.stop_id}`}
+                    className="mt-1 flex flex-wrap items-center gap-1.5 text-xs"
+                  >
+                    <select
+                      data-testid={`delivery-day-window-start-${s.stop_id}`}
+                      value={w.start ?? ""}
+                      onChange={(e) => editWinStart(s, e.target.value)}
+                      className="rounded border border-slate-300 px-1.5 py-1 text-xs text-slate-700"
+                    >
+                      <option value="">Start</option>
+                      {WINDOW_EDIT_OPTIONS.map((m) => (
+                        <option key={m} value={minutesToTimeStr(m)}>
+                          {minutesToLabel(m)}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-slate-400">to</span>
+                    <select
+                      data-testid={`delivery-day-window-end-${s.stop_id}`}
+                      value={w.end ?? ""}
+                      onChange={(e) => editWinEnd(s, e.target.value)}
+                      className="rounded border border-slate-300 px-1.5 py-1 text-xs text-slate-700"
+                    >
+                      <option value="">End</option>
+                      {WINDOW_EDIT_OPTIONS.map((m) => (
+                        <option key={m} value={minutesToTimeStr(m)}>
+                          {minutesToLabel(m)}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      data-testid={`delivery-day-window-clear-${s.stop_id}`}
+                      onClick={() => clearWin(s)}
+                      className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      type="button"
+                      data-testid={`delivery-day-window-done-${s.stop_id}`}
+                      onClick={() => setWinEditing(null)}
+                      className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                    >
+                      Done
+                    </button>
+                  </div>
+                );
+              }
+              return (
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+                  {canEditWin ? (
+                    <button
+                      type="button"
+                      data-testid={`delivery-day-window-${s.stop_id}`}
+                      onClick={() => setWinEditing(s.stop_id)}
+                      className="text-left text-slate-600 underline decoration-dotted decoration-slate-300 underline-offset-2 hover:text-slate-900"
+                    >
+                      {hasWin ? windowLabel(wStart, wEnd) : "No window yet"}
+                    </button>
+                  ) : (
+                    <span
+                      data-testid={`delivery-day-window-${s.stop_id}`}
+                      className={hasWin ? "text-slate-600" : "text-slate-400"}
+                    >
+                      {hasWin ? windowLabel(wStart, wEnd) : "No window yet"}
+                    </span>
+                  )}
+                  {hasWin && w.suggested && (
+                    <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[11px] font-medium text-blue-700">
+                      Suggested, not saved yet
+                    </span>
+                  )}
+                  {outside && (
+                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
+                      Outside driver hours
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
           {(editable || canExit) && (
             <div className="mt-1 flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-2">
               {editable && (
@@ -651,7 +978,7 @@ function DeliveryDayInner() {
               This day is closed. Reopen it to change the route.
             </p>
           )}
-          {!isPast && !isClosed && !canManage && (
+          {!isPast && !isClosed && !canManage && !canEditWindows && (
             <p
               data-testid="delivery-day-readonly"
               className="mb-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600"
@@ -775,6 +1102,29 @@ function DeliveryDayInner() {
                       <span className="text-sm font-semibold text-slate-800">
                         {t.name}
                       </span>
+                      <span className="flex items-center gap-2">
+                      {showWindows && canEditWindows && stops.length > 0 && (
+                        <span className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            data-testid={`delivery-day-win-suggest-${t.truck_id}`}
+                            disabled={busy}
+                            onClick={() => applyTruckWindows(t.truck_id, false)}
+                            className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                          >
+                            Suggest windows
+                          </button>
+                          <button
+                            type="button"
+                            data-testid={`delivery-day-win-resuggest-${t.truck_id}`}
+                            disabled={busy}
+                            onClick={() => setResuggestTruck(t.truck_id)}
+                            className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-50 disabled:opacity-50"
+                          >
+                            Re-suggest all
+                          </button>
+                        </span>
+                      )}
                       <span
                         className={`text-xs ${
                           over ? "font-medium text-red-700" : "text-slate-500"
@@ -786,6 +1136,7 @@ function DeliveryDayInner() {
                             OFF
                           </span>
                         )}
+                      </span>
                       </span>
                     </div>
                     {stops.length === 0 ? (
@@ -822,36 +1173,64 @@ function DeliveryDayInner() {
             </div>
           )}
 
-          {/* Actions */}
-          {canManage && !isPast && (
+          {/* Actions — one save bar covering route and window drafts.
+              Windows stay editable on a CLOSED day; route controls do not. */}
+          {(canManage || canEditWindows) && !isPast && (
             <div className="mt-4 flex flex-wrap items-center gap-2">
               {canEdit && (
+                <button
+                  type="button"
+                  data-testid="delivery-day-suggest"
+                  onClick={applySuggestion}
+                  disabled={busy}
+                  className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Suggest assignments
+                </button>
+              )}
+              {(dirty || winDirtyCount > 0 || (canManage && canMarkReviewed)) && (
                 <>
-                  <button
-                    type="button"
-                    data-testid="delivery-day-suggest"
-                    onClick={applySuggestion}
-                    disabled={busy}
-                    className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    Suggest assignments
-                  </button>
+                  {(dirty || winDirtyCount > 0) && (
+                    <span
+                      data-testid="delivery-day-unsaved-label"
+                      className="text-sm text-slate-600"
+                    >
+                      {dirty && winDirtyCount > 0
+                        ? `Unsaved route changes and ${winDirtyCount} window change${winDirtyCount === 1 ? "" : "s"}`
+                        : dirty
+                          ? "Unsaved route changes"
+                          : `${winDirtyCount} window change${winDirtyCount === 1 ? "" : "s"}`}
+                    </span>
+                  )}
                   <button
                     type="button"
                     data-testid="delivery-day-save"
                     onClick={doSave}
-                    disabled={(!dirty && !canMarkReviewed) || busy}
+                    disabled={busy}
                     className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
                   >
-                    {dirty
-                      ? "Save route •"
-                      : canMarkReviewed
-                        ? "Mark reviewed"
-                        : "Save route"}
+                    {dirty && winDirtyCount > 0
+                      ? "Save route and windows"
+                      : dirty
+                        ? "Save route"
+                        : canMarkReviewed && !dirty && winDirtyCount === 0
+                          ? "Mark reviewed"
+                          : "Save windows"}
                   </button>
+                  {(dirty || winDirtyCount > 0) && (
+                    <button
+                      type="button"
+                      data-testid="delivery-day-discard"
+                      onClick={discardChanges}
+                      disabled={busy}
+                      className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      Discard
+                    </button>
+                  )}
                 </>
               )}
-              {!isClosed ? (
+              {canManage && (!isClosed ? (
                 <button
                   type="button"
                   data-testid="delivery-day-close"
@@ -871,7 +1250,7 @@ function DeliveryDayInner() {
                 >
                   Reopen day
                 </button>
-              )}
+              ))}
             </div>
           )}
         </>
@@ -885,7 +1264,7 @@ function DeliveryDayInner() {
               Discard changes?
             </h2>
             <p className="text-sm text-slate-600">
-              You have unsaved route changes for this day.
+              You have unsaved changes for this day.
             </p>
             <div className="mt-4 flex gap-2">
               <button
@@ -893,6 +1272,8 @@ function DeliveryDayInner() {
                   const href = pendingNav;
                   setPendingNav(null);
                   setDirty(false);
+                  setWinDraft({});
+                  setWinEditing(null);
                   router.push(href);
                 }}
                 className="flex-1 rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700"
@@ -982,6 +1363,44 @@ function DeliveryDayInner() {
                 className="flex-1 rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
               >
                 {cancelBusy ? "Cancelling…" : "Cancel delivery"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Re-suggest all windows on a truck — replaces every window */}
+      {resuggestTruck && (
+        <Modal onClose={() => setResuggestTruck(null)}>
+          <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-5 shadow-lg">
+            <h2 className="mb-2 text-base font-semibold text-slate-900">
+              Re-suggest all windows?
+            </h2>
+            <p className="text-sm text-slate-600">
+              This replaces every arrival window on{" "}
+              {allTrucks.find((t) => t.truck_id === resuggestTruck)?.name ??
+                "this truck"}
+              , including ones set by hand. Nothing is saved until you press
+              Save.
+            </p>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                data-testid="delivery-day-win-resuggest-confirm"
+                onClick={() => {
+                  applyTruckWindows(resuggestTruck, true);
+                  setResuggestTruck(null);
+                }}
+                className="flex-1 rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
+              >
+                Re-suggest all
+              </button>
+              <button
+                type="button"
+                onClick={() => setResuggestTruck(null)}
+                className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Go back
               </button>
             </div>
           </div>

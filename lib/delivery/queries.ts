@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/client";
 import { fetchCurrentEmployee } from "@/lib/journeys/queries";
+import { localTodayISO } from "@/lib/dates";
 
 export type DeliveryTruckDay = {
   truck_id: string;
@@ -227,6 +228,69 @@ export async function fetchDeliveryBookInsideCutoff(): Promise<boolean> {
   });
   if (error) return false;
   return data === true;
+}
+
+/** Whether the signed-in employee may set arrival windows on the day
+ *  plan (delivery.set_windows). OR-ed with manage_calendar by callers. */
+export async function fetchDeliverySetWindows(): Promise<boolean> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("has_permission", {
+    p_key: "delivery.set_windows",
+  });
+  if (error) return false;
+  return data === true;
+}
+
+/** Company delivery-day settings (day hours, window length, day mode).
+ *  Read through get_delivery_calendar, which already returns them; the
+ *  range is irrelevant so a single day is enough. Null on error so the
+ *  UI can hide the section instead of breaking. */
+export async function fetchDeliveryDaySettings(): Promise<DeliverySettings | null> {
+  try {
+    const cal = await fetchDeliveryCalendar(localTodayISO(), localTodayISO());
+    return cal.settings;
+  } catch {
+    return null;
+  }
+}
+
+/** Save company delivery-day settings. Owner/admin only (the RPC
+ *  enforces it); the plain error message is thrown for inline display. */
+export async function setDeliveryDaySettings(input: {
+  dayStart: string; // "HH:MM"
+  dayEnd: string;
+  windowHours: number;
+  dayMode: "window" | "day_only";
+}): Promise<void> {
+  const supabase = createClient();
+  const { error } = await (supabase as any).rpc("set_delivery_day_settings", {
+    p_day_start: input.dayStart,
+    p_day_end: input.dayEnd,
+    p_window_hours: input.windowHours,
+    p_day_mode: input.dayMode,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export type DeliveryStopWindowInput = {
+  stop_id: string;
+  window_start: string | null; // "HH:MM" or null to clear
+  window_end: string | null;
+};
+
+/** Write arrival windows for stops on one day. Works on OPEN and CLOSED
+ *  days; never touches the route plan version. Returns stops changed. */
+export async function setDeliveryStopWindows(
+  date: string,
+  items: DeliveryStopWindowInput[]
+): Promise<number> {
+  const supabase = createClient();
+  const { data, error } = await (supabase as any).rpc(
+    "set_delivery_stop_windows",
+    { p_date: date, p_items: items }
+  );
+  if (error) throw new Error(error.message);
+  return (data as number) ?? 0;
 }
 
 // ---------------------------------------------------------------------------
