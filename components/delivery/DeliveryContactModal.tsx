@@ -6,10 +6,16 @@ import {
   CONTACT_OUTCOMES,
   HOLD_OUTCOMES,
   addDaysToISODate,
+  contactWhenLabel,
+  getDeliveryContactHistory,
   getDeliveryContactHoldDaysCached,
+  holdUntilDayLabel,
   localTodayISO,
   logDeliveryContact,
+  pastOutcomePhrase,
+  relativeMinutesLabel,
   type ContactOutcome,
+  type DeliveryContactHistory,
 } from "@/lib/delivery/contacts";
 
 // One modal for logging a delivery contact everywhere it is needed
@@ -30,7 +36,9 @@ export default function DeliveryContactModal({
   const [outcome, setOutcome] = useState<ContactOutcome | null>(null);
   const [note, setNote] = useState("");
   const [callbackAfter, setCallbackAfter] = useState("");
+  const [datePrefilled, setDatePrefilled] = useState(false);
   const [holdDays, setHoldDays] = useState<number | null>(null);
+  const [history, setHistory] = useState<DeliveryContactHistory | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // One key per modal open; a retry after a failure reuses it so the
@@ -42,10 +50,17 @@ export default function DeliveryContactModal({
     getDeliveryContactHoldDaysCached().then((d) => {
       if (live) setHoldDays(d?.hold_days ?? null);
     });
+    // Informational only: warn when the customer is already on hold or
+    // was contacted in the last hour. Silent on loading/failure.
+    getDeliveryContactHistory(journeyId, 5)
+      .then((h) => {
+        if (live) setHistory(h);
+      })
+      .catch(() => {});
     return () => {
       live = false;
     };
-  }, []);
+  }, [journeyId]);
 
   const showCallback = outcome !== null && HOLD_OUTCOMES.includes(outcome);
   const callbackRequired = outcome === "not_ready";
@@ -55,23 +70,52 @@ export default function DeliveryContactModal({
     setError(null);
     if (!HOLD_OUTCOMES.includes(o)) {
       setCallbackAfter("");
+      setDatePrefilled(false);
       return;
     }
     // Prefill: today + hold days when holds are on; for "not ready yet"
     // with holds off, tomorrow is the sensible nudge.
     const today = localTodayISO();
     const days = holdDays ?? 0;
-    if (days > 0) {
-      setCallbackAfter(addDaysToISODate(today, days));
-    } else {
-      setCallbackAfter(o === "not_ready" ? addDaysToISODate(today, 1) : "");
-    }
+    const next =
+      days > 0
+        ? addDaysToISODate(today, days)
+        : o === "not_ready"
+        ? addDaysToISODate(today, 1)
+        : "";
+    setCallbackAfter(next);
+    setDatePrefilled(next !== "");
   }
 
   const canSave =
     outcome !== null &&
     !saving &&
     (!callbackRequired || callbackAfter.length > 0);
+
+  // Top-of-box warning: held or contacted within the last hour. Purely
+  // informational - Save is never disabled by it.
+  const lc = history?.last_contact ?? null;
+  const banner = (() => {
+    if (!lc) return null;
+    const who = lc.employee_name ?? "Someone";
+    const cust = lc.customer_name ?? customerName ?? "the customer";
+    const verb = lc.contact_outcome === "texted" ? "texted" : "called";
+    if (history?.held) {
+      const until = holdUntilDayLabel(history.hold_until);
+      return `${who} ${verb} ${cust} ${contactWhenLabel(
+        lc.occurred_at
+      )}, ${pastOutcomePhrase(lc.contact_outcome)}. Already contacted${
+        until ? `, wait until ${until}` : ""
+      }. You can still log another contact.`;
+    }
+    const mins = history?.recent_contact_minutes;
+    if (mins != null && mins <= 60) {
+      return `${who} ${verb} ${cust} ${relativeMinutesLabel(
+        mins
+      )}, ${pastOutcomePhrase(lc.contact_outcome)}.`;
+    }
+    return null;
+  })();
 
   async function save() {
     if (!canSave || !outcome) return;
@@ -112,6 +156,15 @@ export default function DeliveryContactModal({
           {customerName ? `${customerName} · ` : ""}How did it go?
         </p>
 
+        {banner && (
+          <p
+            className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+            data-testid="contact-modal-banner"
+          >
+            {banner}
+          </p>
+        )}
+
         <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
           {CONTACT_OUTCOMES.map((o) => (
             <button
@@ -126,6 +179,15 @@ export default function DeliveryContactModal({
               }`}
             >
               {o.label}
+              {o.value === "spoke" && (
+                <span
+                  className={`mt-0.5 block text-xs font-normal ${
+                    outcome === o.value ? "text-amber-100" : "text-slate-500"
+                  }`}
+                >
+                  No day picked yet. If they picked a day, just book it.
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -152,7 +214,9 @@ export default function DeliveryContactModal({
               htmlFor="contact-callback-date"
               className="block text-xs font-medium uppercase text-slate-500"
             >
-              Callback date{callbackRequired ? "" : " (optional)"}
+              {datePrefilled
+                ? "Reach out again on"
+                : "Callback date (optional)"}
             </label>
             <input
               id="contact-callback-date"
@@ -163,6 +227,12 @@ export default function DeliveryContactModal({
               onChange={(e) => setCallbackAfter(e.target.value)}
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
+            {datePrefilled && (
+              <p className="mt-1 text-xs text-slate-500">
+                If we have not heard back by then, this order comes back as
+                Callback due.
+              </p>
+            )}
             {callbackRequired && !callbackAfter && (
               <p className="mt-1 text-xs text-amber-700">
                 Pick the day the customer asked us to call back.

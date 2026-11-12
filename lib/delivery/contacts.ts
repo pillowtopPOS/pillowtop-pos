@@ -30,8 +30,10 @@ export const CONTACT_OUTCOME_LABELS: Record<string, string> =
   Object.fromEntries(CONTACT_OUTCOMES.map((o) => [o.value, o.label]));
 
 // Outcomes that put the customer on "Waiting on customer" hold. The
-// callback date field shows for exactly these.
+// callback date field shows for exactly these. m135: 'spoke' joined the
+// hold set - spoke without a booking means no day was picked.
 export const HOLD_OUTCOMES: ContactOutcome[] = [
+  "spoke",
   "voicemail",
   "no_answer",
   "texted",

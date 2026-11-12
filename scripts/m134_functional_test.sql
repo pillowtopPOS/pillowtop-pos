@@ -118,7 +118,9 @@ select public.log_delivery_contact('d1000000-0000-0000-0000-0000000000a5','GENER
 select public.log_delivery_contact('d1000000-0000-0000-0000-0000000000a5','SCHEDULING','not_ready');
 select public.log_delivery_contact('d1000000-0000-0000-0000-0000000000a5','SCHEDULING','not_ready',null,(public.delivery_company_today()-1));
 select public.log_delivery_contact('d1000000-0000-0000-0000-0000000000a5','SCHEDULING','not_ready',null,(public.delivery_company_today()+91));
-select public.log_delivery_contact('d1000000-0000-0000-0000-0000000000a5','SCHEDULING','spoke',null,(public.delivery_company_today()+2));
+-- m135 update: callback_after is now ALLOWED on spoke; only wrong_number
+-- rejects it. Kept as an expected error using wrong_number instead.
+select public.log_delivery_contact('d1000000-0000-0000-0000-0000000000a5','SCHEDULING','wrong_number',null,(public.delivery_company_today()+2));
 select public.log_delivery_contact('d1000000-0000-0000-0000-0000000000a5','SCHEDULING','voicemail',null,null,now()+interval '1 hour');
 select public.log_delivery_contact('d1000000-0000-0000-0000-0000000000a5','SCHEDULING','voicemail',null,null,now()-interval '8 days');
 select public.log_delivery_contact('d1000000-0000-0000-0000-0000000000a5','SCHEDULING','voicemail',null,null,null,'x',gen_random_uuid(),null);
@@ -147,6 +149,8 @@ select (public.get_delivery_contact_history('d1000000-0000-0000-0000-0000000000a
 select public.log_delivery_contact('d1000000-0000-0000-0000-0000000000a4','SCHEDULING','voicemail') as vm_after_wn;
 select (public.get_delivery_contact_history('d1000000-0000-0000-0000-0000000000a4',5))->>'bad_number' as bad_after_vm,
        (public.get_delivery_contact_history('d1000000-0000-0000-0000-0000000000a4',5))->>'held' as held_after_vm;
+-- m135 update: spoke now HOLDS like the other hold outcomes, so
+-- held_after_spoke is expected true (was false under m134).
 select public.log_delivery_contact('d1000000-0000-0000-0000-0000000000a4','SCHEDULING','spoke') as spoke_last;
 select (public.get_delivery_contact_history('d1000000-0000-0000-0000-0000000000a4',5))->>'held' as held_after_spoke;
 

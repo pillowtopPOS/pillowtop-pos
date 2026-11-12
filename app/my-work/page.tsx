@@ -205,6 +205,17 @@ export default function MyWorkPage() {
                     <p className="text-sm font-medium break-words text-slate-900">
                       <span className={ACTION_CLS}>Ready to schedule:</span>{" "}
                       {r.customer_name ?? "Unknown customer"}
+                      {r.held && (
+                        <span
+                          data-testid={`my-work-pill-held-${r.journey_id}`}
+                          className="ml-2 inline-block max-w-full whitespace-normal break-words rounded-full bg-violet-600 px-2 py-0.5 text-xs font-medium text-white"
+                        >
+                          Already contacted
+                          {r.hold_until
+                            ? `, wait until ${holdUntilDayLabel(r.hold_until)}`
+                            : ""}
+                        </span>
+                      )}
                       {r.journey_number && (
                         <span className="ml-2 inline-block max-w-full whitespace-normal break-words rounded-full bg-white px-2 py-0.5 text-xs font-normal text-slate-600">
                           {r.journey_number}
@@ -222,17 +233,6 @@ export default function MyWorkPage() {
                             {readyDays === 1 ? "" : "s"}
                           </span>
                         )}
-                      {r.held && (
-                        <span
-                          data-testid={`my-work-pill-held-${r.journey_id}`}
-                          className="ml-2 inline-block max-w-full whitespace-normal break-words rounded-full bg-sky-100 px-2 py-0.5 text-xs font-normal text-sky-800"
-                        >
-                          Waiting on customer
-                          {r.hold_until
-                            ? ` until ${holdUntilDayLabel(r.hold_until)}`
-                            : ""}
-                        </span>
-                      )}
                       {r.callback_due && (
                         <span
                           data-testid={`my-work-pill-callback-${r.journey_id}`}
@@ -256,7 +256,7 @@ export default function MyWorkPage() {
                       r.customer_name
                     ) && (
                       <p
-                        className="mt-0.5 break-words text-xs text-slate-600"
+                        className="mt-0.5 break-words text-xs font-medium text-slate-800"
                         data-testid={`my-work-contact-line-${r.journey_id}`}
                       >
                         {myWorkContactLine(

@@ -7,6 +7,7 @@ import {
   contactWhenLabel,
   getDeliveryContactHistory,
   contactDisplayNote,
+  holdUntilDayLabel,
   pastOutcomePhrase,
   relativeMinutesLabel,
   type DeliveryContactHistory,
@@ -128,12 +129,12 @@ export default function DeliveryContactPanel({
 
               {data?.held && (
                 <p
-                  className="mt-1 rounded-md bg-sky-50 px-2 py-1 text-xs text-sky-800"
+                  className="mt-1 rounded-md bg-violet-100 px-2 py-1 text-xs font-medium text-violet-900"
                   data-testid="contact-panel-held"
                 >
-                  We are waiting on the customer
-                  {lc?.occurred_at && contactWhenLabel(lc.occurred_at)
-                    ? ` (since ${contactWhenLabel(lc.occurred_at)})`
+                  Already contacted. We are waiting on the customer
+                  {data.hold_until && holdUntilDayLabel(data.hold_until)
+                    ? ` until ${holdUntilDayLabel(data.hold_until)}`
                     : ""}
                   . You can still schedule.
                 </p>
