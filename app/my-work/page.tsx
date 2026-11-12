@@ -9,11 +9,11 @@ import { exceptionTypeLabel } from "@/lib/journeys/sleepTrial";
 import { READY_SCHEDULING_STALE_DAYS } from "@/lib/constants";
 import DeliveryContactModal from "@/components/delivery/DeliveryContactModal";
 import CopyButton from "@/components/CopyButton";
+import { Mail, Phone } from "lucide-react";
 import {
   formatPhoneDisplay,
   holdUntilDayLabel,
   myWorkContactLine,
-  phoneTelHref,
 } from "@/lib/delivery/contacts";
 
 export default function MyWorkPage() {
@@ -270,31 +270,37 @@ export default function MyWorkPage() {
                       </p>
                     )}
                     {(r.customer_phone?.trim() ||
-                      (r.customer_email?.includes("@") ?? false)) && (
+                      r.customer_email?.includes("@")) && (
                       <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600">
                         {r.customer_phone?.trim() && (
-                          <span className="inline-flex flex-wrap items-center gap-1.5">
-                            <a
-                              href={`tel:${phoneTelHref(r.customer_phone)}`}
+                          <span className="inline-flex items-center gap-1">
+                            <Phone className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                            <span
                               data-testid={`my-work-phone-${r.journey_id}`}
-                              className="inline-flex min-h-[40px] items-center font-medium text-brand-700 hover:underline"
+                              className="font-medium text-slate-700"
                             >
                               {formatPhoneDisplay(r.customer_phone)}
-                            </a>
-                            <CopyButton
-                              value={formatPhoneDisplay(r.customer_phone)}
-                              testId={`my-work-phone-copy-${r.journey_id}`}
-                            />
+                            </span>
                           </span>
                         )}
                         {r.customer_email?.includes("@") && (
-                          <a
-                            href={`mailto:${r.customer_email.trim()}`}
-                            data-testid={`my-work-email-${r.journey_id}`}
-                            className="inline-flex min-h-[40px] items-center break-all text-brand-700 hover:underline"
-                          >
-                            {r.customer_email.trim()}
-                          </a>
+                          <span className="inline-flex flex-wrap items-center gap-1.5">
+                            <span className="inline-flex items-center gap-1">
+                              <Mail className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                              <span
+                                data-testid={`my-work-email-${r.journey_id}`}
+                                className="break-all font-medium text-slate-700"
+                              >
+                                {r.customer_email.trim()}
+                              </span>
+                            </span>
+                            <CopyButton
+                              value={r.customer_email.trim()}
+                              testId={`my-work-email-copy-${r.journey_id}`}
+                              label="Copy email"
+                              compact
+                            />
+                          </span>
                         )}
                       </p>
                     )}

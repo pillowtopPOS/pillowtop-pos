@@ -8,10 +8,14 @@ export default function CopyButton({
   value,
   testId,
   label = "Copy",
+  compact = false,
 }: {
   value: string;
   testId?: string;
   label?: string;
+  // Compact: small on desktop (~28px), still a 40px tap target on
+  // narrow screens.
+  compact?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -51,7 +55,11 @@ export default function CopyButton({
       type="button"
       data-testid={testId}
       onClick={copy}
-      className="inline-flex min-h-[40px] items-center rounded-md border border-slate-300 bg-white px-2.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+      className={`inline-flex items-center rounded-md border border-slate-300 bg-white px-2.5 font-medium text-slate-600 hover:bg-slate-50 ${
+        compact
+          ? "h-10 px-2 text-[11px] sm:h-7"
+          : "min-h-[40px] text-xs"
+      }`}
     >
       {copied ? "Copied" : label}
     </button>

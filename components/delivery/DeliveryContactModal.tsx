@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
-import CopyButton from "@/components/CopyButton";
+import { Phone } from "lucide-react";
 import {
   CONTACT_OUTCOMES,
   HOLD_OUTCOMES,
@@ -14,7 +14,6 @@ import {
   localTodayISO,
   logDeliveryContact,
   pastOutcomePhrase,
-  phoneTelHref,
   relativeMinutesLabel,
   type ContactOutcome,
   type DeliveryContactHistory,
@@ -154,14 +153,11 @@ export default function DeliveryContactModal({
           {customerName ? `${customerName} · ` : ""}How did it go?
         </p>
         {customerPhone?.trim() && (
-          <p className="mt-1 flex flex-wrap items-center gap-2 text-sm">
-            <a
-              href={`tel:${phoneTelHref(customerPhone)}`}
-              className="inline-flex min-h-[40px] items-center font-medium text-brand-700 hover:underline"
-            >
+          <p className="mt-1 flex items-center gap-1.5 text-sm text-slate-700">
+            <Phone className="h-4 w-4 shrink-0 text-slate-400" />
+            <span className="font-medium">
               {formatPhoneDisplay(customerPhone)}
-            </a>
-            <CopyButton value={formatPhoneDisplay(customerPhone)} />
+            </span>
           </p>
         )}
 

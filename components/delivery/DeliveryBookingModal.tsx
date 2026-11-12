@@ -1,14 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check } from "lucide-react";
+import { Check, Phone } from "lucide-react";
 import Modal from "@/components/Modal";
 import DeliveryContactPanel from "@/components/delivery/DeliveryContactPanel";
-import CopyButton from "@/components/CopyButton";
-import {
-  formatPhoneDisplay,
-  phoneTelHref,
-} from "@/lib/delivery/contacts";
+import { formatPhoneDisplay } from "@/lib/delivery/contacts";
 import {
   bookDeliveryStop,
   fetchDeliveryBookInsideCutoff,
@@ -322,14 +318,11 @@ export default function DeliveryBookingModal({
                 {journeyNumber ? ` · ${journeyNumber}` : ""}
               </p>
               {customerPhone?.trim() && (
-                <p className="mt-0.5 flex flex-wrap items-center gap-2 text-sm">
-                  <a
-                    href={`tel:${phoneTelHref(customerPhone)}`}
-                    className="inline-flex min-h-[40px] items-center font-medium text-brand-700 hover:underline"
-                  >
+                <p className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-700">
+                  <Phone className="h-4 w-4 shrink-0 text-slate-400" />
+                  <span className="font-medium">
                     {formatPhoneDisplay(customerPhone)}
-                  </a>
-                  <CopyButton value={formatPhoneDisplay(customerPhone)} />
+                  </span>
                 </p>
               )}
               {hasAddress ? (
