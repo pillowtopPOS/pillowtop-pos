@@ -570,6 +570,117 @@ export async function reopenDeliveryDay(
   return data as number;
 }
 
+// ---------------------------------------------------------------------------
+// D1-c2b part 3a: night-before confirmation call list (migration 138)
+// ---------------------------------------------------------------------------
+
+export type ConfirmationCallListDate = {
+  date: string;
+  stop_count: number;
+};
+
+export type ConfirmationLastCall = {
+  outcome: string | null;
+  occurred_at: string | null;
+  by_name: string | null;
+  note: string | null;
+  window_snapshot: Record<string, unknown> | null;
+};
+
+export type ConfirmationCallListItem = {
+  stop_id: string;
+  journey_id: string;
+  journey_number: string | null;
+  customer_name: string | null;
+  customer_phone: string | null;
+  customer_email: string | null;
+  delivery_address: string | null;
+  truck_id: string | null;
+  truck_name: string | null;
+  route_position: number | null;
+  window_start: string | null;
+  window_end: string | null;
+  outside_day_hours: boolean;
+  assigned_employee_id: string | null;
+  assigned_employee_name: string | null;
+  status: string;
+  attempts: number;
+  last_call: ConfirmationLastCall | null;
+};
+
+export type ConfirmationCallList = {
+  date: string | null;
+  day_mode: string;
+  day_start: string | null;
+  day_end: string | null;
+  available_dates: ConfirmationCallListDate[];
+  scope: string;
+  items: ConfirmationCallListItem[];
+};
+
+/** The night-before call list. p_date null lets the RPC pick the next
+ *  delivery day; the response's `date` is the day actually returned. */
+export async function fetchDeliveryConfirmationList(
+  date: string | null,
+  scope: "mine" | "all"
+): Promise<ConfirmationCallList> {
+  const supabase = createClient();
+  const { data, error } = await (supabase as any).rpc(
+    "get_delivery_confirmation_list",
+    { p_date: date, p_scope: scope }
+  );
+  if (error) throw new Error(error.message);
+  const d = data as ConfirmationCallList | null;
+  return {
+    date: d?.date ?? null,
+    day_mode: d?.day_mode ?? "window",
+    day_start: d?.day_start ?? null,
+    day_end: d?.day_end ?? null,
+    available_dates: d?.available_dates ?? [],
+    scope: d?.scope ?? scope,
+    items: d?.items ?? [],
+  };
+}
+
+/** Whether the signed-in employee may view/log confirmation calls. */
+export async function fetchDeliveryLogConfirmationCalls(): Promise<boolean> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("has_permission", {
+    p_key: "delivery.log_confirmation_calls",
+  });
+  if (error) return false;
+  return data === true;
+}
+
+/** Log one confirmation call. The idempotency key makes retries safe:
+ *  the same key returns the already-written row instead of doubling. */
+export async function logDeliveryConfirmation(input: {
+  journeyId: string;
+  stopId: string;
+  outcome: string;
+  note?: string | null;
+  idempotencyKey: string;
+}): Promise<{ interaction_id: string; deduplicated: boolean }> {
+  const supabase = createClient();
+  const { data, error } = await (supabase as any).rpc(
+    "log_delivery_confirmation",
+    {
+      p_journey_id: input.journeyId,
+      p_stop_id: input.stopId,
+      p_outcome: input.outcome,
+      p_note: input.note?.trim() ? input.note.trim() : null,
+      p_occurred_at: null,
+      p_idempotency_key: input.idempotencyKey,
+    }
+  );
+  if (error) throw new Error(error.message);
+  const d = data as { interaction_id?: string; deduplicated?: boolean } | null;
+  return {
+    interaction_id: d?.interaction_id ?? "",
+    deduplicated: d?.deduplicated ?? false,
+  };
+}
+
 /** Read-only zip-grouping proposal. Saves nothing; the caller applies
  *  it to the on-screen draft. */
 export async function suggestDeliveryAssignments(

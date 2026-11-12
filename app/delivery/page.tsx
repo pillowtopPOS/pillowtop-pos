@@ -453,6 +453,12 @@ export default function DeliveryPage() {
           <span className="ml-2 whitespace-nowrap text-sm font-medium text-slate-700">
             {viewStart ? rangeLabel(viewStart, weekEnd) : ""}
           </span>
+          <Link
+            href="/delivery/calls"
+            className="ml-3 inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+          >
+            Confirmation calls
+          </Link>
           {canManageTrucks && (
             <button
               type="button"

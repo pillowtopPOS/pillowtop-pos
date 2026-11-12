@@ -51,12 +51,24 @@ type StopPeek = {
   insideCutoff: boolean;
 };
 
+// Callers that already know the stop's truck/window/date (the
+// confirmation call list) pass them here; the peek then skips the
+// get_delivery_day_plan call, which salespeople cannot run.
+export type JourneyPeekStopDetails = {
+  deliveryDate: string;
+  truckName: string | null;
+  windowText: string | null;
+  insideCutoff?: boolean;
+};
+
 export default function JourneyPeek({
   journeyId,
   onClose,
+  stopDetails,
 }: {
   journeyId: string;
   onClose: () => void;
+  stopDetails?: JourneyPeekStopDetails | null;
 }) {
   const [journey, setJourney] = useState<JourneyWithDetails | null | undefined>(
     undefined
@@ -65,6 +77,7 @@ export default function JourneyPeek({
   const [paid, setPaid] = useState(0);
   const [delivery, setDelivery] = useState<JourneyDelivery | null>(null);
   const [stop, setStop] = useState<StopPeek | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,7 +85,10 @@ export default function JourneyPeek({
       const j = await fetchJourneyById(journeyId);
       if (cancelled) return;
       setJourney(j);
-      if (!j) return;
+      if (!j) {
+        setDetailsLoading(false);
+        return;
+      }
       const [its, p, del] = await Promise.all([
         fetchJourneyLineItems(journeyId),
         fetchTotalPaid(journeyId).catch(() => 0),
@@ -82,6 +98,18 @@ export default function JourneyPeek({
       setItems(its);
       setPaid(p);
       setDelivery(del);
+      if (stopDetails) {
+        // Caller-supplied stop info (call list): no day-plan call —
+        // that RPC is calendar-rights-gated and fails for salespeople.
+        setStop({
+          deliveryDate: stopDetails.deliveryDate,
+          truckName: stopDetails.truckName,
+          windowText: stopDetails.windowText,
+          insideCutoff: stopDetails.insideCutoff ?? false,
+        });
+        setDetailsLoading(false);
+        return;
+      }
       // The stop row itself is RLS-locked; the day plan is the existing
       // read path that carries truck + window for one date.
       const active = del?.active_stop;
@@ -118,11 +146,12 @@ export default function JourneyPeek({
             });
         }
       }
+      if (!cancelled) setDetailsLoading(false);
     })();
     return () => {
       cancelled = true;
     };
-  }, [journeyId]);
+  }, [journeyId, stopDetails]);
 
   const customer = journey?.customer ?? null;
   const customerName = customer
@@ -179,23 +208,28 @@ export default function JourneyPeek({
               {customer?.phone && <p>Phone: {customer.phone}</p>}
               {customer?.email && <p>Email: {customer.email}</p>}
               {customer &&
-                (customer.street_address ||
-                  customer.city ||
-                  customer.state ||
-                  customer.zip_code) && (
-                  <p>
-                    {[
-                      [customer.street_address, customer.street_address_line_2]
-                        .filter(Boolean)
-                        .join(" "),
-                      [customer.city, customer.state, customer.zip_code]
-                        .filter(Boolean)
-                        .join(", "),
+                (() => {
+                  const addrLine = [
+                    [
+                      customer.street_address,
+                      customer.street_address_line_2,
                     ]
                       .filter(Boolean)
-                      .join(" · ") || "No address"}
-                  </p>
-                )}
+                      .join(" "),
+                    [customer.city, customer.state, customer.zip_code]
+                      .filter(Boolean)
+                      .join(", "),
+                  ]
+                    .filter(Boolean)
+                    .join(" · ");
+                  return addrLine ? (
+                    <p>{addrLine}</p>
+                  ) : (
+                    <p className="font-medium text-amber-700">
+                      No address on file
+                    </p>
+                  );
+                })()}
               {journey.store?.name && <p>Store: {journey.store.name}</p>}
             </div>
 
@@ -203,7 +237,9 @@ export default function JourneyPeek({
               <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                 Items
               </h3>
-              {items.length === 0 ? (
+              {detailsLoading ? (
+                <p className="mt-1 text-sm text-slate-400">Loading…</p>
+              ) : items.length === 0 ? (
                 <p className="mt-1 text-sm text-slate-400">No items.</p>
               ) : (
                 <ul className="mt-1 space-y-0.5 text-sm text-slate-700">
@@ -224,6 +260,9 @@ export default function JourneyPeek({
               <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                 Payment
               </h3>
+              {detailsLoading ? (
+                <p className="mt-1 text-sm text-slate-400">Loading…</p>
+              ) : (
               <p className="mt-1 text-sm text-slate-700">
                 {journey.cancelled_at
                   ? `Cancelled. Paid ${money(paid)}.`
@@ -231,13 +270,16 @@ export default function JourneyPeek({
                     ? `Price ${money(journey.price)} · Paid ${money(paid)} · Balance ${money(balance)}`
                     : `Paid ${money(paid)}`}
               </p>
+              )}
             </div>
 
             <div className="mt-4">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                 Delivery
               </h3>
-              {stop ? (
+              {detailsLoading ? (
+                <p className="mt-1 text-sm text-slate-400">Loading…</p>
+              ) : stop ? (
                 <div className="mt-1 text-sm text-slate-700">
                   <p>
                     {dayLabel(stop.deliveryDate)}
