@@ -109,3 +109,44 @@ export function windowLabel(
   if (start === null || end === null) return null;
   return `${minutesToLabel(start)} to ${minutesToLabel(end)}`;
 }
+
+// ---- draft validation (client side only; the DB rules are unchanged) ---
+
+export type WindowDraftProblem = "incomplete" | "end_not_after_start" | null;
+
+/**
+ * Validate a window draft given as "HH:MM" strings (or null).
+ * Both set requires end after start; exactly one set is incomplete;
+ * both null is a valid clear.
+ */
+export function validateWindowDraft(
+  start: string | null,
+  end: string | null
+): WindowDraftProblem {
+  const s = timeStrToMinutes(start);
+  const e = timeStrToMinutes(end);
+  if ((s === null) !== (e === null)) return "incomplete";
+  if (s !== null && e !== null && e <= s) return "end_not_after_start";
+  return null;
+}
+
+/**
+ * Editor select choices: the standard 6:00 AM-10:00 PM 15-minute list,
+ * plus the stop's current value when it falls outside that range so the
+ * select never renders blank. Returns sorted minutes-from-midnight.
+ */
+export function windowSelectOptions(
+  current: string | null,
+  baseStart = 360,
+  baseEnd = 1320,
+  step = 15
+): number[] {
+  const opts: number[] = [];
+  for (let m = baseStart; m <= baseEnd; m += step) opts.push(m);
+  const cur = timeStrToMinutes(current);
+  if (cur !== null && !opts.includes(cur)) {
+    opts.push(cur);
+    opts.sort((a, b) => a - b);
+  }
+  return opts;
+}

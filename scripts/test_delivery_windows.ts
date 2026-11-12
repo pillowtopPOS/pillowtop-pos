@@ -8,6 +8,8 @@ import {
   timeStrToMinutes,
   minutesToLabel,
   windowLabel,
+  validateWindowDraft,
+  windowSelectOptions,
   type WindowSpan,
 } from "../lib/delivery/windows.ts";
 
@@ -112,6 +114,34 @@ eq(timeStrToMinutes("9:30"), 570, "time parse HH:MM");
 eq(minutesToLabel(750), "12:30 PM", "label");
 eq(windowLabel(600, 780), "10:00 AM to 1:00 PM", "window label");
 eq(windowLabel(null, 780), null, "window label null");
+
+// Draft validity rule (client-side): both-or-neither, end after start.
+console.log("validateWindowDraft:");
+eq(validateWindowDraft("10:00", "13:00"), null, "valid window ok");
+eq(validateWindowDraft(null, null), null, "both null = clear, ok");
+eq(validateWindowDraft("10:00", null), "incomplete", "start only incomplete");
+eq(validateWindowDraft(null, "13:00"), "incomplete", "end only incomplete");
+eq(validateWindowDraft("13:00", "10:00"), "end_not_after_start", "end before start");
+eq(validateWindowDraft("10:00", "10:00"), "end_not_after_start", "end equal start");
+eq(validateWindowDraft("10:00:30", "10:00:45"), "end_not_after_start", "seconds parse, still invalid");
+eq(validateWindowDraft("10:00", "26:00"), "incomplete", "unparseable end counts as unset");
+eq(validateWindowDraft("25:00", "26:00"), null, "both unparseable reads as clear");
+
+// Editor select options: standard list plus out-of-range current value.
+console.log("windowSelectOptions:");
+const std = windowSelectOptions(null);
+eq(std.length, 65, "base list is 65 quarter hours 6AM-10PM");
+eq(std[0], 360, "first option 6:00 AM");
+eq(std[std.length - 1], 1320, "last option 10:00 PM");
+const early = windowSelectOptions("05:30");
+eq(early[0], 330, "5:30 AM prepended");
+eq(early.length, 66, "one extra option");
+const late = windowSelectOptions("23:30");
+eq(late[late.length - 1], 1410, "11:30 PM appended");
+eq(late.length, 66, "one extra option late");
+const odd = windowSelectOptions("10:51");
+eq(odd.includes(651), true, "10:51 AM included as extra");
+eq(windowSelectOptions("10:00").length, 65, "in-range value adds nothing");
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

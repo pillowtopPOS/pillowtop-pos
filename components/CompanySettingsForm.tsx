@@ -792,9 +792,6 @@ export default function CompanySettingsForm() {
                   {daySaving ? "Saving…" : "Save"}
                 </button>
               )}
-              {daySaving && (
-                <p className="mt-1 text-xs text-slate-400">Saving…</p>
-              )}
               {daySaved && !daySaving && (
                 <p className="mt-1 text-xs text-slate-500">Saved</p>
               )}

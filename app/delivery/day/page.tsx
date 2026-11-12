@@ -29,7 +29,9 @@ import {
   minutesToTimeStr,
   suggestWindows,
   timeStrToMinutes,
+  validateWindowDraft,
   windowLabel,
+  windowSelectOptions,
 } from "@/lib/delivery/windows";
 
 const MONTHS = [
@@ -295,6 +297,21 @@ function DeliveryDayInner() {
   const canMarkReviewed =
     canEdit && (plan?.released_after_review.length ?? 0) > 0;
 
+  // Client-side window draft validation: both-or-neither and end after
+  // start. Invalid drafts block Save (route and windows) but never the
+  // draft itself; the database rules are unchanged.
+  const invalidWinCount = useMemo(() => {
+    if (!draft) return 0;
+    let n = 0;
+    for (const stops of [...Object.values(draft.trucks), draft.unrouted]) {
+      for (const s of stops) {
+        const e = winDraft[s.stop_id];
+        if (e && validateWindowDraft(e.start, e.end)) n += 1;
+      }
+    }
+    return n;
+  }, [draft, winDraft]);
+
   // Truck columns: every truck from the plan plus any truck the draft
   // references that the plan didn't list (archived-after-assignment edge).
   const allTrucks = useMemo<DeliveryDayPlanTruck[]>(() => {
@@ -524,7 +541,7 @@ function DeliveryDayInner() {
   };
 
   const doSave = async () => {
-    if (!plan || !draft || busy) return;
+    if (!plan || !draft || busy || invalidWinCount > 0) return;
     const items = winSaveItems();
     // canMarkReviewed keeps the old "save a clean draft to clear the
     // released-stops banner" path working through the same button.
@@ -745,6 +762,9 @@ function DeliveryDayInner() {
               const outside =
                 hasWin && (wStart < dayStartMin || wEnd > dayEndMin);
               const canEditWin = canEditWindows && !busy;
+              const problem = winDraft[s.stop_id]
+                ? validateWindowDraft(w.start, w.end)
+                : null;
               if (winEditing === s.stop_id && canEditWin) {
                 return (
                   <div
@@ -758,7 +778,7 @@ function DeliveryDayInner() {
                       className="rounded border border-slate-300 px-1.5 py-1 text-xs text-slate-700"
                     >
                       <option value="">Start</option>
-                      {WINDOW_EDIT_OPTIONS.map((m) => (
+                      {windowSelectOptions(w.start).map((m) => (
                         <option key={m} value={minutesToTimeStr(m)}>
                           {minutesToLabel(m)}
                         </option>
@@ -772,7 +792,7 @@ function DeliveryDayInner() {
                       className="rounded border border-slate-300 px-1.5 py-1 text-xs text-slate-700"
                     >
                       <option value="">End</option>
-                      {WINDOW_EDIT_OPTIONS.map((m) => (
+                      {windowSelectOptions(w.end).map((m) => (
                         <option key={m} value={minutesToTimeStr(m)}>
                           {minutesToLabel(m)}
                         </option>
@@ -824,6 +844,16 @@ function DeliveryDayInner() {
                   {outside && (
                     <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
                       Outside driver hours
+                    </span>
+                  )}
+                  {problem === "end_not_after_start" && (
+                    <span className="text-red-600">
+                      End must be after the start.
+                    </span>
+                  )}
+                  {problem === "incomplete" && (
+                    <span className="text-red-600">
+                      Pick both a start and an end, or clear the window.
                     </span>
                   )}
                 </div>
@@ -1195,18 +1225,20 @@ function DeliveryDayInner() {
                       data-testid="delivery-day-unsaved-label"
                       className="text-sm text-slate-600"
                     >
-                      {dirty && winDirtyCount > 0
-                        ? `Unsaved route changes and ${winDirtyCount} window change${winDirtyCount === 1 ? "" : "s"}`
-                        : dirty
-                          ? "Unsaved route changes"
-                          : `${winDirtyCount} window change${winDirtyCount === 1 ? "" : "s"}`}
+                      {invalidWinCount > 0
+                        ? "Fix the windows marked in red to save"
+                        : dirty && winDirtyCount > 0
+                          ? `Unsaved route changes and ${winDirtyCount} window change${winDirtyCount === 1 ? "" : "s"}`
+                          : dirty
+                            ? "Unsaved route changes"
+                            : `${winDirtyCount} window change${winDirtyCount === 1 ? "" : "s"}`}
                     </span>
                   )}
                   <button
                     type="button"
                     data-testid="delivery-day-save"
                     onClick={doSave}
-                    disabled={busy}
+                    disabled={busy || invalidWinCount > 0}
                     className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
                   >
                     {dirty && winDirtyCount > 0
