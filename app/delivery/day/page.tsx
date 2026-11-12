@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import Modal from "@/components/Modal";
 import TempErrorBoundary from "@/components/TempErrorBoundary";
 import DeliveryBookingModal from "@/components/delivery/DeliveryBookingModal";
+import JourneyPeek from "@/components/delivery/JourneyPeek";
 import {
   fetchDeliveryDayPlan,
   fetchDeliveryManageCalendar,
@@ -163,6 +164,7 @@ function DeliveryDayInner() {
   const [winDraft, setWinDraft] = useState<WinDraft>({});
   const [winEditing, setWinEditing] = useState<string | null>(null);
   const [resuggestTruck, setResuggestTruck] = useState<string | null>(null);
+  const [peekJourneyId, setPeekJourneyId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -736,12 +738,14 @@ function DeliveryDayInner() {
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-            <Link
-              href={`/board?journey=${s.journey_id}`}
+            <button
+              type="button"
+              data-testid={`delivery-day-journey-${s.journey_id}`}
+              onClick={() => setPeekJourneyId(s.journey_id)}
               className="text-sm font-medium text-blue-700 hover:underline"
             >
               {s.journey_number ?? "Order"}
-            </Link>
+            </button>
             <span className="text-sm text-slate-800">{s.customer_name}</span>
             {s.inside_cutoff && (
               <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
@@ -1297,6 +1301,15 @@ function DeliveryDayInner() {
             </div>
           )}
         </>
+      )}
+
+      {/* Read-only journey peek — opening/closing never touches drafts
+          and never triggers the unsaved-changes guard (button, not link). */}
+      {peekJourneyId && (
+        <JourneyPeek
+          journeyId={peekJourneyId}
+          onClose={() => setPeekJourneyId(null)}
+        />
       )}
 
       {/* Leave-page discard confirm */}
