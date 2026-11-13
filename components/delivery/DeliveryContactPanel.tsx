@@ -3,12 +3,17 @@
 import { useCallback, useEffect, useState } from "react";
 import DeliveryContactModal from "@/components/delivery/DeliveryContactModal";
 import {
+  CONFIRMATION_STATUS_META,
+  type ConfirmationCallStatus,
+} from "@/lib/delivery/calls";
+import {
   CONTACT_OUTCOME_LABELS,
   contactWhenLabel,
   getDeliveryContactHistory,
   contactDisplayNote,
   pastOutcomePhrase,
   relativeMinutesLabel,
+  type DeliveryContactEntry,
   type DeliveryContactHistory,
 } from "@/lib/delivery/contacts";
 
@@ -35,6 +40,7 @@ export default function DeliveryContactPanel({
   const [error, setError] = useState<string | null>(null);
   const [logging, setLogging] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const [showAllHistory, setShowAllHistory] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -56,7 +62,18 @@ export default function DeliveryContactPanel({
   const recentMin = data?.recent_contact_minutes ?? null;
   const showRecent =
     lc !== null && recentMin !== null && recentMin <= 60;
-  const history = (data?.contacts ?? []).slice(0, 5);
+
+  // History: newest first (the RPC already sorts). Collapsed shows the
+  // 4 newest entries; "Show all" reveals the rest. CONFIRMATION and
+  // SCHEDULING entries get headings only when both kinds are present.
+  const historyAll = data?.contacts ?? [];
+  const confirmations = historyAll.filter((h) => h.purpose === "CONFIRMATION");
+  const scheduling = historyAll.filter((h) => h.purpose !== "CONFIRMATION");
+  const bothKinds = confirmations.length > 0 && scheduling.length > 0;
+  const visibleHistory = showAllHistory
+    ? historyAll
+    : historyAll.slice(0, 4);
+  const visibleSet = new Set<DeliveryContactEntry>(visibleHistory);
 
   return (
     <div
@@ -151,31 +168,64 @@ export default function DeliveryContactPanel({
             )}
           </div>
 
-          {history.length > 0 && (
-            <ul
-              className="mt-2 space-y-0.5 border-t border-slate-200 pt-2"
+          {historyAll.length > 0 && (
+            <div
+              className="mt-2 space-y-2 border-t border-slate-200 pt-2"
               data-testid="contact-panel-history"
             >
-              {history.map((h, i) => (
-                <li key={`${h.journey_id}-${h.occurred_at}-${i}`} className="text-xs text-slate-600">
-                  <span className="font-medium">
-                    {h.employee_name ?? "Someone"}
-                  </span>{" "}
-                  ·{" "}
-                  {CONTACT_OUTCOME_LABELS[h.contact_outcome ?? ""] ??
-                    (h.purpose === "CONFIRMATION"
-                      ? "Confirmation contact"
-                      : "Contact")}{" "}
-                  · {contactWhenLabel(h.occurred_at)}
-                  {!h.on_this_order && h.journey_number
-                    ? ` · on order ${h.journey_number}`
-                    : ""}
-                  {contactDisplayNote(h.note)
-                    ? ` · ${contactDisplayNote(h.note)}`
-                    : ""}
-                </li>
-              ))}
-            </ul>
+              {bothKinds ? (
+                <>
+                  {confirmations.some((h) => visibleSet.has(h)) && (
+                    <div>
+                      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                        Night-before confirmations
+                      </p>
+                      <ul className="space-y-1.5">
+                        {confirmations
+                          .filter((h) => visibleSet.has(h))
+                          .map((h, i) => (
+                            <HistoryEntry key={entryKey(h, i)} h={h} />
+                          ))}
+                      </ul>
+                    </div>
+                  )}
+                  {scheduling.some((h) => visibleSet.has(h)) && (
+                    <div>
+                      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                        Scheduling contacts
+                      </p>
+                      <ul className="space-y-1.5">
+                        {scheduling
+                          .filter((h) => visibleSet.has(h))
+                          .map((h, i) => (
+                            <HistoryEntry key={entryKey(h, i)} h={h} />
+                          ))}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <ul className="space-y-1.5">
+                  {historyAll
+                    .filter((h) => visibleSet.has(h))
+                    .map((h, i) => (
+                      <HistoryEntry key={entryKey(h, i)} h={h} />
+                    ))}
+                </ul>
+              )}
+              {historyAll.length > 4 && (
+                <button
+                  type="button"
+                  data-testid="contact-panel-history-toggle"
+                  onClick={() => setShowAllHistory((v) => !v)}
+                  className="text-xs font-medium text-brand-600 hover:text-brand-700"
+                >
+                  {showAllHistory
+                    ? "Show less"
+                    : `Show all (${historyAll.length})`}
+                </button>
+              )}
+            </div>
           )}
         </>
       )}
@@ -190,5 +240,47 @@ export default function DeliveryContactPanel({
         />
       )}
     </div>
+  );
+}
+
+function entryKey(h: DeliveryContactEntry, i: number): string {
+  return `${h.journey_id}-${h.occurred_at}-${i}`;
+}
+
+// One history entry: type tag, bold outcome, time on line one; who
+// logged it plus the person's own note on line two. The generated
+// summary sentence is stripped by contactDisplayNote, so CONFIRMATION
+// rows read as outcome + note only.
+function HistoryEntry({ h }: { h: DeliveryContactEntry }) {
+  const isConf = h.purpose === "CONFIRMATION";
+  const outcomeLabel = isConf
+    ? (CONFIRMATION_STATUS_META[h.contact_outcome as ConfirmationCallStatus]
+        ?.label ?? "Confirmation call")
+    : (CONTACT_OUTCOME_LABELS[h.contact_outcome ?? ""] ?? "Contact");
+  const note = contactDisplayNote(h.note);
+  return (
+    <li className="rounded-md border border-slate-200 bg-white px-2.5 py-2">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span
+          className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+            isConf
+              ? "bg-blue-50 text-blue-700"
+              : "bg-slate-100 text-slate-500"
+          }`}
+        >
+          {isConf ? "Confirmation call" : "Scheduling call"}
+        </span>
+        <span className="text-xs font-semibold text-slate-800">
+          {outcomeLabel}
+        </span>
+        <span className="text-xs text-slate-400">
+          {contactWhenLabel(h.occurred_at)}
+        </span>
+      </div>
+      <p className="mt-0.5 text-xs text-slate-500">
+        {h.employee_name ?? "Someone"}
+        {note ? ` · ${note}` : ""}
+      </p>
+    </li>
   );
 }

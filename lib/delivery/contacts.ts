@@ -287,14 +287,16 @@ export function myWorkContactLine(
 
 /** Strip the auto-generated delivery-contact sentence from a stored
  *  summary so history shows only what the person actually typed.
- *  Generated forms: "Delivery scheduling call: <result>." and
- *  "Delivery scheduling text sent." Anything left (like an appended
- *  "Promised: ...") is kept; empty means show no note. */
+ *  Generated forms: "Delivery scheduling call: <result>.",
+ *  "Delivery scheduling text sent." and "Delivery confirmation call:
+ *  <result>." Anything left (like an appended "Promised: ...") is
+ *  kept; empty means show no note. */
 export function contactDisplayNote(note: string | null): string | null {
   if (!note) return null;
   const cleaned = note
     .replace(/Delivery scheduling call:[^.]*\./g, "")
     .replace(/Delivery scheduling text sent\./g, "")
+    .replace(/Delivery confirmation call:[^.]*\./g, "")
     .replace(/\s{2,}/g, " ")
     .trim();
   return cleaned || null;

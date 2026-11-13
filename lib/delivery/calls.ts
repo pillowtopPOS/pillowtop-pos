@@ -146,3 +146,21 @@ export const CONFIRMATION_PILL_CLASSES: Record<ConfirmationPillTone, string> = {
   amber: "bg-amber-100 text-amber-800",
   red: "bg-red-100 text-red-800",
 };
+
+/** Display-only phone formatting: a 10-digit US number (or 11 digits
+ *  with a leading 1) shows as "303-555-0166"; anything else is shown
+ *  exactly as stored. Never mutates the stored value. */
+export function formatPhoneDashed(
+  phone: string | null | undefined
+): string {
+  const trimmed = (phone ?? "").trim();
+  const digits = trimmed.replace(/\D/g, "");
+  const ten =
+    digits.length === 11 && digits.startsWith("1")
+      ? digits.slice(1)
+      : digits;
+  if (ten.length === 10) {
+    return `${ten.slice(0, 3)}-${ten.slice(3, 6)}-${ten.slice(6)}`;
+  }
+  return trimmed;
+}

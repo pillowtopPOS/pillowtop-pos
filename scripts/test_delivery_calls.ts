@@ -6,6 +6,7 @@ import {
   CONFIRMATION_STATUS_META,
   confirmationDayLabel,
   confirmationWindowText,
+  formatPhoneDashed,
   lastCallText,
   lastCallWhen,
 } from "../lib/delivery/calls.ts";
@@ -128,6 +129,21 @@ eq(
   null,
   "missing occurred_at -> null"
 );
+
+// ---- phone display formatting ------------------------------------------
+eq(formatPhoneDashed("3035550166"), "303-555-0166", "10 digits dashed");
+eq(formatPhoneDashed("13035550166"), "303-555-0166", "11 digits leading 1");
+eq(
+  formatPhoneDashed("(303) 555-0166"),
+  "303-555-0166",
+  "formatted input normalizes"
+);
+eq(formatPhoneDashed("303-555-0166"), "303-555-0166", "already dashed");
+eq(formatPhoneDashed("555-0166"), "555-0166", "7 digits as stored");
+eq(formatPhoneDashed("+44 20 7946 0958"), "+44 20 7946 0958", "non-US as stored");
+eq(formatPhoneDashed(""), "", "empty stays empty");
+eq(formatPhoneDashed(null), "", "null stays empty");
+eq(formatPhoneDashed(undefined), "", "undefined stays empty");
 
 console.log(failures === 0 ? "\nAll tests passed." : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

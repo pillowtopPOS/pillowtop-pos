@@ -27,6 +27,7 @@ import {
   type JourneyLineItem,
   type JourneyWithDetails,
 } from "@/lib/journeys/queries";
+import { formatPhoneDashed } from "@/lib/delivery/calls";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = [
@@ -205,7 +206,9 @@ export default function JourneyPeek({
             )}
 
             <div className="mt-3 space-y-1 text-sm text-slate-700">
-              {customer?.phone && <p>Phone: {customer.phone}</p>}
+              {customer?.phone && (
+                <p>Phone: {formatPhoneDashed(customer.phone)}</p>
+              )}
               {customer?.email && <p>Email: {customer.email}</p>}
               {customer &&
                 (() => {

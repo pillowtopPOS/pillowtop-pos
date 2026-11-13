@@ -13,6 +13,7 @@ import JourneyPeek, {
   type JourneyPeekStopDetails,
 } from "@/components/delivery/JourneyPeek";
 import ConfirmationCallModal from "@/components/delivery/ConfirmationCallModal";
+import DeliveryBookingModal from "@/components/delivery/DeliveryBookingModal";
 import {
   fetchDeliveryConfirmationList,
   fetchDeliveryLogConfirmationCalls,
@@ -24,6 +25,7 @@ import {
   CONFIRMATION_STATUS_META,
   confirmationDayLabel,
   confirmationWindowText,
+  formatPhoneDashed,
   lastCallText,
   type ConfirmationCallStatus,
 } from "@/lib/delivery/calls";
@@ -48,6 +50,11 @@ function CallsInner() {
   const [logItem, setLogItem] = useState<ConfirmationCallListItem | null>(
     null
   );
+  const [booking, setBooking] = useState<ConfirmationCallListItem | null>(null);
+  // True while the reschedule window is open on behalf of a saved call —
+  // closing it without booking must say the call stayed logged.
+  const [bookingFromCall, setBookingFromCall] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [peek, setPeek] = useState<{
     journeyId: string;
     stop: JourneyPeekStopDetails;
@@ -166,6 +173,12 @@ function CallsInner() {
         </div>
       </div>
 
+      {notice && (
+        <p className="mb-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+          {notice}
+        </p>
+      )}
+
       {allowed === false || noAccess ? (
         <p className="rounded-lg border border-slate-200 bg-white px-6 py-10 text-center text-sm text-slate-600">
           You do not have access to the call list.
@@ -239,7 +252,7 @@ function CallsInner() {
                     data-testid={`call-row-${item.stop_id}`}
                     className="rounded-lg border border-slate-200 bg-white px-4 py-3"
                   >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                           <span className="text-sm font-semibold text-slate-900">
@@ -277,7 +290,7 @@ function CallsInner() {
                         <div className="mt-1 space-y-0.5 text-sm text-slate-600">
                           {item.customer_phone ? (
                             <p className="select-text">
-                              {item.customer_phone}
+                              {formatPhoneDashed(item.customer_phone)}
                             </p>
                           ) : (
                             <p className="text-slate-400">No phone on file</p>
@@ -304,7 +317,7 @@ function CallsInner() {
                         type="button"
                         data-testid={`call-log-${item.stop_id}`}
                         onClick={() => setLogItem(item)}
-                        className="shrink-0 rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                        className="w-full shrink-0 rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 sm:w-auto"
                       >
                         {item.status === "not_called" ? "Log call" : "Call again"}
                       </button>
@@ -325,8 +338,44 @@ function CallsInner() {
           customerPhone={logItem.customer_phone}
           windowText={windowTextFor(logItem)}
           onClose={() => setLogItem(null)}
-          onSaved={() => {
+          onSaved={(msg) => {
             setLogItem(null);
+            setNotice(msg ?? null);
+            refresh();
+          }}
+          onPickNewDay={() => {
+            // The call is already saved; hand off to the reschedule
+            // window exactly like the order panel's Reschedule does.
+            setBooking(logItem);
+            setBookingFromCall(true);
+            setLogItem(null);
+          }}
+        />
+      )}
+
+      {booking && data?.date && (
+        <DeliveryBookingModal
+          journeyId={booking.journey_id}
+          customerName={booking.customer_name ?? "Customer"}
+          customerPhone={booking.customer_phone}
+          journeyNumber={booking.journey_number}
+          deliveryAddress={booking.delivery_address}
+          mode="reschedule"
+          stopId={booking.stop_id}
+          currentDate={data.date}
+          onClose={() => {
+            const fromCall = bookingFromCall;
+            setBooking(null);
+            setBookingFromCall(false);
+            if (fromCall) {
+              setNotice("Call saved. The delivery was not moved.");
+              refresh();
+            }
+          }}
+          onDone={async () => {
+            setBooking(null);
+            setBookingFromCall(false);
+            setNotice("Delivery moved.");
             refresh();
           }}
         />
