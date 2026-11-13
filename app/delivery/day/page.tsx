@@ -184,17 +184,24 @@ function DeliveryDayInner() {
 
   const validDate = /^\d{4}-\d{2}-\d{2}$/.test(date);
 
-  const load = useCallback(async () => {
+  // quiet=true is the tab-focus refetch: no loading flash, errors are
+  // swallowed, and callers must have already verified there are no
+  // unsaved drafts (this path rebuilds the draft from the server).
+  const load = useCallback(async (quiet = false) => {
     if (!validDate) {
-      setLoading(false);
-      setError("Pick a delivery day.");
+      if (!quiet) {
+        setLoading(false);
+        setError("Pick a delivery day.");
+      }
       return;
     }
     const seq = ++loadSeq.current;
-    setLoading(true);
-    setError(null);
-    setActionError(null);
-    setConflict(false);
+    if (!quiet) {
+      setLoading(true);
+      setError(null);
+      setActionError(null);
+      setConflict(false);
+    }
     try {
       const [p, perm, permWin, settings] = await Promise.all([
         fetchDeliveryDayPlan(date),
@@ -216,11 +223,13 @@ function DeliveryDayInner() {
       setNotice(null);
     } catch {
       if (seq !== loadSeq.current) return;
-      setError("We couldn't load this delivery day. Please try again.");
-      setPlan(null);
-      setDraft(null);
+      if (!quiet) {
+        setError("We couldn't load this delivery day. Please try again.");
+        setPlan(null);
+        setDraft(null);
+      }
     } finally {
-      if (seq === loadSeq.current) setLoading(false);
+      if (seq === loadSeq.current && !quiet) setLoading(false);
     }
   }, [date, validDate]);
 
@@ -256,6 +265,47 @@ function DeliveryDayInner() {
   // write), so its size IS the unsaved-window-change count.
   const winDirtyCount = Object.keys(winDraft).length;
 
+  // Quiet refetch when the tab regains focus — only when there is
+  // nothing unsaved and nothing open that a reload could clobber.
+  // Throttled to one refetch per 15 seconds.
+  const lastQuietRef = useRef(0);
+  useEffect(() => {
+    const maybeRefresh = () => {
+      if (document.visibilityState !== "visible") return;
+      if (dirty || winDirtyCount > 0 || busy) return;
+      if (
+        peekJourneyId ||
+        movingStop ||
+        cancellingStop ||
+        pendingNav ||
+        closeConfirm ||
+        resuggestTruck
+      )
+        return;
+      const now = Date.now();
+      if (now - lastQuietRef.current < 15_000) return;
+      lastQuietRef.current = now;
+      load(true);
+    };
+    window.addEventListener("focus", maybeRefresh);
+    document.addEventListener("visibilitychange", maybeRefresh);
+    return () => {
+      window.removeEventListener("focus", maybeRefresh);
+      document.removeEventListener("visibilitychange", maybeRefresh);
+    };
+  }, [
+    dirty,
+    winDirtyCount,
+    busy,
+    peekJourneyId,
+    movingStop,
+    cancellingStop,
+    pendingNav,
+    closeConfirm,
+    resuggestTruck,
+    load,
+  ]);
+
   // Unsaved-changes guard: browser unload + in-app anchor clicks.
   // Covers route AND window drafts.
   useEffect(() => {
@@ -276,6 +326,9 @@ function DeliveryDayInner() {
         return;
       const a = (e.target as HTMLElement).closest("a[href]");
       if (!a) return;
+      // New-tab links (target=_blank, e.g. the peek's "Open full
+      // journey") never leave this page — no prompt needed.
+      if ((a as HTMLAnchorElement).target === "_blank") return;
       const href = a.getAttribute("href");
       if (!href || href.startsWith("#") || href.startsWith("mailto:")) return;
       const url = new URL(href, window.location.href);
@@ -966,7 +1019,7 @@ function DeliveryDayInner() {
         >
           <p className="text-sm text-red-700">{error}</p>
           <button
-            onClick={load}
+            onClick={() => load()}
             data-testid="delivery-day-reload"
             className="mt-3 rounded-md border border-red-300 px-3 py-1.5 text-sm text-red-700 hover:bg-red-100"
           >
@@ -1101,7 +1154,7 @@ function DeliveryDayInner() {
               <button
                 type="button"
                 data-testid="delivery-day-reload"
-                onClick={load}
+                onClick={() => load()}
                 className="rounded-md border border-red-300 px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
               >
                 Reload

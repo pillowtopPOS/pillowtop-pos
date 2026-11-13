@@ -121,6 +121,34 @@ function CallsInner() {
     load(data?.date ?? null, scope);
   };
 
+  // Quiet background refetch on tab focus — no loading flash, no
+  // notice, at most once per 15s, and never while a modal is open.
+  const lastQuietRef = useRef(0);
+  const quietRefresh = useCallback(() => {
+    const now = Date.now();
+    if (now - lastQuietRef.current < 15_000) return;
+    lastQuietRef.current = now;
+    fetchDeliveryConfirmationList(data?.date ?? null, scope)
+      .then(setData)
+      .catch(() => {});
+  }, [data?.date, scope]);
+
+  useEffect(() => {
+    const onFocus = () => {
+      if (logItem || booking || peek) return;
+      quietRefresh();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") onFocus();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [logItem, booking, peek, quietRefresh]);
+
   const items = data?.items ?? [];
   const confirmedCount = items.filter((i) => i.status === "confirmed").length;
 
