@@ -51,9 +51,11 @@ function CallsInner() {
     null
   );
   const [booking, setBooking] = useState<ConfirmationCallListItem | null>(null);
-  // True while the reschedule window is open on behalf of a saved call —
-  // closing it without booking must say the call stayed logged.
-  const [bookingFromCall, setBookingFromCall] = useState(false);
+  // DeliveryBookingModal calls onDone() and THEN always calls onClose(),
+  // so onClose can't trust render state — it would still see the old
+  // closure. This ref records "the reschedule actually landed" and is
+  // the only thing onClose trusts. Reset each time the window opens.
+  const movedRef = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [peek, setPeek] = useState<{
     journeyId: string;
@@ -346,8 +348,8 @@ function CallsInner() {
           onPickNewDay={() => {
             // The call is already saved; hand off to the reschedule
             // window exactly like the order panel's Reschedule does.
+            movedRef.current = false;
             setBooking(logItem);
-            setBookingFromCall(true);
             setLogItem(null);
           }}
         />
@@ -364,17 +366,19 @@ function CallsInner() {
           stopId={booking.stop_id}
           currentDate={data.date}
           onClose={() => {
-            const fromCall = bookingFromCall;
+            // Runs after onDone on a successful move — the ref, not
+            // state, says which path this close took.
+            const moved = movedRef.current;
+            movedRef.current = false;
             setBooking(null);
-            setBookingFromCall(false);
-            if (fromCall) {
+            if (!moved) {
               setNotice("Call saved. The delivery was not moved.");
               refresh();
             }
           }}
           onDone={async () => {
+            movedRef.current = true;
             setBooking(null);
-            setBookingFromCall(false);
             setNotice("Delivery moved.");
             refresh();
           }}

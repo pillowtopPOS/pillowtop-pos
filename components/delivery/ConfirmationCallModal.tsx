@@ -118,13 +118,13 @@ export default function ConfirmationCallModal({
 
   const handleRelease = async () => {
     if (!note.trim()) {
-      setError("Add a note first — it is used as the cancel reason.");
+      setError("Add a note first. It is used as the cancel reason.");
       return;
     }
     if (!(await saveCall())) return;
     try {
       await cancelDeliveryStop(stopId, note.trim());
-      onSaved();
+      onSaved("Delivery released. The order is back in Ready to Schedule.");
     } catch {
       // The call is already logged; never pretend the release worked.
       onSaved("Call saved. The delivery was not moved.");
