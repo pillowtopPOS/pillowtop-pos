@@ -184,8 +184,9 @@ function CallsInner() {
         </div>
       ) : data ? (
         <>
-          {/* Day picker — dates come straight from the RPC as strings. */}
-          {data.available_dates.length > 0 && (
+          {/* Day picker — dates come straight from the RPC as strings.
+              Counts are company-wide, so they only show in Everyone. */}
+          {data.date && data.available_dates.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-2">
               {data.available_dates.map((d) => {
                 const active = d.date === data.date;
@@ -201,21 +202,30 @@ function CallsInner() {
                         : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
                     }`}
                   >
-                    {confirmationDayLabel(d.date)} ({d.stop_count})
+                    {confirmationDayLabel(d.date)}
+                    {scope === "all" ? ` (${d.stop_count})` : ""}
                   </button>
                 );
               })}
             </div>
           )}
 
-          <p className="mb-3 text-sm text-slate-600">
-            {confirmedCount} of {items.length} confirmed
-            {data.date ? ` · ${confirmationDayLabel(data.date)}` : ""}
-          </p>
+          {data.date && (
+            <p className="mb-3 text-sm text-slate-600">
+              {confirmedCount} of {items.length} confirmed
+              {` · ${confirmationDayLabel(data.date)}`}
+            </p>
+          )}
 
-          {items.length === 0 ? (
+          {!data.date ? (
             <p className="rounded-lg border border-dashed border-slate-300 bg-white px-6 py-10 text-center text-sm text-slate-600">
-              No deliveries to call for this day.
+              No upcoming deliveries to call.
+            </p>
+          ) : items.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-slate-300 bg-white px-6 py-10 text-center text-sm text-slate-600">
+              {scope === "mine"
+                ? "None of your stops are on this day. Try another day or Everyone."
+                : "No deliveries to call for this day."}
             </p>
           ) : (
             <ul className="space-y-2">
