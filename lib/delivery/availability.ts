@@ -171,3 +171,30 @@ export function openSlotLabel(
   const open = Math.max(0, day.capacity - day.booked_count);
   return open <= 0 ? "Full" : `${open} open`;
 }
+
+/**
+ * The day the "Earliest" badge belongs on: the first loaded day on
+ * or after the earliest bookable date that still has an open slot.
+ * The earliest date itself can be Full, Closed or "No delivery" —
+ * the badge then moves to the next day a customer could actually
+ * book. Null when nothing in the loaded days qualifies.
+ */
+export function firstOpenDayOnOrAfter(
+  earliestIso: string | null,
+  days: {
+    date: string;
+    capacity: number;
+    booked_count: number;
+    trucks?: { on: boolean }[];
+  }[]
+): string | null {
+  if (!earliestIso) return null;
+  for (const d of days) {
+    if (d.date < earliestIso) continue;
+    const label = openSlotLabel(d);
+    if (label !== "" && !["Full", "Closed", "No delivery"].includes(label)) {
+      return d.date;
+    }
+  }
+  return null;
+}

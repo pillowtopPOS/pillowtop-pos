@@ -24,6 +24,7 @@ import {
 import {
   cutoffNoteLine,
   earliestBookableDate,
+  firstOpenDayOnOrAfter,
   openSlotLabel,
   slotDayParts,
   type DeliveryCutoffContext,
@@ -49,6 +50,15 @@ function toISODay(d: Date): string {
 function addDays(iso: string, n: number): string {
   const d = parseDay(iso);
   d.setUTCDate(d.getUTCDate() + n);
+  return toISODay(d);
+}
+
+// Start of the week containing iso. startDay is the ISO weekday the
+// company's calendar week begins on: 1 = Monday, 7 = Sunday.
+function weekStartOf(iso: string, startDay: number): string {
+  const d = parseDay(iso);
+  const isoDow = ((d.getUTCDay() + 6) % 7) + 1; // Mon=1 .. Sun=7
+  d.setUTCDate(d.getUTCDate() - ((isoDow - startDay + 7) % 7));
   return toISODay(d);
 }
 
@@ -139,12 +149,15 @@ function Cell({
 }
 
 type ViewMode = "simple" | "manage";
+// Inside Manage, the admin grid keeps its old two window styles.
+type CalMode = "rolling" | "week";
 
 export default function DeliveryPage() {
   const router = useRouter();
   const [calendar, setCalendar] = useState<DeliveryCalendar | null>(null);
   const [viewStart, setViewStart] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("simple");
+  const [calMode, setCalMode] = useState<CalMode>("rolling");
   const [todayIso, setTodayIso] = useState<string | null>(null);
   const [canManageTrucks, setCanManageTrucks] = useState(false);
   const [canManageCalendar, setCanManageCalendar] = useState(false);
@@ -160,6 +173,7 @@ export default function DeliveryPage() {
   const [weekStartDay, setWeekStartDay] = useState<1 | 7>(1);
   const viewStartRef = useRef<string | null>(null);
   const viewModeRef = useRef<ViewMode>("simple");
+  const calModeRef = useRef<CalMode>("rolling");
   const weekStartDayRef = useRef<1 | 7>(1);
   const userIdRef = useRef<string | null>(null);
   // Monotonic request id — a slow response for an old window/mode must
@@ -176,8 +190,12 @@ export default function DeliveryPage() {
       setCalendar(cal);
       try {
         const uid = userIdRef.current;
-        // Last-viewed window is remembered only in Manage view.
-        if (uid && viewModeRef.current === "manage") {
+        // Last-viewed week is remembered only in Manage + Calendar week.
+        if (
+          uid &&
+          viewModeRef.current === "manage" &&
+          calModeRef.current === "week"
+        ) {
           window.localStorage.setItem(
             `delivery-calendar-anchor:${uid}`,
             JSON.stringify({ date: startIso, savedAt: Date.now() })
@@ -236,9 +254,22 @@ export default function DeliveryPage() {
       }
       viewModeRef.current = mode;
       setViewMode(mode);
+      // Inside Manage, the grid keeps its old "Next 7 days" /
+      // "Calendar week" choice, remembered per user.
+      let manageCal: CalMode = "rolling";
+      try {
+        const savedCal = window.localStorage.getItem(
+          `delivery-manage-mode:${session.user.id}`
+        );
+        if (savedCal === "week" || savedCal === "rolling") manageCal = savedCal;
+      } catch {
+        // storage unavailable or unreadable — default rolling
+      }
+      calModeRef.current = manageCal;
+      setCalMode(manageCal);
       let start = businessToday;
-      if (mode === "manage") {
-        // Manage view reopens on the window this user was last viewing;
+      if (mode === "manage" && manageCal === "week") {
+        // Calendar week reopens on the week this user was last viewing;
         // fall back to today. Keyed per user (shared store computers)
         // and ignored when older than 14 days.
         let anchorDate = businessToday;
@@ -261,7 +292,7 @@ export default function DeliveryPage() {
         } catch {
           // storage unavailable or unreadable value — use today
         }
-        start = anchorDate;
+        start = weekStartOf(anchorDate, startDay);
       }
       viewStartRef.current = start;
       setViewStart(start);
@@ -324,8 +355,37 @@ export default function DeliveryPage() {
     }
   };
 
+  // Inside Manage: switching between "Next 7 days" and "Calendar
+  // week" re-anchors exactly like the old toggle — week snaps to the
+  // company week start, rolling jumps back to today.
+  const switchCalMode = (mode: CalMode) => {
+    if (mode === calModeRef.current) return;
+    calModeRef.current = mode;
+    setCalMode(mode);
+    try {
+      const uid = userIdRef.current;
+      if (uid) {
+        window.localStorage.setItem(`delivery-manage-mode:${uid}`, mode);
+      }
+    } catch {
+      // storage unavailable — fine
+    }
+    const current = viewStartRef.current;
+    if (!current) return;
+    const target =
+      mode === "week"
+        ? weekStartOf(current, weekStartDay)
+        : (todayIso ?? current);
+    if (target !== current) goTo(target);
+  };
+
   const goToday = () => {
-    goTo(todayIso ?? toISODay(new Date()));
+    const t = todayIso ?? toISODay(new Date());
+    goTo(
+      viewModeRef.current === "manage" && calModeRef.current === "week"
+        ? weekStartOf(t, weekStartDay)
+        : t
+    );
   };
 
   // One click: exception -> clear back to pattern; pattern cell -> set the
@@ -397,12 +457,57 @@ export default function DeliveryPage() {
   const showManage = canManage && viewMode === "manage";
   const earliestDate = earliestBookableDate(cutoffCtx);
   const cutoffNote = cutoffNoteLine(cutoffCtx, earliestDate);
+  // The badge lands on the first loaded day on/after the earliest
+  // bookable date that still has an open slot — the earliest date
+  // itself can be Full or have no delivery at all.
+  const badgeDate = firstOpenDayOnOrAfter(
+    earliestDate,
+    days.map((iso) => {
+      const dd = dayByDate.get(iso);
+      return dd
+        ? {
+            date: iso,
+            capacity: dd.capacity,
+            booked_count: dd.booked_count,
+            trucks: dd.trucks,
+          }
+        : { date: iso, capacity: 0, booked_count: 0, trucks: [] };
+    })
+  );
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold text-slate-900">Delivery</h1>
-        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+        <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto">
+          {showManage && (
+            <div
+              className="flex rounded-md border border-slate-300 text-sm"
+              role="group"
+              aria-label="Calendar view"
+            >
+              {(
+                [
+                  ["rolling", "Next 7 days"],
+                  ["week", "Calendar week"],
+                ] as [CalMode, string][]
+              ).map(([mode, label]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => switchCalMode(mode)}
+                  aria-pressed={calMode === mode}
+                  className={`whitespace-nowrap px-3 py-1.5 ${
+                    calMode === mode
+                      ? "bg-slate-900 font-medium text-white"
+                      : "text-slate-600 hover:bg-slate-50"
+                  } ${mode === "rolling" ? "rounded-l-md" : "rounded-r-md border-l border-slate-300"}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
           <button
             onClick={() => viewStart && goTo(addDays(viewStart, -7))}
             disabled={!viewStart}
@@ -512,7 +617,7 @@ export default function DeliveryPage() {
 
       {!loading && !error && trucks.length > 0 && !showManage && (
         <div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
             {days.map((iso) => {
               const d = dayByDate.get(iso);
               const l = slotDayParts(iso);
@@ -531,30 +636,28 @@ export default function DeliveryPage() {
                       : "border-slate-200 bg-white"
                   } ${isPast ? "opacity-60" : ""}`}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p
-                        className={`text-[11px] font-semibold uppercase tracking-wide ${
-                          isToday ? "text-amber-800" : "text-slate-400"
-                        }`}
-                      >
-                        {isToday ? "Today" : l.weekday}
-                      </p>
-                      <p className="mt-1 flex items-baseline gap-1.5">
-                        <span className="text-2xl font-bold leading-none text-slate-900">
-                          {l.dayNum}
-                        </span>
-                        <span className="text-sm font-medium text-slate-500">
-                          {l.month}
-                        </span>
-                      </p>
-                    </div>
-                    {iso === earliestDate && (
-                      <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-700">
-                        Earliest
+                  <div>
+                    <p
+                      className={`text-[11px] font-semibold uppercase tracking-wide ${
+                        isToday ? "text-amber-800" : "text-slate-400"
+                      }`}
+                    >
+                      {isToday ? "Today" : l.weekday}
+                    </p>
+                    <p className="mt-1 flex items-baseline gap-1.5">
+                      <span className="text-2xl font-bold leading-none text-slate-900">
+                        {l.dayNum}
                       </span>
-                    )}
+                      <span className="text-sm font-medium text-slate-500">
+                        {l.month}
+                      </span>
+                    </p>
                   </div>
+                  {iso === badgeDate && (
+                    <span className="inline-block w-fit rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-700">
+                      Earliest
+                    </span>
+                  )}
                   <p
                     className={`text-sm font-semibold leading-tight ${
                       isFull

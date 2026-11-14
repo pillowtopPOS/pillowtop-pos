@@ -5,6 +5,7 @@ import {
   cutoffMinutes,
   cutoffNoteLine,
   earliestBookableDate,
+  firstOpenDayOnOrAfter,
   openSlotLabel,
   slotDayParts,
   zonedNow,
@@ -95,6 +96,61 @@ check("no delivery no trucks on", openSlotLabel({ capacity: 0, booked_count: 0, 
 check("no delivery empty trucks", openSlotLabel({ capacity: 0, booked_count: 0, trucks: [] }), "No delivery");
 check("closed trucks on zero cap", openSlotLabel({ capacity: 0, booked_count: 0, trucks: [{ on: true }] }), "Closed");
 check("missing day", openSlotLabel(undefined), "");
+
+// --- firstOpenDayOnOrAfter ---
+const day = (date: string, capacity: number, booked: number, on = true) => ({
+  date,
+  capacity,
+  booked_count: booked,
+  trucks: [{ on }],
+});
+// (1) Sat before cutoff, Sun has no delivery -> badge lands Mon.
+check(
+  "badge skips no-delivery earliest",
+  firstOpenDayOnOrAfter("2026-11-15", [
+    day("2026-11-14", 10, 2),
+    day("2026-11-15", 0, 0, false),
+    day("2026-11-16", 10, 3),
+  ]),
+  "2026-11-16"
+);
+// (2) Sun itself open -> badge stays Sun.
+check(
+  "badge on open earliest",
+  firstOpenDayOnOrAfter("2026-11-15", [
+    day("2026-11-15", 10, 2),
+    day("2026-11-16", 10, 3),
+  ]),
+  "2026-11-15"
+);
+// (3) Earliest day full, next day open -> next open day.
+check(
+  "badge skips full earliest",
+  firstOpenDayOnOrAfter("2026-11-15", [
+    day("2026-11-15", 10, 10),
+    day("2026-11-16", 10, 4),
+  ]),
+  "2026-11-16"
+);
+// (4) Every day full -> no badge.
+check(
+  "badge none when all full",
+  firstOpenDayOnOrAfter("2026-11-15", [
+    day("2026-11-15", 10, 10),
+    day("2026-11-16", 10, 12),
+  ]),
+  null
+);
+// (5) Earliest date beyond the visible week -> no badge.
+check(
+  "badge none when earliest beyond week",
+  firstOpenDayOnOrAfter("2026-11-25", [
+    day("2026-11-14", 10, 2),
+    day("2026-11-15", 10, 3),
+  ]),
+  null
+);
+check("badge null earliest", firstOpenDayOnOrAfter(null, [day("2026-11-15", 10, 1)]), null);
 
 // --- addDaysISO ---
 check("addDays month", addDaysISO("2026-11-30", 1), "2026-12-01");
