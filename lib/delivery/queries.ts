@@ -416,6 +416,41 @@ export async function fetchDeliveryCutoff(): Promise<{
   return data as { cutoff_time: string | null; can_edit: boolean };
 }
 
+/** Timezone + cutoff for the journey-independent earliest-bookable
+ *  calculation on the /delivery landing view. Mirrors
+ *  get_earliest_bookable_date's timezone pick (store timezone, else
+ *  company business_timezone) using the caller's home store. Null
+ *  when the employee or store can't be resolved. */
+export async function fetchDeliveryCutoffContext(): Promise<{
+  timezone: string | null;
+  cutoff_time: string | null;
+} | null> {
+  const employee = await fetchCurrentEmployee();
+  if (!employee?.home_store_id) return null;
+  const supabase = createClient();
+  const { data: store } = await supabase
+    .from("stores")
+    .select("timezone, company_id")
+    .eq("id", employee.home_store_id)
+    .maybeSingle();
+  const companyId = (store as { company_id?: string } | null)?.company_id;
+  if (!companyId) return null;
+  const { data: company } = await supabase
+    .from("companies")
+    .select("business_timezone, delivery_cutoff_time")
+    .eq("id", companyId)
+    .maybeSingle();
+  const c = company as {
+    business_timezone?: string | null;
+    delivery_cutoff_time?: string | null;
+  } | null;
+  const s = store as { timezone?: string | null } | null;
+  return {
+    timezone: s?.timezone ?? c?.business_timezone ?? null,
+    cutoff_time: c?.delivery_cutoff_time ?? null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // D1-c1: day plan — close and assign (migration 132)
 // ---------------------------------------------------------------------------

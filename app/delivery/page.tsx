@@ -11,6 +11,8 @@ import {
   fetchDeliveryBusinessToday,
   fetchDeliveryManageTrucks,
   fetchDeliveryManageCalendar,
+  fetchDeliveryLogConfirmationCalls,
+  fetchDeliveryCutoffContext,
   setTruckDateState,
   setDayExtraSlots,
   fetchCompanyWeekStart,
@@ -19,6 +21,13 @@ import {
   type DeliveryTruckDay,
   type DeliveryTruckInfo,
 } from "@/lib/delivery/queries";
+import {
+  cutoffNoteLine,
+  earliestBookableDate,
+  openSlotLabel,
+  slotDayParts,
+  type DeliveryCutoffContext,
+} from "@/lib/delivery/availability";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const MONTHS = [
@@ -40,15 +49,6 @@ function toISODay(d: Date): string {
 function addDays(iso: string, n: number): string {
   const d = parseDay(iso);
   d.setUTCDate(d.getUTCDate() + n);
-  return toISODay(d);
-}
-
-// Start of the week containing iso. startDay is the ISO weekday the
-// company's calendar week begins on: 1 = Monday, 7 = Sunday.
-function weekStartOf(iso: string, startDay: number): string {
-  const d = parseDay(iso);
-  const isoDow = ((d.getUTCDay() + 6) % 7) + 1; // Mon=1 .. Sun=7
-  d.setUTCDate(d.getUTCDate() - ((isoDow - startDay + 7) % 7));
   return toISODay(d);
 }
 
@@ -138,16 +138,18 @@ function Cell({
   );
 }
 
-type ViewMode = "rolling" | "week";
+type ViewMode = "simple" | "manage";
 
 export default function DeliveryPage() {
   const router = useRouter();
   const [calendar, setCalendar] = useState<DeliveryCalendar | null>(null);
   const [viewStart, setViewStart] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>("rolling");
+  const [viewMode, setViewMode] = useState<ViewMode>("simple");
   const [todayIso, setTodayIso] = useState<string | null>(null);
   const [canManageTrucks, setCanManageTrucks] = useState(false);
   const [canManageCalendar, setCanManageCalendar] = useState(false);
+  const [canLogCalls, setCanLogCalls] = useState(false);
+  const [cutoffCtx, setCutoffCtx] = useState<DeliveryCutoffContext | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savingCells, setSavingCells] = useState<Set<string>>(new Set());
@@ -157,7 +159,7 @@ export default function DeliveryPage() {
   const [panelAddMode, setPanelAddMode] = useState(false);
   const [weekStartDay, setWeekStartDay] = useState<1 | 7>(1);
   const viewStartRef = useRef<string | null>(null);
-  const viewModeRef = useRef<ViewMode>("rolling");
+  const viewModeRef = useRef<ViewMode>("simple");
   const weekStartDayRef = useRef<1 | 7>(1);
   const userIdRef = useRef<string | null>(null);
   // Monotonic request id — a slow response for an old window/mode must
@@ -174,8 +176,8 @@ export default function DeliveryPage() {
       setCalendar(cal);
       try {
         const uid = userIdRef.current;
-        // Last-viewed week is remembered only in Calendar week mode.
-        if (uid && viewModeRef.current === "week") {
+        // Last-viewed window is remembered only in Manage view.
+        if (uid && viewModeRef.current === "manage") {
           window.localStorage.setItem(
             `delivery-calendar-anchor:${uid}`,
             JSON.stringify({ date: startIso, savedAt: Date.now() })
@@ -220,21 +222,23 @@ export default function DeliveryPage() {
       const startDay = (wkStart === 7 ? 7 : 1) as 1 | 7; // null -> Monday
       weekStartDayRef.current = startDay;
       setWeekStartDay(startDay);
-      // View mode is per user; default is the rolling "Next 7 days".
-      let mode: ViewMode = "rolling";
+      // View is per user; default is the simple read-only day cards.
+      // Anything that is not "manage" (including values saved by the
+      // old rolling/week toggle) lands on simple.
+      let mode: ViewMode = "simple";
       try {
         const savedMode = window.localStorage.getItem(
           `delivery-calendar-mode:${session.user.id}`
         );
-        if (savedMode === "week" || savedMode === "rolling") mode = savedMode;
+        if (savedMode === "manage" || savedMode === "simple") mode = savedMode;
       } catch {
-        // storage unavailable or unreadable — default rolling
+        // storage unavailable or unreadable — default simple
       }
       viewModeRef.current = mode;
       setViewMode(mode);
-      let start: string;
-      if (mode === "week") {
-        // Reopen on the week this user was last viewing in this mode;
+      let start = businessToday;
+      if (mode === "manage") {
+        // Manage view reopens on the window this user was last viewing;
         // fall back to today. Keyed per user (shared store computers)
         // and ignored when older than 14 days.
         let anchorDate = businessToday;
@@ -257,18 +261,18 @@ export default function DeliveryPage() {
         } catch {
           // storage unavailable or unreadable value — use today
         }
-        start = weekStartOf(anchorDate, startDay);
-      } else {
-        // Rolling mode always opens on today.
-        start = businessToday;
+        start = anchorDate;
       }
       viewStartRef.current = start;
       setViewStart(start);
-      const [cal, canManageTrucksPerm, canManageCalendarPerm] = await Promise.all([
-        fetchDeliveryCalendar(start, addDays(start, 6)).catch(() => null),
-        fetchDeliveryManageTrucks(),
-        fetchDeliveryManageCalendar(),
-      ]);
+      const [cal, canManageTrucksPerm, canManageCalendarPerm, canLogCallsPerm, cutoffContext] =
+        await Promise.all([
+          fetchDeliveryCalendar(start, addDays(start, 6)).catch(() => null),
+          fetchDeliveryManageTrucks(),
+          fetchDeliveryManageCalendar(),
+          fetchDeliveryLogConfirmationCalls(),
+          fetchDeliveryCutoffContext().catch(() => null),
+        ]);
       if (cal === null) {
         setError("We couldn't load the delivery calendar. Please try again.");
       } else {
@@ -276,6 +280,8 @@ export default function DeliveryPage() {
       }
       setCanManageTrucks(canManageTrucksPerm);
       setCanManageCalendar(canManageCalendarPerm);
+      setCanLogCalls(canLogCallsPerm);
+      setCutoffCtx(cutoffContext);
       setLoading(false);
     });
   }, [router]);
@@ -297,10 +303,11 @@ export default function DeliveryPage() {
     }, 150);
   };
 
-  // Switching modes re-anchors: Calendar week snaps to the week
-  // containing the currently visible first day; rolling jumps back to
-  // today. The mode itself is remembered per user.
-  const switchMode = (mode: ViewMode) => {
+  // Switching views keeps the currently visible 7-day window; the
+  // view itself is remembered per user. Manage rights are checked at
+  // render time, so a saved "manage" can never show the admin grid
+  // to someone without them.
+  const switchView = (mode: ViewMode) => {
     if (mode === viewModeRef.current) return;
     viewModeRef.current = mode;
     setViewMode(mode);
@@ -315,20 +322,10 @@ export default function DeliveryPage() {
     } catch {
       // storage unavailable — fine
     }
-    const current = viewStartRef.current;
-    if (!current) return;
-    const target =
-      mode === "week"
-        ? weekStartOf(current, weekStartDayRef.current)
-        : (todayIso ?? current);
-    if (target !== current) goTo(target);
   };
 
   const goToday = () => {
-    const t = todayIso ?? toISODay(new Date());
-    goTo(viewModeRef.current === "week"
-      ? weekStartOf(t, weekStartDayRef.current)
-      : t);
+    goTo(todayIso ?? toISODay(new Date()));
   };
 
   // One click: exception -> clear back to pattern; pattern cell -> set the
@@ -394,39 +391,18 @@ export default function DeliveryPage() {
   );
   const trucks = calendar?.trucks ?? [];
   const weekEnd = days[days.length - 1] ?? "";
-  const tomorrowIso = todayIso ? addDays(todayIso, 1) : null;
+  const canManage = canManageTrucks || canManageCalendar;
+  // A saved "manage" view can never reach the admin grid without the
+  // permission — the check happens here, not just on the button.
+  const showManage = canManage && viewMode === "manage";
+  const earliestDate = earliestBookableDate(cutoffCtx);
+  const cutoffNote = cutoffNoteLine(cutoffCtx, earliestDate);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold text-slate-900">Delivery</h1>
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-          <div
-            className="flex rounded-md border border-slate-300 text-sm"
-            role="group"
-            aria-label="Calendar view"
-          >
-            {(
-              [
-                ["rolling", "Next 7 days"],
-                ["week", "Calendar week"],
-              ] as [ViewMode, string][]
-            ).map(([mode, label]) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => switchMode(mode)}
-                aria-pressed={viewMode === mode}
-                className={`whitespace-nowrap px-3 py-1.5 ${
-                  viewMode === mode
-                    ? "bg-slate-900 font-medium text-white"
-                    : "text-slate-600 hover:bg-slate-50"
-                } ${mode === "rolling" ? "rounded-l-md" : "rounded-r-md border-l border-slate-300"}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
           <button
             onClick={() => viewStart && goTo(addDays(viewStart, -7))}
             disabled={!viewStart}
@@ -453,12 +429,32 @@ export default function DeliveryPage() {
           <span className="ml-2 whitespace-nowrap text-sm font-medium text-slate-700">
             {viewStart ? rangeLabel(viewStart, weekEnd) : ""}
           </span>
-          <Link
-            href="/delivery/calls"
-            className="ml-3 inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
-          >
-            Confirmation calls
-          </Link>
+          {canLogCalls && (
+            <Link
+              href="/delivery/calls"
+              className="ml-3 inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+            >
+              Confirmation calls
+            </Link>
+          )}
+          {(canManageTrucks || canManageCalendar) &&
+            (viewMode === "manage" ? (
+              <button
+                type="button"
+                onClick={() => switchView("simple")}
+                className="ml-3 inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Simple view
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => switchView("manage")}
+                className="ml-3 inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Manage
+              </button>
+            ))}
           {canManageTrucks && (
             <button
               type="button"
@@ -514,7 +510,73 @@ export default function DeliveryPage() {
         </div>
       )}
 
-      {!loading && !error && trucks.length > 0 && (
+      {!loading && !error && trucks.length > 0 && !showManage && (
+        <div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+            {days.map((iso) => {
+              const d = dayByDate.get(iso);
+              const l = slotDayParts(iso);
+              const isToday = todayIso !== null && iso === todayIso;
+              const isPast = todayIso !== null && iso < todayIso;
+              const label = openSlotLabel(d);
+              const isFull = label === "Full";
+              const isClosed = label === "Closed" || label === "No delivery";
+              return (
+                <div
+                  key={iso}
+                  aria-current={isToday ? "date" : undefined}
+                  className={`flex flex-col gap-1 rounded-xl border p-4 ${
+                    isToday
+                      ? "border-amber-300 bg-amber-50"
+                      : "border-slate-200 bg-white"
+                  } ${isPast ? "opacity-60" : ""}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p
+                        className={`text-[11px] font-semibold uppercase tracking-wide ${
+                          isToday ? "text-amber-800" : "text-slate-400"
+                        }`}
+                      >
+                        {isToday ? "Today" : l.weekday}
+                      </p>
+                      <p className="mt-1 flex items-baseline gap-1.5">
+                        <span className="text-2xl font-bold leading-none text-slate-900">
+                          {l.dayNum}
+                        </span>
+                        <span className="text-sm font-medium text-slate-500">
+                          {l.month}
+                        </span>
+                      </p>
+                    </div>
+                    {iso === earliestDate && (
+                      <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-700">
+                        Earliest
+                      </span>
+                    )}
+                  </div>
+                  <p
+                    className={`text-sm font-semibold leading-tight ${
+                      isFull
+                        ? "text-red-600"
+                        : isClosed
+                          ? "text-slate-400"
+                          : "text-slate-800"
+                    }`}
+                  >
+                    {label}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+          {cutoffNote && (
+            <p className="mt-3 text-xs text-slate-500">{cutoffNote}</p>
+          )}
+        </div>
+      )}
+
+      {!loading && !error && trucks.length > 0 && showManage && (
         <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
           <table className="w-full min-w-[720px] border-collapse text-sm">
             <thead>
@@ -530,13 +592,7 @@ export default function DeliveryPage() {
                   // "Today"/"Tomorrow" are earned by the actual date,
                   // not the column position — a past or future window
                   // must never claim them.
-                  const topLabel = isToday
-                    ? "Today"
-                    : viewMode === "rolling" &&
-                        tomorrowIso !== null &&
-                        iso === tomorrowIso
-                      ? "Tomorrow"
-                      : l.weekday;
+                  const topLabel = isToday ? "Today" : l.weekday;
                   const open = d
                     ? Math.max(0, d.capacity - d.booked_count)
                     : 0;
@@ -655,7 +711,7 @@ export default function DeliveryPage() {
         </div>
       )}
 
-      {!loading && !error && trucks.length > 0 && (
+      {!loading && !error && trucks.length > 0 && showManage && (
         <div className="mt-3 space-y-1">
           {cellError && (
             <p className="text-xs text-red-600">{cellError}</p>
