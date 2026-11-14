@@ -10,8 +10,8 @@ import { READY_SCHEDULING_STALE_DAYS } from "@/lib/constants";
 import DeliveryContactModal from "@/components/delivery/DeliveryContactModal";
 import CopyButton from "@/components/CopyButton";
 import { Mail, Phone } from "lucide-react";
+import { formatPhoneDashed } from "@/lib/delivery/calls";
 import {
-  formatPhoneDisplay,
   holdUntilDayLabel,
   myWorkContactLine,
 } from "@/lib/delivery/contacts";
@@ -279,7 +279,7 @@ export default function MyWorkPage() {
                               data-testid={`my-work-phone-${r.journey_id}`}
                               className="font-medium text-slate-700"
                             >
-                              {formatPhoneDisplay(r.customer_phone)}
+                              {formatPhoneDashed(r.customer_phone)}
                             </span>
                           </span>
                         )}

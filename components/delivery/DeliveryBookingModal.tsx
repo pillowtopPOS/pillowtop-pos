@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Phone } from "lucide-react";
 import Modal from "@/components/Modal";
 import DeliveryContactPanel from "@/components/delivery/DeliveryContactPanel";
-import { formatPhoneDisplay } from "@/lib/delivery/contacts";
+import { formatPhoneDashed } from "@/lib/delivery/calls";
 import {
   bookDeliveryStop,
   fetchDeliveryBookInsideCutoff,
@@ -321,7 +321,7 @@ export default function DeliveryBookingModal({
                 <p className="mt-0.5 flex items-center gap-1.5 text-sm text-slate-700">
                   <Phone className="h-4 w-4 shrink-0 text-slate-400" />
                   <span className="font-medium">
-                    {formatPhoneDisplay(customerPhone)}
+                    {formatPhoneDashed(customerPhone)}
                   </span>
                 </p>
               )}

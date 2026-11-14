@@ -3,12 +3,12 @@
 import { useEffect, useState } from "react";
 import Modal from "@/components/Modal";
 import { Phone } from "lucide-react";
+import { formatPhoneDashed } from "@/lib/delivery/calls";
 import {
   CONTACT_OUTCOMES,
   HOLD_OUTCOMES,
   addDaysToISODate,
   contactWhenLabel,
-  formatPhoneDisplay,
   getDeliveryContactHistory,
   getDeliveryContactHoldDaysCached,
   localTodayISO,
@@ -156,7 +156,7 @@ export default function DeliveryContactModal({
           <p className="mt-1 flex items-center gap-1.5 text-sm text-slate-700">
             <Phone className="h-4 w-4 shrink-0 text-slate-400" />
             <span className="font-medium">
-              {formatPhoneDisplay(customerPhone)}
+              {formatPhoneDashed(customerPhone)}
             </span>
           </p>
         )}

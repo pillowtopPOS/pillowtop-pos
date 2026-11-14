@@ -141,7 +141,9 @@ export default function DeliveryContactPanel({
                   className="text-xs text-slate-500"
                   data-testid="contact-panel-last"
                 >
-                  No calls logged yet.
+                  {confirmations.length > 0 && scheduling.length === 0
+                    ? "No scheduling calls yet."
+                    : "No calls logged yet."}
                 </p>
               )}
 
@@ -175,34 +177,30 @@ export default function DeliveryContactPanel({
             >
               {bothKinds ? (
                 <>
-                  {confirmations.some((h) => visibleSet.has(h)) && (
-                    <div>
-                      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                        Night-before confirmations
-                      </p>
-                      <ul className="space-y-1.5">
-                        {confirmations
-                          .filter((h) => visibleSet.has(h))
-                          .map((h, i) => (
-                            <HistoryEntry key={entryKey(h, i)} h={h} />
-                          ))}
-                      </ul>
-                    </div>
-                  )}
-                  {scheduling.some((h) => visibleSet.has(h)) && (
-                    <div>
-                      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                        Scheduling contacts
-                      </p>
-                      <ul className="space-y-1.5">
-                        {scheduling
-                          .filter((h) => visibleSet.has(h))
-                          .map((h, i) => (
-                            <HistoryEntry key={entryKey(h, i)} h={h} />
-                          ))}
-                      </ul>
-                    </div>
-                  )}
+                  <div>
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                      Night-before confirmations
+                    </p>
+                    <ul className="space-y-1.5">
+                      {confirmations
+                        .filter((h) => visibleSet.has(h))
+                        .map((h, i) => (
+                          <HistoryEntry key={entryKey(h, i)} h={h} />
+                        ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                      Scheduling contacts
+                    </p>
+                    <ul className="space-y-1.5">
+                      {scheduling
+                        .filter((h) => visibleSet.has(h))
+                        .map((h, i) => (
+                          <HistoryEntry key={entryKey(h, i)} h={h} />
+                        ))}
+                    </ul>
+                  </div>
                 </>
               ) : (
                 <ul className="space-y-1.5">

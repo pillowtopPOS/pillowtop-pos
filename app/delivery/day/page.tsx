@@ -25,6 +25,7 @@ import {
   type DeliverySettings,
   type DeliveryStopWindowInput,
 } from "@/lib/delivery/queries";
+import { confirmationDayLabel, formatPhoneDashed } from "@/lib/delivery/calls";
 import {
   fillMissingWindows,
   minutesToLabel,
@@ -808,7 +809,7 @@ function DeliveryDayInner() {
           </div>
           <div className="text-xs text-slate-500">
             {s.delivery_address ?? "No address"}
-            {s.phone ? ` · ${s.phone}` : ""}
+            {s.phone ? ` · ${formatPhoneDashed(s.phone)}` : ""}
             {s.booked_by_name ? ` · booked by ${s.booked_by_name}` : ""}
           </div>
           {showWindows &&
@@ -1106,7 +1107,7 @@ function DeliveryDayInner() {
                   <li key={r.stop_id}>
                     {r.customer_name} ({r.journey_number ?? "order"}){" "}
                     {r.reason_kind === "moved"
-                      ? `was moved to ${r.moved_to_date ?? "another day"}.`
+                      ? `was moved to ${r.moved_to_date ? confirmationDayLabel(r.moved_to_date) : "another day"}.`
                       : `was released${r.cancel_reason ? `: ${r.cancel_reason}` : "."}`}
                   </li>
                 ))}
