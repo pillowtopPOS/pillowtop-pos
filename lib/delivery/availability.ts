@@ -173,6 +173,21 @@ export function openSlotLabel(
 }
 
 /**
+ * "Thu 6:47 PM" for a confirmation call's occurred_at timestamp, in
+ * the viewer's local time like the rest of the app. Null when the
+ * timestamp can't be parsed.
+ */
+export function confirmedStamp(occurredAt: string | null | undefined): string | null {
+  if (!occurredAt) return null;
+  const d = new Date(occurredAt);
+  if (Number.isNaN(d.getTime())) return null;
+  const h24 = d.getHours();
+  const suffix = h24 < 12 ? "AM" : "PM";
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return `${WEEKDAYS_SUN[d.getDay()]} ${h12}:${String(d.getMinutes()).padStart(2, "0")} ${suffix}`;
+}
+
+/**
  * The day the "Earliest" badge belongs on: the first loaded day on
  * or after the earliest bookable date that still has an open slot.
  * The earliest date itself can be Full, Closed or "No delivery" —

@@ -29,6 +29,7 @@ import {
   lastCallText,
   type ConfirmationCallStatus,
 } from "@/lib/delivery/calls";
+import { CONFIRMATION_CALLS_CHANGED_EVENT } from "@/lib/delivery/useConfirmationCallCount";
 
 function statusMeta(status: string) {
   return (
@@ -119,6 +120,12 @@ function CallsInner() {
 
   const refresh = () => {
     load(data?.date ?? null, scope);
+  };
+
+  // Tell every mounted badge (My Work banner, sidebar pill) that the
+  // to-call count may have changed — they refetch on this event.
+  const notifyCallsChanged = () => {
+    window.dispatchEvent(new Event(CONFIRMATION_CALLS_CHANGED_EVENT));
   };
 
   // Quiet background refetch on tab focus — no loading flash, no
@@ -372,6 +379,7 @@ function CallsInner() {
             setLogItem(null);
             setNotice(msg ?? null);
             refresh();
+            notifyCallsChanged();
           }}
           onPickNewDay={() => {
             // The call is already saved; hand off to the reschedule
@@ -403,12 +411,14 @@ function CallsInner() {
               setNotice("Call saved. The delivery was not moved.");
               refresh();
             }
+            notifyCallsChanged();
           }}
           onDone={async () => {
             movedRef.current = true;
             setBooking(null);
             setNotice("Delivery moved.");
             refresh();
+            notifyCallsChanged();
           }}
         />
       )}

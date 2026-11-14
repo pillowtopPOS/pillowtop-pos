@@ -26,6 +26,7 @@ import {
   type Employee,
   type Store,
 } from "@/lib/journeys/queries";
+import { useConfirmationCallCount } from "@/lib/delivery/useConfirmationCallCount";
 
 const HIDDEN_PATHS = ["/", "/login", "/logout", "/store-select"];
 
@@ -48,6 +49,7 @@ export default function Sidebar({
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [stores, setStores] = useState<Store[]>([]);
   const [workCount, setWorkCount] = useState(0);
+  const callCount = useConfirmationCallCount();
   const [activeStoreId, setActiveStoreId] = useState<string | null>(null);
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
@@ -233,6 +235,14 @@ export default function Sidebar({
                   ) : (
                     <span className="ml-auto rounded-full bg-brand-600 px-2 py-0.5 text-xs font-semibold text-white">
                       {workCount}
+                    </span>
+                  ))}
+                {item.href === "/delivery" && callCount.count > 0 &&
+                  (collapsed ? (
+                    <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-amber-500" />
+                  ) : (
+                    <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                      {callCount.count > 99 ? "99+" : callCount.count}
                     </span>
                   ))}
               </Link>

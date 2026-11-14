@@ -2,6 +2,7 @@
 // Run: node scripts/test_delivery_slots.ts
 import {
   addDaysISO,
+  confirmedStamp,
   cutoffMinutes,
   cutoffNoteLine,
   earliestBookableDate,
@@ -151,6 +152,18 @@ check(
   null
 );
 check("badge null earliest", firstOpenDayOnOrAfter(null, [day("2026-11-15", 10, 1)]), null);
+
+// --- confirmedStamp ---
+// 2026-11-13 is a Friday; 18:47 local -> "Fri 6:47 PM".
+check(
+  "confirmed stamp",
+  confirmedStamp(new Date(2026, 10, 13, 18, 47).toISOString()),
+  "Fri 6:47 PM"
+);
+check("confirmed stamp midnight", confirmedStamp(new Date(2026, 10, 13, 0, 5).toISOString()), "Fri 12:05 AM");
+check("confirmed stamp noon", confirmedStamp(new Date(2026, 10, 13, 12, 0).toISOString()), "Fri 12:00 PM");
+check("confirmed stamp bad", confirmedStamp("not-a-date"), null);
+check("confirmed stamp null", confirmedStamp(null), null);
 
 // --- addDaysISO ---
 check("addDays month", addDaysISO("2026-11-30", 1), "2026-12-01");

@@ -11,6 +11,8 @@ import DeliveryContactModal from "@/components/delivery/DeliveryContactModal";
 import CopyButton from "@/components/CopyButton";
 import { Mail, Phone } from "lucide-react";
 import { formatPhoneDashed } from "@/lib/delivery/calls";
+import { confirmationDayLabel } from "@/lib/delivery/calls";
+import { useConfirmationCallCount } from "@/lib/delivery/useConfirmationCallCount";
 import {
   holdUntilDayLabel,
   myWorkContactLine,
@@ -26,6 +28,7 @@ export default function MyWorkPage() {
 
   const [pageError, setPageError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const callCount = useConfirmationCallCount();
 
   useEffect(() => {
     const supabase = createClient();
@@ -492,6 +495,26 @@ export default function MyWorkPage() {
           </Link>
         </div>
       </header>
+
+      {callCount.count > 0 && (
+        <div
+          data-testid="my-work-call-banner"
+          className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3"
+        >
+          <p className="text-sm font-medium text-amber-900">
+            {callCount.count === 1
+              ? "1 customer to call"
+              : `${callCount.count} customers to call`}
+            {callCount.date ? ` for ${confirmationDayLabel(callCount.date)}` : ""}
+          </p>
+          <Link
+            href="/delivery/calls"
+            className="rounded-md border border-amber-300 bg-white px-3 py-1.5 text-sm font-medium text-amber-900 hover:bg-amber-100"
+          >
+            Open call list
+          </Link>
+        </div>
+      )}
 
       {loading && <p className="text-sm text-slate-500">Loading…</p>}
 

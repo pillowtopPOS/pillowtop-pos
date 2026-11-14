@@ -7,10 +7,16 @@ import DeliveryBookingModal from "@/components/delivery/DeliveryBookingModal";
 import DeliveryContactPanel from "@/components/delivery/DeliveryContactPanel";
 import {
   cancelDeliveryStop,
+  fetchDeliveryConfirmationList,
+  fetchDeliveryLogConfirmationCalls,
   fetchJourneyDelivery,
+  type ConfirmationCallListItem,
   type JourneyDelivery,
   type JourneyDeliveryEvent,
 } from "@/lib/delivery/queries";
+import { confirmedStamp } from "@/lib/delivery/availability";
+import { CONFIRMATION_CALLS_CHANGED_EVENT } from "@/lib/delivery/useConfirmationCallCount";
+import { timeStrToMinutes, windowLabel } from "@/lib/delivery/windows";
 import type { JourneyWithDetails } from "@/lib/journeys/queries";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -91,6 +97,11 @@ export default function JourneyDelivery({
   const [cancelBusy, setCancelBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Confirmation-call state for the active stop (window + status
+  // line). Only fetched for users with delivery.log_confirmation_calls.
+  const [canLogCalls, setCanLogCalls] = useState(false);
+  const [confRow, setConfRow] = useState<ConfirmationCallListItem | null>(null);
+  const [confDayMode, setConfDayMode] = useState("window");
 
   const isDelivery = journey.fulfillment_type === "delivery";
   const show =
@@ -117,6 +128,54 @@ export default function JourneyDelivery({
     setLoading(true);
     refresh().finally(() => setLoading(false));
   }, [show, refresh, journey.current_state]);
+
+  // Permission probe for the confirmation lines — once per panel.
+  useEffect(() => {
+    if (!show) return;
+    let alive = true;
+    fetchDeliveryLogConfirmationCalls()
+      .then((ok) => {
+        if (alive) setCanLogCalls(ok);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [show]);
+
+  const activeStopId = delivery?.active_stop?.id ?? null;
+  const activeStopDate = delivery?.active_stop?.delivery_date ?? null;
+
+  // Window + confirmation state come from the same RPC the call list
+  // uses, scoped to the stop's own date. Refetches when a call is
+  // logged elsewhere (shared window event) or the stop changes.
+  useEffect(() => {
+    if (!show || !activeStopId || !activeStopDate || !canLogCalls) {
+      setConfRow(null);
+      return;
+    }
+    let alive = true;
+    const loadConf = () => {
+      fetchDeliveryConfirmationList(activeStopDate, "all")
+        .then((list) => {
+          if (!alive) return;
+          setConfDayMode(list.day_mode);
+          setConfRow(
+            list.items.find((i) => i.stop_id === activeStopId) ?? null
+          );
+        })
+        .catch(() => {});
+    };
+    loadConf();
+    window.addEventListener(CONFIRMATION_CALLS_CHANGED_EVENT, loadConf);
+    return () => {
+      alive = false;
+      window.removeEventListener(
+        CONFIRMATION_CALLS_CHANGED_EVENT,
+        loadConf
+      );
+    };
+  }, [show, activeStopId, activeStopDate, canLogCalls]);
 
   function flashNotice(text: string) {
     setNotice(text);
@@ -184,6 +243,7 @@ export default function JourneyDelivery({
 
   const stop = delivery?.active_stop ?? null;
   const latest = delivery?.history?.[0] ?? null;
+  const confStamp = confirmedStamp(confRow?.last_call?.occurred_at);
   const releasedBySystem =
     latest !== null &&
     latest.action === "CANCELLED" &&
@@ -240,6 +300,40 @@ export default function JourneyDelivery({
                 <p className="mt-0.5 text-xs text-amber-700">
                   Reason: {stop.override_reason}
                 </p>
+              )}
+              {canLogCalls && confRow && (
+                <>
+                  {confDayMode !== "day_only" &&
+                    confRow.window_start &&
+                    confRow.window_end && (
+                      <p
+                        className="mt-0.5 text-xs text-slate-600"
+                        data-testid="delivery-window-line"
+                      >
+                        Window{" "}
+                        {windowLabel(
+                          timeStrToMinutes(confRow.window_start),
+                          timeStrToMinutes(confRow.window_end)
+                        )}
+                      </p>
+                    )}
+                  <p
+                    className={`mt-0.5 text-xs ${
+                      confRow.status === "confirmed_window_changed"
+                        ? "text-amber-700"
+                        : confRow.status === "confirmed"
+                          ? "text-emerald-700"
+                          : "text-slate-500"
+                    }`}
+                    data-testid="delivery-confirmation-line"
+                  >
+                    {confRow.status === "confirmed"
+                      ? `Confirmed${confStamp ? ` ${confStamp}` : ""}`
+                      : confRow.status === "confirmed_window_changed"
+                        ? "Window changed since confirmed"
+                        : "Not confirmed yet"}
+                  </p>
+                </>
               )}
               <div className="mt-2 flex gap-2">
                 <button
