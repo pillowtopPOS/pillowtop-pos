@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
+import { describeError } from "@/lib/utils";
 import type { SleepJourneyState } from "@/lib/constants";
 import type { JourneyEventType } from "./state";
 import type { OpenExchangeWork } from "./exchange";
@@ -267,7 +268,7 @@ export async function fetchJourneyEvents(journeyId: string): Promise<JourneyEven
     .order("created_at", { ascending: true });
 
   if (error) {
-    console.error("fetchJourneyEvents error", error);
+    console.error(`fetchJourneyEvents error: ${describeError(error)}`);
     return [];
   }
 
@@ -291,7 +292,7 @@ export async function fetchJourneyById(
     .maybeSingle();
 
   if (error) {
-    console.error("fetchJourneyById error", error);
+    console.error(`fetchJourneyById error: ${describeError(error)}`);
     return null;
   }
 
@@ -316,7 +317,7 @@ export async function fetchJourneyReassignments(
     .order("created_at", { ascending: false });
 
   if (error) {
-    console.error("fetchJourneyReassignments error", error);
+    console.error(`fetchJourneyReassignments error: ${describeError(error)}`);
     return [];
   }
 
@@ -389,7 +390,7 @@ export async function fetchJourneyFollowUps(journeyId: string): Promise<FollowUp
     .order("due_at", { ascending: true });
 
   if (error) {
-    console.error("fetchJourneyFollowUps error", error);
+    console.error(`fetchJourneyFollowUps error: ${describeError(error)}`);
     return [];
   }
 

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
+import { describeError } from "@/lib/utils";
 import {
   explainSleepTrialReason,
   sleepTrialReasonLabel,
@@ -130,7 +131,7 @@ export async function evaluateSleepTrialItems(
   if (error) {
     // A missing/failed evaluation must degrade silently on the board —
     // cards simply render no trial chip (spec failure contract).
-    console.error("evaluate_sleep_trial_items error", error);
+    console.error(`evaluate_sleep_trial_items error: ${describeError(error)}`);
     return map;
   }
   for (const row of (data as unknown as SleepTrialEvaluation[]) ?? []) {

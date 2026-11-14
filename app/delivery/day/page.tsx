@@ -999,7 +999,11 @@ function DeliveryDayInner() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6" data-testid="delivery-day-page">
+    <div
+      className="notranslate mx-auto max-w-6xl px-4 py-6"
+      translate="no"
+      data-testid="delivery-day-page"
+    >
       <div className="mb-4">
         <Link
           href="/delivery"

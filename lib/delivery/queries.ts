@@ -687,6 +687,40 @@ export async function fetchDeliveryLogConfirmationCalls(): Promise<boolean> {
   return data === true;
 }
 
+/** Pop-up feed (m139): eligibility, the call-list day, whether the
+ *  route is closed, and open-call counts. Null-safe defaults; throws
+ *  on RPC error so callers can stay silent when m139 is not installed. */
+export async function fetchDeliveryCallAlert(): Promise<{
+  eligible: boolean;
+  date: string | null;
+  route_closed: boolean;
+  team_open: number;
+  my_open: number;
+  total_stops: number;
+}> {
+  const supabase = createClient();
+  const { data, error } = await (supabase as any).rpc(
+    "get_delivery_call_alert"
+  );
+  if (error) throw new Error(error.message);
+  const d = data as {
+    eligible?: boolean;
+    date?: string | null;
+    route_closed?: boolean;
+    team_open?: number;
+    my_open?: number;
+    total_stops?: number;
+  } | null;
+  return {
+    eligible: d?.eligible === true,
+    date: d?.date ?? null,
+    route_closed: d?.route_closed === true,
+    team_open: d?.team_open ?? 0,
+    my_open: d?.my_open ?? 0,
+    total_stops: d?.total_stops ?? 0,
+  };
+}
+
 /** Log one confirmation call. The idempotency key makes retries safe:
  *  the same key returns the already-written row instead of doubling. */
 export async function logDeliveryConfirmation(input: {
