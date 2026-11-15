@@ -487,18 +487,33 @@ export default function JourneyDelivery({
               : dayLabel(activeStopDate)
           }
           onClose={() => setLogCallOpen(false)}
-          onSaved={(msg) => {
+          onSaved={async (msg) => {
             setLogCallOpen(false);
             // The shared event refetches the status line above and
             // every badge (My Work, sidebar pill, pop-up).
             window.dispatchEvent(new Event(CONFIRMATION_CALLS_CHANGED_EVENT));
             flashNotice(msg ?? "Confirmation call logged.");
+            // Refresh the journey so the activity feed shows the new
+            // interaction. A reload failure must not break the flow.
+            try {
+              await onChanged();
+            } catch {
+              // Keep the notice; the timeline catches up on reopen.
+            }
           }}
-          onPickNewDay={() => {
+          onPickNewDay={async () => {
             // Call already saved; refresh badges/status line, then
             // hand off to the reschedule window like the call list.
             window.dispatchEvent(new Event(CONFIRMATION_CALLS_CHANGED_EVENT));
             setLogCallOpen(false);
+            // onChanged cannot unmount this component (the workspace
+            // is keyed by journey.id), so awaiting it here cannot lose
+            // the reschedule window opened next.
+            try {
+              await onChanged();
+            } catch {
+              // Still open the reschedule window below.
+            }
             setBooking("reschedule");
           }}
         />
