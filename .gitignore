@@ -145,3 +145,6 @@ vite.config.ts.timestamp-*
 
 # macOS
 .DS_Store
+
+# Production verification build output
+.next-prod/
