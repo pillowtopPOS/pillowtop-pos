@@ -14,6 +14,9 @@
 --      resolution. Returns store_open (the active store's unconfirmed
 --      count) plus store_id and store_name. team_open/my_open are
 --      removed; store_open replaces them.
+--   3. The "next delivery date" is chosen per scope, not company-wide:
+--      'store' picks the earliest day that store has a booked stop,
+--      and the available_dates chips list only that scope's days.
 --
 -- Store access rule: there is no employee-store access table in this
 -- schema. selectableStores (lib/journeys/queries.ts) is a client-side
@@ -28,6 +31,7 @@
 -- ============================================================================
 
 drop function if exists public.get_delivery_confirmation_list(date, text);
+drop function if exists public.get_delivery_confirmation_list(date, text, uuid);
 
 create function public.get_delivery_confirmation_list(
   p_date date default null,
@@ -98,11 +102,15 @@ begin
   v_tomorrow := public.delivery_company_today() + 1;
 
   if p_date is null then
+    -- Earliest day THIS scope has a booked stop: a store with no
+    -- stops on the company's next day must not be shown that day.
     select min(ds.delivery_date) into v_date
     from public.delivery_stops ds
+    join public.sleep_journeys sj on sj.id = ds.journey_id
     where ds.company_id = v_company_id
       and ds.status = 'BOOKED'
-      and ds.delivery_date >= v_tomorrow;
+      and ds.delivery_date >= v_tomorrow
+      and (p_scope = 'all' or sj.store_id = v_store_id);
   else
     v_date := p_date;
   end if;
@@ -114,9 +122,11 @@ begin
   from (
     select ds.delivery_date, count(*) as n
     from public.delivery_stops ds
+    join public.sleep_journeys sj on sj.id = ds.journey_id
     where ds.company_id = v_company_id
       and ds.status = 'BOOKED'
       and ds.delivery_date >= v_tomorrow
+      and (p_scope = 'all' or sj.store_id = v_store_id)
     group by ds.delivery_date
     order by ds.delivery_date
     limit 7
@@ -282,6 +292,7 @@ grant execute on function public.get_delivery_confirmation_list(date, text, uuid
 -- ============================================================================
 
 drop function if exists public.get_delivery_call_alert();
+drop function if exists public.get_delivery_call_alert(uuid);
 
 create function public.get_delivery_call_alert(p_store_id uuid default null)
 returns jsonb
@@ -295,7 +306,6 @@ declare
   v_company_id uuid;
   v_store_id uuid;
   v_store_name text;
-  v_all jsonb;
   v_store_list jsonb;
   v_date date;
   v_store_open integer := 0;
@@ -336,12 +346,11 @@ begin
     where st.id = v_store_id;
   end if;
 
-  -- The list RPCs pick the date themselves and are already scoped to
-  -- the caller's company, so there is exactly one date rule.
-  v_all := public.get_delivery_confirmation_list(null, 'all');
+  -- The store list picks its own date (earliest day this store has a
+  -- booked stop), already scoped to the caller's company.
   v_store_list := public.get_delivery_confirmation_list(null, 'store', v_store_id);
 
-  v_date := nullif(v_all ->> 'date', '')::date;
+  v_date := nullif(v_store_list ->> 'date', '')::date;
 
   if v_date is not null then
     select count(*) into v_store_open
