@@ -61,6 +61,23 @@ export function decideCallAlert(
   return reminderDue ? "reminder" : "hidden";
 }
 
+/**
+ * TTL rule for the last-call context cache in CallAlert: reuse only
+ * a fresh, valid result. `hasValidResult` is false when the fetch
+ * ran without a signed-in user or came back without a timezone, so
+ * those are never reused and the next check refetches.
+ */
+export function shouldReuseLastCallContext(
+  cachedAt: number | null,
+  now: number,
+  ttlMs: number,
+  hasValidResult: boolean
+): boolean {
+  return (
+    hasValidResult && cachedAt !== null && now - cachedAt < ttlMs
+  );
+}
+
 export function alertStorageKey(userId: string, date: string): string {
   return `delivery-call-alert:${userId}:${date}`;
 }

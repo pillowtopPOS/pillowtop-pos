@@ -4,6 +4,7 @@ import {
   alertStorageKey,
   decideCallAlert,
   readCallAlertSuppression,
+  shouldReuseLastCallContext,
   writeCallAlertSuppression,
   type CallAlertState,
 } from "../lib/delivery/alert.ts";
@@ -136,6 +137,39 @@ check(
   "next day after last call -> reminder again",
   decideCallAlert(base, NEXT_LAST + 1, { kind: "dismissed", count: 4, createdAt: LAST - 1 }, NEXT_LAST),
   "reminder"
+);
+
+// --- last-call context TTL cache ---
+const TTL = 5 * 60_000;
+check(
+  "fresh valid result reused",
+  shouldReuseLastCallContext(NOW, NOW + 1000, TTL, true),
+  true
+);
+check(
+  "fresh result at ttl boundary refetched",
+  shouldReuseLastCallContext(NOW, NOW + TTL, TTL, true),
+  false
+);
+check(
+  "expired result refetched",
+  shouldReuseLastCallContext(NOW, NOW + TTL + 1, TTL, true),
+  false
+);
+check(
+  "invalid result never reused",
+  shouldReuseLastCallContext(NOW, NOW + 1000, TTL, false),
+  false
+);
+check(
+  "no cache refetched",
+  shouldReuseLastCallContext(null, NOW, TTL, true),
+  false
+);
+check(
+  "no cache invalid refetched",
+  shouldReuseLastCallContext(null, NOW, TTL, false),
+  false
 );
 
 // --- date changes -> suppression is keyed per date ---

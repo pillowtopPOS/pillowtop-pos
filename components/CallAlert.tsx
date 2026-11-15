@@ -20,6 +20,7 @@ import {
   alertStorageKey,
   decideCallAlert,
   readCallAlertSuppression,
+  shouldReuseLastCallContext,
   writeCallAlertSuppression,
   type CallAlertState,
   type CallAlertSuppression,
@@ -31,6 +32,7 @@ const HIDE_PATHS = ["/", "/login", "/logout", "/store-select"];
 const FOCUS_THROTTLE_MS = 15_000;
 const POLL_MS = 60_000;
 const SNOOZE_MS = 15 * 60_000;
+const LAST_CALL_TTL_MS = 5 * 60_000;
 
 // `alertOpen` = this pop-up's own Modal is mounted. While it is NOT
 // open, any shared Modal counts as busy; while it IS open, only
@@ -66,24 +68,38 @@ export default function CallAlert() {
   const sessionRef = useRef<Promise<string | null> | null>(null);
   const lastCheckRef = useRef(0);
   const missingLoggedRef = useRef(false);
-  // Company timezone + last-call time, fetched once and shared so
-  // runCheck can await it. Both fail soft: no timezone or no m140
-  // column means the reminder simply stays off.
-  const lastCallRef = useRef<Promise<{
-    timezone: string | null;
-    last_call_time: string | null;
-  } | null> | null>(null);
-  const getLastCallContext = useCallback(() => {
-    if (!lastCallRef.current) {
-      lastCallRef.current = Promise.all([
-        fetchDeliveryCutoffContext().catch(() => null),
-        fetchDeliveryLastCallTime().catch(() => null),
-      ]).then(([ctx, lc]) => ({
-        timezone: ctx?.timezone ?? null,
-        last_call_time: lc?.last_call_time ?? null,
-      }));
+  // Company timezone + last-call time with a short TTL, so a sign-in
+  // or a settings change is picked up without a page reload. Results
+  // without a timezone (signed out, unresolved employee) are never
+  // cached; a valid result with last_call_time null (feature off) is.
+  const lastCallRef = useRef<{
+    at: number;
+    value: { timezone: string | null; last_call_time: string | null };
+  } | null>(null);
+  const getLastCallContext = useCallback(async () => {
+    const cached = lastCallRef.current;
+    if (
+      cached &&
+      shouldReuseLastCallContext(
+        cached.at,
+        Date.now(),
+        LAST_CALL_TTL_MS,
+        cached.value.timezone != null
+      )
+    ) {
+      return cached.value;
     }
-    return lastCallRef.current;
+    const [ctx, lc] = await Promise.all([
+      fetchDeliveryCutoffContext().catch(() => null),
+      fetchDeliveryLastCallTime().catch(() => null),
+    ]);
+    const value = {
+      timezone: ctx?.timezone ?? null,
+      last_call_time: lc?.last_call_time ?? null,
+    };
+    lastCallRef.current =
+      value.timezone !== null ? { at: Date.now(), value } : null;
+    return value;
   }, []);
   // The alert's own open state, readable inside runCheck without a
   // stale closure (runCheck is created once).
@@ -206,7 +222,6 @@ export default function CallAlert() {
 
   useEffect(() => {
     void getUserId();
-    void getLastCallContext();
     void runCheck(false);
 
     const onFocus = () => void runCheck(true);
