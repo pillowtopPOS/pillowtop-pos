@@ -34,6 +34,7 @@ import {
   fetchDeliveryContactHoldDays,
   setDeliveryContactHoldDays,
 } from "@/lib/delivery/contacts";
+import { lastCallValueToSave } from "@/lib/delivery/calls";
 
 // 15-minute time choices for the delivery day fields, 12h labels.
 const DAY_TIME_OPTIONS = Array.from({ length: 96 }, (_, i) => i * 15).map(
@@ -347,26 +348,27 @@ export default function CompanySettingsForm() {
 
   // Same save path as the cutoff: a direct companies update under the
   // m131 owner/admin policy, which covers every companies column
-  // including delivery_last_call_time. Blank saves null (feature off).
-  async function changeLastCallTime(): Promise<boolean> {
+  // including delivery_last_call_time. The value to save is passed in
+  // explicitly — reading lastCallOff/lastCallTime here would see the
+  // render closure, not the checkbox tick that triggered this call.
+  // Blank saves null (feature off).
+  async function changeLastCallTime(nextValue: string | null): Promise<boolean> {
     if (!companyId || lastCallSaving || !canEditPermissions) return false;
     setLastCallError(null);
     setLastCallSaving(true);
     const supabase = createClient();
     const { error } = await (supabase as any)
       .from("companies")
-      .update({
-        delivery_last_call_time: lastCallOff || !lastCallTime ? null : lastCallTime,
-      })
+      .update({ delivery_last_call_time: nextValue })
       .eq("id", companyId);
     setLastCallSaving(false);
     if (error) {
       setLastCallError(error.message);
       return false;
     }
-    const saved = lastCallOff || !lastCallTime ? null : lastCallTime;
-    setLastCallSaved(saved);
-    setLastCallTime(saved ?? "");
+    setLastCallSaved(nextValue);
+    setLastCallTime(nextValue ?? "");
+    setLastCallOff(nextValue === null);
     return true;
   }
 
@@ -682,7 +684,7 @@ export default function CompanySettingsForm() {
                       // Ticking saves null immediately; failure reverts.
                       const prev = lastCallOff;
                       setLastCallOff(true);
-                      const ok = await changeLastCallTime();
+                      const ok = await changeLastCallTime(null);
                       if (!ok) setLastCallOff(prev);
                     }}
                     className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 disabled:opacity-50"
@@ -698,7 +700,9 @@ export default function CompanySettingsForm() {
                     lastCallSaving ||
                     (lastCallTime || "") === (lastCallSaved ?? "")
                   }
-                  onClick={changeLastCallTime}
+                  onClick={() =>
+                    changeLastCallTime(lastCallValueToSave(false, lastCallTime))
+                  }
                   className="mt-2 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
                 >
                   {lastCallSaving ? "Saving…" : "Save"}

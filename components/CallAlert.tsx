@@ -119,12 +119,18 @@ export default function CallAlert() {
   );
 
   // Session user id, fetched once and shared — runCheck awaits it so
-  // suppression is never read without the user it belongs to.
+  // suppression is never read without the user it belongs to. A null
+  // result (signed out, session still loading) is NOT cached: the ref
+  // resets so the next check retries the lookup.
   const getUserId = useCallback(() => {
     if (!sessionRef.current) {
       sessionRef.current = createClient()
         .auth.getSession()
-        .then(({ data: { session } }) => session?.user?.id ?? null);
+        .then(({ data: { session } }) => {
+          const id = session?.user?.id ?? null;
+          if (id === null) sessionRef.current = null;
+          return id;
+        });
     }
     return sessionRef.current;
   }, []);
@@ -143,14 +149,29 @@ export default function CallAlert() {
       // Never interrupt typing or talk over another modal; the next
       // scheduled check retries once they are gone.
       if (isBusyUi(openRef.current)) return;
+      // A check started on one page can finish after navigation; the
+      // path is re-verified after every await and right before the
+      // pop-up is opened so it can never appear on a hidden route.
+      const bailIfHidden = () => {
+        if (!hiddenPathRef.current) return false;
+        setOpen(false);
+        setReminder(false);
+        return true;
+      };
       try {
         userIdRef.current = await getUserId();
+        // Signed out (or session not resolved yet): never call the
+        // RPC — it would just log a permission error.
+        if (!userIdRef.current) return;
+        if (bailIfHidden()) return;
         const s = await fetchDeliveryCallAlert();
+        if (bailIfHidden()) return;
         setState(s);
         // Today's last-call moment in the company timezone, when the
         // m140 setting exists. Evaluated fresh on every check so a tab
         // left open across the checkpoint still fires once.
         const lc = await getLastCallContext();
+        if (bailIfHidden()) return;
         let lastCallAt: number | null = null;
         if (lc?.last_call_time && lc.timezone) {
           const z = zonedNow(new Date(now), lc.timezone);
@@ -168,6 +189,7 @@ export default function CallAlert() {
                 lastCallAt
               )
             : "hidden";
+        if (bailIfHidden()) return;
         setReminder(decision === "reminder");
         setOpen(decision !== "hidden");
       } catch (e) {

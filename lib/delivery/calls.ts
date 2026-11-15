@@ -151,6 +151,17 @@ export const CONFIRMATION_PILL_CLASSES: Record<ConfirmationPillTone, string> = {
   red: "bg-red-100 text-red-800",
 };
 
+/** What the Last call reminder setting should save: null turns the
+ *  feature off; a "HH:MM" string sets it. An empty time with the
+ *  toggle on also saves null (nothing to remind at). */
+export function lastCallValueToSave(
+  off: boolean,
+  time: string | null | undefined
+): string | null {
+  if (off || !time) return null;
+  return time;
+}
+
 /** Display-only phone formatting: a 10-digit US number (or 11 digits
  *  with a leading 1) shows as "303-555-0166"; anything else is shown
  *  exactly as stored. Never mutates the stored value. */

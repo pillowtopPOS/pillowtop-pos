@@ -495,8 +495,9 @@ export default function JourneyDelivery({
             flashNotice(msg ?? "Confirmation call logged.");
           }}
           onPickNewDay={() => {
-            // Call already saved; hand off to the reschedule window
-            // exactly like the call list does.
+            // Call already saved; refresh badges/status line, then
+            // hand off to the reschedule window like the call list.
+            window.dispatchEvent(new Event(CONFIRMATION_CALLS_CHANGED_EVENT));
             setLogCallOpen(false);
             setBooking("reschedule");
           }}

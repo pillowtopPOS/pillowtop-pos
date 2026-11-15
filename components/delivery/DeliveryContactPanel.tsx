@@ -16,6 +16,7 @@ import {
   type DeliveryContactEntry,
   type DeliveryContactHistory,
 } from "@/lib/delivery/contacts";
+import { CONFIRMATION_CALLS_CHANGED_EVENT } from "@/lib/delivery/useConfirmationCallCount";
 
 // Shared contact panel: last call, recent-contact notice, hold states,
 // quick "Log a call", and a short history across the customer's orders.
@@ -57,6 +58,17 @@ export default function DeliveryContactPanel({
   useEffect(() => {
     load();
   }, [load, reloadKey]);
+
+  // Confirmation calls logged elsewhere (call list, order card) bump
+  // the shared event; reload so the Night-before confirmations list
+  // and timeline show the new entry without a page refresh. This
+  // panel never dispatches the event itself, so there is no loop.
+  useEffect(() => {
+    const onChanged = () => setReloadKey((k) => k + 1);
+    window.addEventListener(CONFIRMATION_CALLS_CHANGED_EVENT, onChanged);
+    return () =>
+      window.removeEventListener(CONFIRMATION_CALLS_CHANGED_EVENT, onChanged);
+  }, []);
 
   const lc = data?.last_contact ?? null;
   const recentMin = data?.recent_contact_minutes ?? null;

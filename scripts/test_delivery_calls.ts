@@ -8,6 +8,7 @@ import {
   confirmationWindowText,
   formatPhoneDashed,
   lastCallText,
+  lastCallValueToSave,
   lastCallWhen,
 } from "../lib/delivery/calls.ts";
 
@@ -163,6 +164,14 @@ eq(formatPhoneDashed("+44 20 7946 0958"), "+44 20 7946 0958", "non-US as stored"
 eq(formatPhoneDashed(""), "", "empty stays empty");
 eq(formatPhoneDashed(null), "", "null stays empty");
 eq(formatPhoneDashed(undefined), "", "undefined stays empty");
+
+// ---- last call reminder save value -------------------------------------
+eq(lastCallValueToSave(true, "18:30"), null, "off with time -> null");
+eq(lastCallValueToSave(true, ""), null, "off with empty -> null");
+eq(lastCallValueToSave(true, null), null, "off with null -> null");
+eq(lastCallValueToSave(false, "18:30"), "18:30", "on with time -> time");
+eq(lastCallValueToSave(false, ""), null, "on with empty -> null");
+eq(lastCallValueToSave(false, null), null, "on with null -> null");
 
 console.log(failures === 0 ? "\nAll tests passed." : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);
