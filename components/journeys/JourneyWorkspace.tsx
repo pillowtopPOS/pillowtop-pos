@@ -1935,9 +1935,10 @@ export default function JourneyWorkspace({
               )}
               <JourneyDelivery
                 journey={journey}
-                onChanged={async () => {
-                  await onReassigned(journey.id);
-                }}
+                // Same path as every other panel action: refreshes the
+                // journey AND bumps activityRefreshKey so the feed
+                // shows interactions logged from the delivery card.
+                onChanged={handlePanelRefresh}
                 openBookingSignal={openBookingSignal}
               />
             </RailCard>
