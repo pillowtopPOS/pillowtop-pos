@@ -10,6 +10,7 @@ import {
   openSlotLabel,
   slotDayParts,
   zonedNow,
+  zonedTimeToUtcMs,
 } from "../lib/delivery/availability.ts";
 
 let failures = 0;
@@ -168,6 +169,47 @@ check("confirmed stamp null", confirmedStamp(null), null);
 // --- addDaysISO ---
 check("addDays month", addDaysISO("2026-11-30", 1), "2026-12-01");
 check("addDays negative", addDaysISO("2026-11-01", -1), "2026-10-31");
+
+// --- zonedTimeToUtcMs (last-call checkpoint math, m140) ---
+// 2026-11-16: Denver is MST (UTC-7), New York is EST (UTC-5).
+check(
+  "denver 18:30 -> 01:30Z next day",
+  zonedTimeToUtcMs("2026-11-16", 18 * 60 + 30, "America/Denver"),
+  Date.parse("2026-11-17T01:30:00Z")
+);
+check(
+  "new york 18:30 -> 23:30Z same day",
+  zonedTimeToUtcMs("2026-11-16", 18 * 60 + 30, "America/New_York"),
+  Date.parse("2026-11-16T23:30:00Z")
+);
+check(
+  "denver midnight -> 07:00Z",
+  zonedTimeToUtcMs("2026-11-16", 0, "America/Denver"),
+  Date.parse("2026-11-16T07:00:00Z")
+);
+check("no timezone -> null", zonedTimeToUtcMs("2026-11-16", 600, null), null);
+check(
+  "bad timezone -> null",
+  zonedTimeToUtcMs("2026-11-16", 600, "Not/AZone"),
+  null
+);
+check(
+  "bad date -> null",
+  zonedTimeToUtcMs("16-11-2026", 600, "America/Denver"),
+  null
+);
+check(
+  "minutes out of range -> null",
+  zonedTimeToUtcMs("2026-11-16", 24 * 60, "America/Denver"),
+  null
+);
+// Round-trip: the returned instant reads back as the same wall time.
+const rt = zonedTimeToUtcMs("2026-11-16", 18 * 60 + 30, "America/Denver");
+check(
+  "round trip wall time",
+  rt !== null ? zonedNow(new Date(rt), "America/Denver") : null,
+  { dateIso: "2026-11-16", minutes: 18 * 60 + 30 }
+);
 
 if (failures) {
   console.log(`\n${failures} FAILURES`);

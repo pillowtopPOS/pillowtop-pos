@@ -39,6 +39,8 @@ eq(
 );
 eq(CONFIRMATION_STATUS_META.left_voicemail.label, "Left voicemail", "voicemail label");
 eq(CONFIRMATION_STATUS_META.no_answer.label, "No answer", "no_answer label");
+eq(CONFIRMATION_STATUS_META.emailed.label, "Emailed", "emailed label");
+eq(CONFIRMATION_STATUS_META.emailed.tone, "grey", "emailed tone");
 eq(CONFIRMATION_STATUS_META.wrong_number.label, "Wrong number", "wrong_number label");
 eq(CONFIRMATION_STATUS_META.wrong_number.tone, "red", "wrong_number tone");
 eq(
@@ -51,11 +53,23 @@ eq(
   "amber",
   "needs_different_day tone"
 );
-eq(CONFIRMATION_OUTCOMES.length, 5, "five modal outcomes");
+eq(CONFIRMATION_OUTCOMES.length, 6, "six modal outcomes");
 eq(
   CONFIRMATION_OUTCOMES.map((o) => o.value),
-  ["confirmed", "left_voicemail", "no_answer", "wrong_number", "needs_different_day"],
-  "outcome values match m138 namespace"
+  [
+    "confirmed",
+    "left_voicemail",
+    "no_answer",
+    "emailed",
+    "wrong_number",
+    "needs_different_day",
+  ],
+  "outcome values match m140 namespace"
+);
+eq(
+  CONFIRMATION_OUTCOMES.find((o) => o.value === "emailed")?.label,
+  "Sent email",
+  "emailed outcome label"
 );
 
 // ---- date labels: no Date-shift ----------------------------------------
@@ -124,6 +138,11 @@ eq(
   "no by_name omits parens"
 );
 eq(lastCallText(null, NOW), null, "no call -> null");
+eq(
+  lastCallText({ outcome: "emailed", occurred_at: "2026-11-13T09:05:00", by_name: "Sam" }, NOW),
+  "Emailed, today 9:05 AM (Sam)",
+  "emailed last-call line"
+);
 eq(
   lastCallText({ outcome: null, occurred_at: null, by_name: "Sam" }, NOW),
   null,

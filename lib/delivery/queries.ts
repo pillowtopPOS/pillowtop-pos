@@ -451,6 +451,37 @@ export async function fetchDeliveryCutoffContext(): Promise<{
   };
 }
 
+/** The company-wide last-call reminder time (m140 column). Read with
+ *  a direct companies select like fetchDeliveryCutoffContext so any
+ *  active employee can read it. Returns null when the column does not
+ *  exist yet or the company cannot be resolved — callers treat that
+ *  as "feature off" and must not break. */
+export async function fetchDeliveryLastCallTime(): Promise<{
+  last_call_time: string | null;
+} | null> {
+  const employee = await fetchCurrentEmployee();
+  if (!employee?.home_store_id) return null;
+  const supabase = createClient();
+  const { data: store } = await supabase
+    .from("stores")
+    .select("company_id")
+    .eq("id", employee.home_store_id)
+    .maybeSingle();
+  const companyId = (store as { company_id?: string } | null)?.company_id;
+  if (!companyId) return null;
+  const { data: company, error } = await supabase
+    .from("companies")
+    .select("delivery_last_call_time")
+    .eq("id", companyId)
+    .maybeSingle();
+  if (error || !company) return null;
+  return {
+    last_call_time:
+      (company as { delivery_last_call_time?: string | null })
+        .delivery_last_call_time ?? null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // D1-c1: day plan — close and assign (migration 132)
 // ---------------------------------------------------------------------------

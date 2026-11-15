@@ -76,6 +76,68 @@ check(
   "hidden"
 );
 
+// --- last-call checkpoint (companies.delivery_last_call_time, m140) ---
+// LAST = today's last-call moment as epoch ms; NOW is before it.
+const LAST = NOW + 60_000;
+check(
+  "last call off: dismissed stays hidden",
+  decideCallAlert(base, LAST + 1000, { kind: "dismissed", count: 4, createdAt: NOW - 1000 }, null),
+  "hidden"
+);
+check(
+  "before last call: dismissed hidden",
+  decideCallAlert(base, LAST - 1, { kind: "dismissed", count: 4, createdAt: NOW - 1000 }, LAST),
+  "hidden"
+);
+check(
+  "after last call, older dismissed -> reminder",
+  decideCallAlert(base, LAST + 1, { kind: "dismissed", count: 4, createdAt: LAST - 1 }, LAST),
+  "reminder"
+);
+check(
+  "after last call, newer dismissed -> hidden",
+  decideCallAlert(base, LAST + 1, { kind: "dismissed", count: 4, createdAt: LAST + 1 }, LAST),
+  "hidden"
+);
+check(
+  "legacy record without createdAt -> reminder",
+  decideCallAlert(base, LAST + 1, { kind: "dismissed", count: 4 }, LAST),
+  "reminder"
+);
+check(
+  "snoozed past last call, created before -> reminder",
+  decideCallAlert(base, LAST + 1, { kind: "snoozed", count: 4, until: LAST + 30 * 60_000, createdAt: LAST - 1 }, LAST),
+  "reminder"
+);
+check(
+  "snoozed created after last call -> hidden",
+  decideCallAlert(base, LAST + 1, { kind: "snoozed", count: 4, until: LAST + 30 * 60_000, createdAt: LAST + 1 }, LAST),
+  "hidden"
+);
+check(
+  "count rise after last call shows normal text",
+  decideCallAlert({ ...base, team_open: 5 }, LAST + 1, { kind: "dismissed", count: 4, createdAt: LAST - 1 }, LAST),
+  "show"
+);
+check(
+  "no suppression after last call shows normal",
+  decideCallAlert(base, LAST + 1, null, LAST),
+  "show"
+);
+// Next day, before that day's last-call moment: yesterday's dismissal
+// does not fire the reminder early.
+const NEXT_LAST = LAST + 24 * 3600_000;
+check(
+  "next day before last call stays hidden",
+  decideCallAlert(base, NEXT_LAST - 1, { kind: "dismissed", count: 4, createdAt: LAST - 1 }, NEXT_LAST),
+  "hidden"
+);
+check(
+  "next day after last call -> reminder again",
+  decideCallAlert(base, NEXT_LAST + 1, { kind: "dismissed", count: 4, createdAt: LAST - 1 }, NEXT_LAST),
+  "reminder"
+);
+
 // --- date changes -> suppression is keyed per date ---
 check(
   "key includes user and date",

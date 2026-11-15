@@ -20,6 +20,7 @@ import {
   fetchCompanyWeekStart,
   fetchDeliveryCutoff,
   fetchDeliveryDaySettings,
+  fetchDeliveryLastCallTime,
   setCompanyWeekStart,
   setDeliveryDaySettings,
   type DeliverySettings,
@@ -119,6 +120,15 @@ export default function CompanySettingsForm() {
   const [cutoffCanEdit, setCutoffCanEdit] = useState(false);
   const [cutoffSaving, setCutoffSaving] = useState(false);
   const [cutoffError, setCutoffError] = useState<string | null>(null);
+  // delivery_last_call_time arrives with migration 140; hidden until
+  // the direct companies read succeeds. Saved via the same direct
+  // companies UPDATE as the cutoff (m131 owner/admin policy covers it).
+  const [lastCallSupported, setLastCallSupported] = useState(false);
+  const [lastCallTime, setLastCallTime] = useState("");
+  const [lastCallOff, setLastCallOff] = useState(true);
+  const [lastCallSaved, setLastCallSaved] = useState<string | null>(null);
+  const [lastCallSaving, setLastCallSaving] = useState(false);
+  const [lastCallError, setLastCallError] = useState<string | null>(null);
   // delivery_contact_hold_days arrives with migration 134; hidden until
   // the read RPC exists. Saved only via the Save button, never on change.
   const [holdSupported, setHoldSupported] = useState(false);
@@ -168,6 +178,17 @@ export default function CompanySettingsForm() {
         setCutoffNone(none);
         setCutoffTime(time);
         setCutoffSavedTime(d.cutoff_time ? time : null);
+      }
+    });
+    fetchDeliveryLastCallTime().then((d) => {
+      if (d === null) {
+        setLastCallSupported(false);
+      } else {
+        setLastCallSupported(true);
+        const t = d.last_call_time ? d.last_call_time.slice(0, 5) : "";
+        setLastCallTime(t);
+        setLastCallOff(t === "");
+        setLastCallSaved(t || null);
       }
     });
     fetchDeliveryContactHoldDays().then((d) => {
@@ -321,6 +342,31 @@ export default function CompanySettingsForm() {
     setCutoffTime(nextTime);
     setCutoffNone(nextNone);
     setCutoffSavedTime(nextNone ? null : nextTime);
+    return true;
+  }
+
+  // Same save path as the cutoff: a direct companies update under the
+  // m131 owner/admin policy, which covers every companies column
+  // including delivery_last_call_time. Blank saves null (feature off).
+  async function changeLastCallTime(): Promise<boolean> {
+    if (!companyId || lastCallSaving || !canEditPermissions) return false;
+    setLastCallError(null);
+    setLastCallSaving(true);
+    const supabase = createClient();
+    const { error } = await (supabase as any)
+      .from("companies")
+      .update({
+        delivery_last_call_time: lastCallOff || !lastCallTime ? null : lastCallTime,
+      })
+      .eq("id", companyId);
+    setLastCallSaving(false);
+    if (error) {
+      setLastCallError(error.message);
+      return false;
+    }
+    const saved = lastCallOff || !lastCallTime ? null : lastCallTime;
+    setLastCallSaved(saved);
+    setLastCallTime(saved ?? "");
     return true;
   }
 
@@ -596,6 +642,98 @@ export default function CompanySettingsForm() {
                 tomorrow. The clock is the timezone of the warehouse each
                 order ships from.
                 {!cutoffCanEdit && " Only owners and admins can change this."}
+              </p>
+            </div>
+          )}
+          {lastCallSupported && (
+            <div className="border-b border-slate-200 pb-4">
+              <span className="block text-sm font-medium text-slate-700">
+                Last call reminder
+              </span>
+              <div className="mt-2 flex items-center gap-3">
+                <input
+                  id="delivery-last-call-time"
+                  data-testid="delivery-last-call-time"
+                  type="time"
+                  value={lastCallTime}
+                  disabled={
+                    lastCallSaving || lastCallOff || !canEditPermissions
+                  }
+                  onChange={(e) => {
+                    if (e.target.value) setLastCallTime(e.target.value);
+                  }}
+                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm disabled:opacity-50"
+                />
+                <label className="flex items-center gap-2 text-sm text-slate-600">
+                  <input
+                    type="checkbox"
+                    data-testid="delivery-last-call-off"
+                    checked={lastCallOff}
+                    disabled={lastCallSaving || !canEditPermissions}
+                    onChange={async (e) => {
+                      const next = e.target.checked;
+                      if (!next) {
+                        // Unticking never saves by itself: restore the
+                        // last saved time and wait for Save.
+                        setLastCallOff(false);
+                        setLastCallTime(lastCallSaved ?? "17:00");
+                        return;
+                      }
+                      // Ticking saves null immediately; failure reverts.
+                      const prev = lastCallOff;
+                      setLastCallOff(true);
+                      const ok = await changeLastCallTime();
+                      if (!ok) setLastCallOff(prev);
+                    }}
+                    className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 disabled:opacity-50"
+                  />
+                  Turned off
+                </label>
+              </div>
+              {canEditPermissions && !lastCallOff && (
+                <button
+                  type="button"
+                  data-testid="delivery-last-call-save"
+                  disabled={
+                    lastCallSaving ||
+                    (lastCallTime || "") === (lastCallSaved ?? "")
+                  }
+                  onClick={changeLastCallTime}
+                  className="mt-2 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                >
+                  {lastCallSaving ? "Saving…" : "Save"}
+                </button>
+              )}
+              {lastCallSaving && (
+                <p className="mt-1 text-xs text-slate-400">Saving…</p>
+              )}
+              {lastCallError && (
+                <p className="mt-1 text-xs text-red-600">{lastCallError}</p>
+              )}
+              {(() => {
+                const lc = timeStrToMinutes(lastCallTime);
+                const cut = timeStrToMinutes(cutoffTime);
+                if (
+                  !lastCallOff &&
+                  lc !== null &&
+                  !cutoffNone &&
+                  cut !== null &&
+                  lc < cut
+                ) {
+                  return (
+                    <p className="mt-1 text-xs text-amber-700">
+                      This is earlier than the delivery cutoff, so the route
+                      may not be closed yet and the reminder will not show.
+                    </p>
+                  );
+                }
+                return null;
+              })()}
+              <p className="mt-1 text-xs text-slate-500">
+                Everyone who still has unconfirmed customers gets a reminder
+                at this time. Leave blank to turn off.
+                {!canEditPermissions &&
+                  " Only owners and admins can change this."}
               </p>
             </div>
           )}

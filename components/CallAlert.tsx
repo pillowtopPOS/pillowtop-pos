@@ -5,8 +5,17 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Modal, { isAnyModalOpen, openModalCount } from "@/components/Modal";
 import { createClient } from "@/lib/supabase/client";
-import { fetchDeliveryCallAlert } from "@/lib/delivery/queries";
+import {
+  fetchDeliveryCallAlert,
+  fetchDeliveryCutoffContext,
+  fetchDeliveryLastCallTime,
+} from "@/lib/delivery/queries";
 import { confirmationDayLabel } from "@/lib/delivery/calls";
+import {
+  cutoffMinutes,
+  zonedNow,
+  zonedTimeToUtcMs,
+} from "@/lib/delivery/availability";
 import {
   alertStorageKey,
   decideCallAlert,
@@ -21,7 +30,7 @@ import { describeError } from "@/lib/utils";
 const HIDE_PATHS = ["/", "/login", "/logout", "/store-select"];
 const FOCUS_THROTTLE_MS = 15_000;
 const POLL_MS = 60_000;
-const SNOOZE_MS = 30 * 60_000;
+const SNOOZE_MS = 15 * 60_000;
 
 // `alertOpen` = this pop-up's own Modal is mounted. While it is NOT
 // open, any shared Modal counts as busy; while it IS open, only
@@ -50,10 +59,32 @@ export default function CallAlert() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<CallAlertState | null>(null);
+  // True when the pop-up is showing because the daily last-call
+  // checkpoint overrode an older suppression ("second call" text).
+  const [reminder, setReminder] = useState(false);
   const userIdRef = useRef<string | null>(null);
   const sessionRef = useRef<Promise<string | null> | null>(null);
   const lastCheckRef = useRef(0);
   const missingLoggedRef = useRef(false);
+  // Company timezone + last-call time, fetched once and shared so
+  // runCheck can await it. Both fail soft: no timezone or no m140
+  // column means the reminder simply stays off.
+  const lastCallRef = useRef<Promise<{
+    timezone: string | null;
+    last_call_time: string | null;
+  } | null> | null>(null);
+  const getLastCallContext = useCallback(() => {
+    if (!lastCallRef.current) {
+      lastCallRef.current = Promise.all([
+        fetchDeliveryCutoffContext().catch(() => null),
+        fetchDeliveryLastCallTime().catch(() => null),
+      ]).then(([ctx, lc]) => ({
+        timezone: ctx?.timezone ?? null,
+        last_call_time: lc?.last_call_time ?? null,
+      }));
+    }
+    return lastCallRef.current;
+  }, []);
   // The alert's own open state, readable inside runCheck without a
   // stale closure (runCheck is created once).
   const openRef = useRef(false);
@@ -116,11 +147,29 @@ export default function CallAlert() {
         userIdRef.current = await getUserId();
         const s = await fetchDeliveryCallAlert();
         setState(s);
+        // Today's last-call moment in the company timezone, when the
+        // m140 setting exists. Evaluated fresh on every check so a tab
+        // left open across the checkpoint still fires once.
+        const lc = await getLastCallContext();
+        let lastCallAt: number | null = null;
+        if (lc?.last_call_time && lc.timezone) {
+          const z = zonedNow(new Date(now), lc.timezone);
+          const mins = cutoffMinutes(lc.last_call_time);
+          if (z && mins !== null) {
+            lastCallAt = zonedTimeToUtcMs(z.dateIso, mins, lc.timezone);
+          }
+        }
         const decision =
           s.date && s.eligible
-            ? decideCallAlert(s, Date.now(), suppressionFor(s.date))
+            ? decideCallAlert(
+                s,
+                now,
+                suppressionFor(s.date),
+                lastCallAt
+              )
             : "hidden";
-        setOpen(decision === "show");
+        setReminder(decision === "reminder");
+        setOpen(decision !== "hidden");
       } catch (e) {
         // m139 not installed yet or RPC error: stay silent, one log
         // line per page load, nothing else breaks.
@@ -130,11 +179,12 @@ export default function CallAlert() {
         }
       }
     },
-    [suppressionFor, getUserId]
+    [suppressionFor, getUserId, getLastCallContext]
   );
 
   useEffect(() => {
     void getUserId();
+    void getLastCallContext();
     void runCheck(false);
 
     const onFocus = () => void runCheck(true);
@@ -158,7 +208,7 @@ export default function CallAlert() {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener(CONFIRMATION_CALLS_CHANGED_EVENT, onChanged);
     };
-  }, [runCheck, getUserId]);
+  }, [runCheck, getUserId, getLastCallContext]);
 
   // Path changes re-evaluate immediately (e.g. navigating away from
   // /delivery/calls or onto a hidden route). The mount effect already
@@ -178,6 +228,7 @@ export default function CallAlert() {
       kind,
       count: state.team_open,
       until,
+      createdAt: Date.now(),
     });
     setOpen(false);
   }
@@ -201,12 +252,22 @@ export default function CallAlert() {
           id="call-alert-title"
           className="text-base font-semibold text-slate-900"
         >
-          Customers need confirmation calls
+          {reminder
+            ? "Customers still need confirmation"
+            : "Customers need confirmation calls"}
         </h2>
         <p className="mt-2 text-sm text-slate-600">
-          {team === 1
-            ? `1 customer still needs a call for ${dayLabel}.`
-            : `${team} customers still need a call for ${dayLabel}.`}
+          {reminder ? (
+            <>
+              {team === 1
+                ? "1 customer is still unconfirmed. Time for the second call."
+                : `${team} customers are still unconfirmed. Time for the second call.`}
+            </>
+          ) : team === 1 ? (
+            `1 customer still needs a call for ${dayLabel}.`
+          ) : (
+            `${team} customers still need a call for ${dayLabel}.`
+          )}
         </p>
         {mine > 0 && (
           <p className="mt-1 text-sm text-slate-500">
@@ -226,7 +287,7 @@ export default function CallAlert() {
             onClick={() => suppress("snoozed", Date.now() + SNOOZE_MS)}
             className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
-            Remind me in 30 minutes
+            Remind me in 15 minutes
           </button>
           <button
             type="button"

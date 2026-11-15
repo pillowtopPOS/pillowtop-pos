@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import Modal from "@/components/Modal";
 import DeliveryBookingModal from "@/components/delivery/DeliveryBookingModal";
 import DeliveryContactPanel from "@/components/delivery/DeliveryContactPanel";
+import ConfirmationCallModal from "@/components/delivery/ConfirmationCallModal";
+import { confirmationWindowText } from "@/lib/delivery/calls";
 import {
   cancelDeliveryStop,
   fetchDeliveryConfirmationList,
@@ -102,6 +104,7 @@ export default function JourneyDelivery({
   const [canLogCalls, setCanLogCalls] = useState(false);
   const [confRow, setConfRow] = useState<ConfirmationCallListItem | null>(null);
   const [confDayMode, setConfDayMode] = useState("window");
+  const [logCallOpen, setLogCallOpen] = useState(false);
 
   const isDelivery = journey.fulfillment_type === "delivery";
   const show =
@@ -331,9 +334,21 @@ export default function JourneyDelivery({
                       ? `Confirmed${confStamp ? ` ${confStamp}` : ""}`
                       : confRow.status === "confirmed_window_changed"
                         ? "Window changed since confirmed"
-                        : "Not confirmed yet"}
+                        : confRow.status === "emailed"
+                          ? `Emailed${confStamp ? ` ${confStamp}` : ""}`
+                          : "Not confirmed yet"}
                   </p>
                 </>
+              )}
+              {canLogCalls && stop && (
+                <button
+                  type="button"
+                  data-testid="delivery-log-call-open"
+                  onClick={() => setLogCallOpen(true)}
+                  className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Log confirmation call
+                </button>
               )}
               <div className="mt-2 flex gap-2">
                 <button
@@ -452,6 +467,39 @@ export default function JourneyDelivery({
           currentDate={stop?.delivery_date}
           onClose={() => setBooking(null)}
           onDone={handleBookingDone}
+        />
+      )}
+
+      {logCallOpen && stop && activeStopDate && (
+        <ConfirmationCallModal
+          journeyId={journey.id}
+          stopId={stop.id}
+          customerName={customerName}
+          customerPhone={journey.customer?.phone ?? null}
+          windowText={
+            confRow
+              ? confirmationWindowText(
+                  confDayMode,
+                  confRow.window_start,
+                  confRow.window_end,
+                  activeStopDate
+                )
+              : dayLabel(activeStopDate)
+          }
+          onClose={() => setLogCallOpen(false)}
+          onSaved={(msg) => {
+            setLogCallOpen(false);
+            // The shared event refetches the status line above and
+            // every badge (My Work, sidebar pill, pop-up).
+            window.dispatchEvent(new Event(CONFIRMATION_CALLS_CHANGED_EVENT));
+            flashNotice(msg ?? "Confirmation call logged.");
+          }}
+          onPickNewDay={() => {
+            // Call already saved; hand off to the reschedule window
+            // exactly like the call list does.
+            setLogCallOpen(false);
+            setBooking("reschedule");
+          }}
         />
       )}
 

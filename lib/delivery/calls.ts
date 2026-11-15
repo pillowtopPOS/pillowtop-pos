@@ -17,6 +17,7 @@ export type ConfirmationCallStatus =
   | "confirmed_window_changed"
   | "left_voicemail"
   | "no_answer"
+  | "emailed"
   | "wrong_number"
   | "needs_different_day";
 
@@ -34,16 +35,19 @@ export const CONFIRMATION_STATUS_META: Record<
   },
   left_voicemail: { label: "Left voicemail", tone: "grey" },
   no_answer: { label: "No answer", tone: "grey" },
+  emailed: { label: "Emailed", tone: "grey" },
   wrong_number: { label: "Wrong number", tone: "red" },
   needs_different_day: { label: "Needs a different day", tone: "amber" },
 };
 
-// The five outcomes the log-call modal offers, in display order.
-// Values are the CONFIRMATION contact_outcome namespace from m138.
+// The six outcomes the log-call modal offers, in display order.
+// Values are the CONFIRMATION contact_outcome namespace; 'emailed'
+// arrives with migration 140.
 export const CONFIRMATION_OUTCOMES = [
   { value: "confirmed", label: "Confirmed" },
   { value: "left_voicemail", label: "Left voicemail" },
   { value: "no_answer", label: "No answer" },
+  { value: "emailed", label: "Sent email" },
   { value: "wrong_number", label: "Wrong number" },
   { value: "needs_different_day", label: "Needs a different day" },
 ] as const;

@@ -14,33 +14,51 @@ export type CallAlertState = {
 };
 
 // One active suppression per user+date. "dismissed" hides until
-// team_open rises strictly above count; "snoozed" hides until `until`
-// (epoch ms) or until team_open rises above count, whichever first.
+// team_open rises strictly above count or the daily last-call
+// checkpoint arrives; "snoozed" hides until `until` (epoch ms) or
+// until team_open rises above count, whichever first. `createdAt`
+// (epoch ms) marks when the suppression was written; records saved
+// before it existed are treated as created before any last-call
+// moment, so the once-a-day reminder still reaches them.
 export type CallAlertSuppression = {
   kind: "dismissed" | "snoozed";
   count: number;
   until?: number;
+  createdAt?: number;
 };
 
+/**
+ * Show / reminder / hidden for the confirmation-call pop-up.
+ * `lastCallAt` is the epoch ms of today's company-timezone last-call
+ * moment (companies.delivery_last_call_time), or null when the
+ * feature is off. Once per day per user: a suppression created
+ * BEFORE that moment is ignored exactly once and the pop-up returns
+ * as "reminder"; acting on it writes a fresh suppression whose
+ * createdAt is at/after the moment, so normal rules resume and the
+ * reminder cannot loop.
+ */
 export function decideCallAlert(
   state: CallAlertState | null | undefined,
   now: number,
-  suppression: CallAlertSuppression | null | undefined
-): "show" | "hidden" {
+  suppression: CallAlertSuppression | null | undefined,
+  lastCallAt?: number | null
+): "show" | "reminder" | "hidden" {
   if (!state?.eligible || !state.date) return "hidden";
   if (!state.route_closed || state.team_open <= 0) return "hidden";
   const s = suppression ?? null;
-  if (s?.kind === "dismissed" && state.team_open <= s.count) {
-    return "hidden";
-  }
-  if (
-    s?.kind === "snoozed" &&
-    now < (s.until ?? 0) &&
-    state.team_open <= s.count
-  ) {
-    return "hidden";
-  }
-  return "show";
+  // A rising count always resurfaces the pop-up, whatever the kind.
+  const countRose = !!s && state.team_open > s.count;
+  const suppressed =
+    !!s &&
+    !countRose &&
+    (s.kind === "dismissed" ||
+      (s.kind === "snoozed" && now < (s.until ?? 0)));
+  if (!suppressed || !s) return "show";
+  const reminderDue =
+    lastCallAt != null &&
+    now >= lastCallAt &&
+    (s.createdAt == null || s.createdAt < lastCallAt);
+  return reminderDue ? "reminder" : "hidden";
 }
 
 export function alertStorageKey(userId: string, date: string): string {

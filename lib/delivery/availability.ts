@@ -92,6 +92,34 @@ export function zonedNow(
 }
 
 /**
+ * The UTC instant (epoch ms) of a wall-clock time on a YYYY-MM-DD date
+ * in `timezone`. Two offset passes so times near a DST change still
+ * land right. Null when the timezone or date is unusable.
+ */
+export function zonedTimeToUtcMs(
+  dateIso: string,
+  minutes: number,
+  timezone: string | null | undefined
+): number | null {
+  if (!timezone || !/^\d{4}-\d{2}-\d{2}$/.test(dateIso)) return null;
+  if (!Number.isFinite(minutes) || minutes < 0 || minutes >= 24 * 60) {
+    return null;
+  }
+  const wallUtc = Date.parse(`${dateIso}T00:00:00Z`) + minutes * 60_000;
+  const wallMsAt = (instantMs: number): number | null => {
+    const z = zonedNow(new Date(instantMs), timezone);
+    if (!z) return null;
+    return Date.parse(`${z.dateIso}T00:00:00Z`) + z.minutes * 60_000;
+  };
+  const first = wallMsAt(wallUtc);
+  if (first === null) return null;
+  const guess = wallUtc - (first - wallUtc);
+  const second = wallMsAt(guess);
+  if (second === null) return null;
+  return wallUtc - (second - guess);
+}
+
+/**
  * The earliest bookable delivery date for the company, computed the
  * same way as get_earliest_bookable_date: business today + 1, or
  * today + 2 once the cutoff time has passed in the company timezone.
