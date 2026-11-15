@@ -11,6 +11,7 @@ import {
   zonedNow,
   type DeliveryCutoffContext,
 } from "./availability";
+import { shouldReuseCachedContext } from "./alert";
 
 // Fired by /delivery/calls after a call is logged so every badge
 // refreshes immediately instead of waiting for the next poll.
@@ -19,6 +20,7 @@ export const CONFIRMATION_CALLS_CHANGED_EVENT =
 
 const FOCUS_THROTTLE_MS = 15_000;
 const POLL_MS = 5 * 60_000;
+const GATE_TTL_MS = 5 * 60_000;
 
 export type ConfirmationCallCount = {
   count: number;
@@ -41,6 +43,7 @@ const EMPTY: ConfirmationCallCount = { count: 0, date: null };
 export function useConfirmationCallCount(): ConfirmationCallCount {
   const [state, setState] = useState<ConfirmationCallCount>(EMPTY);
   const gateRef = useRef<{
+    at: number;
     canLog: boolean;
     ctx: DeliveryCutoffContext | null;
   } | null>(null);
@@ -50,13 +53,28 @@ export function useConfirmationCallCount(): ConfirmationCallCount {
     let alive = true;
 
     const ensureGate = async () => {
-      if (gateRef.current) return gateRef.current;
+      const cached = gateRef.current;
+      if (
+        cached &&
+        shouldReuseCachedContext(
+          cached.at,
+          Date.now(),
+          GATE_TTL_MS,
+          cached.ctx?.timezone != null
+        )
+      ) {
+        return cached;
+      }
       const [canLog, ctx] = await Promise.all([
         fetchDeliveryLogConfirmationCalls().catch(() => false),
         fetchDeliveryCutoffContext().catch(() => null),
       ]);
-      gateRef.current = { canLog, ctx };
-      return gateRef.current;
+      // Never cache a gate without a timezone: signed out or an
+      // unresolved employee would stay hidden until reload. A valid
+      // ctx with canLog false (no permission) is cached for the TTL.
+      gateRef.current =
+        ctx?.timezone != null ? { at: Date.now(), canLog, ctx } : null;
+      return { canLog, ctx };
     };
 
     // After the cutoff = cutoff time reached in the company timezone,

@@ -62,12 +62,13 @@ export function decideCallAlert(
 }
 
 /**
- * TTL rule for the last-call context cache in CallAlert: reuse only
- * a fresh, valid result. `hasValidResult` is false when the fetch
- * ran without a signed-in user or came back without a timezone, so
- * those are never reused and the next check refetches.
+ * TTL rule shared by the CallAlert last-call context cache and the
+ * confirmation-count gate cache: reuse only a fresh, valid result.
+ * `hasValidResult` is false when the fetch ran without a signed-in
+ * user or came back without a timezone, so those are never reused
+ * and the next check refetches.
  */
-export function shouldReuseLastCallContext(
+export function shouldReuseCachedContext(
   cachedAt: number | null,
   now: number,
   ttlMs: number,

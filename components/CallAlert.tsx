@@ -20,7 +20,7 @@ import {
   alertStorageKey,
   decideCallAlert,
   readCallAlertSuppression,
-  shouldReuseLastCallContext,
+  shouldReuseCachedContext,
   writeCallAlertSuppression,
   type CallAlertState,
   type CallAlertSuppression,
@@ -80,7 +80,7 @@ export default function CallAlert() {
     const cached = lastCallRef.current;
     if (
       cached &&
-      shouldReuseLastCallContext(
+      shouldReuseCachedContext(
         cached.at,
         Date.now(),
         LAST_CALL_TTL_MS,

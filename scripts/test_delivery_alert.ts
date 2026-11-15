@@ -4,7 +4,7 @@ import {
   alertStorageKey,
   decideCallAlert,
   readCallAlertSuppression,
-  shouldReuseLastCallContext,
+  shouldReuseCachedContext,
   writeCallAlertSuppression,
   type CallAlertState,
 } from "../lib/delivery/alert.ts";
@@ -139,36 +139,36 @@ check(
   "reminder"
 );
 
-// --- last-call context TTL cache ---
+// --- cached-context TTL helper (CallAlert + count gate) ---
 const TTL = 5 * 60_000;
 check(
   "fresh valid result reused",
-  shouldReuseLastCallContext(NOW, NOW + 1000, TTL, true),
+  shouldReuseCachedContext(NOW, NOW + 1000, TTL, true),
   true
 );
 check(
   "fresh result at ttl boundary refetched",
-  shouldReuseLastCallContext(NOW, NOW + TTL, TTL, true),
+  shouldReuseCachedContext(NOW, NOW + TTL, TTL, true),
   false
 );
 check(
   "expired result refetched",
-  shouldReuseLastCallContext(NOW, NOW + TTL + 1, TTL, true),
+  shouldReuseCachedContext(NOW, NOW + TTL + 1, TTL, true),
   false
 );
 check(
   "invalid result never reused",
-  shouldReuseLastCallContext(NOW, NOW + 1000, TTL, false),
+  shouldReuseCachedContext(NOW, NOW + 1000, TTL, false),
   false
 );
 check(
   "no cache refetched",
-  shouldReuseLastCallContext(null, NOW, TTL, true),
+  shouldReuseCachedContext(null, NOW, TTL, true),
   false
 );
 check(
   "no cache invalid refetched",
-  shouldReuseLastCallContext(null, NOW, TTL, false),
+  shouldReuseCachedContext(null, NOW, TTL, false),
   false
 );
 
