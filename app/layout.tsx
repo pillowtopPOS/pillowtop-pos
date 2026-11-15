@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
 import CallAlert from "@/components/CallAlert";
+import DomGuard from "@/components/DomGuard";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -25,6 +26,7 @@ export default function RootLayout({
       <body className="min-h-screen">
         <Sidebar>{children}</Sidebar>
         <CallAlert />
+        <DomGuard />
       </body>
     </html>
   );
