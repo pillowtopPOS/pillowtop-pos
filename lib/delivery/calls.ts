@@ -143,6 +143,37 @@ export function lastCallText(
   return `${label}, ${lastCallWhen(lastCall.occurred_at, now)}${who}`;
 }
 
+/**
+ * "Last call: Left voicemail by Sam yesterday 4:50 PM" — the
+ * who-logged-it line on a call-list row, so two reps in the same
+ * store can see a coworker already called. Null when no call logged.
+ */
+export function lastCallByText(
+  lastCall: LastCallInfo | null | undefined,
+  now: Date = new Date()
+): string | null {
+  if (!lastCall?.occurred_at) return null;
+  const outcome = lastCall.outcome as ConfirmationCallStatus | null;
+  const label =
+    (outcome && CONFIRMATION_STATUS_META[outcome]?.label) ?? "Call";
+  const who = lastCall.by_name ? ` by ${lastCall.by_name}` : "";
+  return `Last call: ${label}${who} ${lastCallWhen(lastCall.occurred_at, now)}`;
+}
+
+/**
+ * Which store the confirmation-call RPCs should be asked about:
+ * the session's active_store_id when set (picked at /store-select),
+ * otherwise the employee's home_store_id, otherwise null (the RPC
+ * then falls back to home_store_id itself, which covers callers that
+ * never loaded the employee record).
+ */
+export function resolveCallStoreId(
+  activeStoreId: string | null | undefined,
+  homeStoreId: string | null | undefined
+): string | null {
+  return activeStoreId ?? homeStoreId ?? null;
+}
+
 /** Status pill classes by tone — kept here so the page stays markup-only. */
 export const CONFIRMATION_PILL_CLASSES: Record<ConfirmationPillTone, string> = {
   grey: "bg-slate-100 text-slate-600",

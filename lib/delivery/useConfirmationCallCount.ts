@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  fetchConfirmationStoreId,
   fetchDeliveryConfirmationList,
   fetchDeliveryCutoffContext,
   fetchDeliveryLogConfirmationCalls,
@@ -33,8 +34,9 @@ const EMPTY: ConfirmationCallCount = { count: 0, date: null };
 /**
  * Shared "customers to call" count for the My Work banner and the
  * sidebar pill, so the two can never disagree. Counts items from
- * get_delivery_confirmation_list(null, 'mine') whose status is not
- * 'confirmed'. Shows nothing without delivery.log_confirmation_calls
+ * get_delivery_confirmation_list(null, 'store') whose status is not
+ * 'confirmed' — the active store's customers (m141). Shows nothing
+ * without delivery.log_confirmation_calls
  * or before the company cutoff (company timezone); with no cutoff
  * configured it stays hidden. Refreshes on mount, on tab focus /
  * visibility (15s throttle), every 5 minutes, and immediately on
@@ -44,6 +46,7 @@ export function useConfirmationCallCount(): ConfirmationCallCount {
   const [state, setState] = useState<ConfirmationCallCount>(EMPTY);
   const gateRef = useRef<{
     at: number;
+    storeId: string | null;
     canLog: boolean;
     ctx: DeliveryCutoffContext | null;
   } | null>(null);
@@ -52,10 +55,11 @@ export function useConfirmationCallCount(): ConfirmationCallCount {
   useEffect(() => {
     let alive = true;
 
-    const ensureGate = async () => {
+    const ensureGate = async (storeId: string | null) => {
       const cached = gateRef.current;
       if (
         cached &&
+        cached.storeId === storeId &&
         shouldReuseCachedContext(
           cached.at,
           Date.now(),
@@ -72,8 +76,12 @@ export function useConfirmationCallCount(): ConfirmationCallCount {
       // Never cache a gate without a timezone: signed out or an
       // unresolved employee would stay hidden until reload. A valid
       // ctx with canLog false (no permission) is cached for the TTL.
+      // The entry is keyed by storeId so a /store-select switch
+      // refetches immediately instead of reusing the old store's gate.
       gateRef.current =
-        ctx?.timezone != null ? { at: Date.now(), canLog, ctx } : null;
+        ctx?.timezone != null
+          ? { at: Date.now(), storeId, canLog, ctx }
+          : null;
       return { canLog, ctx };
     };
 
@@ -88,13 +96,21 @@ export function useConfirmationCallCount(): ConfirmationCallCount {
 
     const fetchCount = async () => {
       try {
-        const gate = await ensureGate();
+        // Fresh read every count: a /store-select switch must change
+        // the store scope without a reload.
+        const storeId = await fetchConfirmationStoreId();
+        if (!alive) return;
+        const gate = await ensureGate(storeId);
         if (!alive) return;
         if (!gate.canLog || !gate.ctx?.cutoff_time || !afterCutoff(gate.ctx)) {
           setState(EMPTY);
           return;
         }
-        const list = await fetchDeliveryConfirmationList(null, "mine");
+        const list = await fetchDeliveryConfirmationList(
+          null,
+          "store",
+          storeId
+        );
         if (!alive) return;
         const count = list.items.filter(
           (i) => i.status !== "confirmed"

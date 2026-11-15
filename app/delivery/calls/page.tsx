@@ -15,6 +15,7 @@ import JourneyPeek, {
 import ConfirmationCallModal from "@/components/delivery/ConfirmationCallModal";
 import DeliveryBookingModal from "@/components/delivery/DeliveryBookingModal";
 import {
+  fetchConfirmationStoreId,
   fetchDeliveryConfirmationList,
   fetchDeliveryLogConfirmationCalls,
   type ConfirmationCallList,
@@ -26,7 +27,7 @@ import {
   confirmationDayLabel,
   confirmationWindowText,
   formatPhoneDashed,
-  lastCallText,
+  lastCallByText,
   type ConfirmationCallStatus,
 } from "@/lib/delivery/calls";
 import { CONFIRMATION_CALLS_CHANGED_EVENT } from "@/lib/delivery/useConfirmationCallCount";
@@ -45,7 +46,10 @@ function CallsInner() {
   const searchParams = useSearchParams();
   const [allowed, setAllowed] = useState<boolean | null>(null);
   const [data, setData] = useState<ConfirmationCallList | null>(null);
-  const [scope, setScope] = useState<"mine" | "all">("mine");
+  const [scope, setScope] = useState<"store" | "all">("store");
+  // Resolved once on mount; the RPC falls back to home_store_id when
+  // null, matching fetchConfirmationStoreId's contract.
+  const storeIdRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [noAccess, setNoAccess] = useState(false);
@@ -65,12 +69,16 @@ function CallsInner() {
   } | null>(null);
   const loadSeq = useRef(0);
 
-  const load = useCallback(async (date: string | null, sc: "mine" | "all") => {
+  const load = useCallback(async (date: string | null, sc: "store" | "all") => {
     const seq = ++loadSeq.current;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchDeliveryConfirmationList(date, sc);
+      const res = await fetchDeliveryConfirmationList(
+        date,
+        sc,
+        storeIdRef.current
+      );
       if (seq !== loadSeq.current) return;
       setData(res);
     } catch (e) {
@@ -103,11 +111,11 @@ function CallsInner() {
       }
       // p_date null: the RPC picks the next delivery day and returns it
       // as `date`, which every later fetch reuses explicitly.
-      // ?scope=all opens the Everyone tab once (the call-alert pop-up
-      // links here when nothing is mine); plain visits still default
-      // to Mine.
+      // ?scope=all opens the All stores tab once; plain visits still
+      // default to My store.
+      storeIdRef.current = await fetchConfirmationStoreId();
       const initialScope =
-        searchParams.get("scope") === "all" ? "all" : "mine";
+        searchParams.get("scope") === "all" ? "all" : "store";
       setScope(initialScope);
       load(null, initialScope);
     });
@@ -119,7 +127,7 @@ function CallsInner() {
     load(iso, scope);
   };
 
-  const pickScope = (sc: "mine" | "all") => {
+  const pickScope = (sc: "store" | "all") => {
     if (sc === scope) return;
     setScope(sc);
     load(data?.date ?? null, sc);
@@ -142,7 +150,11 @@ function CallsInner() {
     const now = Date.now();
     if (now - lastQuietRef.current < 15_000) return;
     lastQuietRef.current = now;
-    fetchDeliveryConfirmationList(data?.date ?? null, scope)
+    fetchDeliveryConfirmationList(
+      data?.date ?? null,
+      scope,
+      storeIdRef.current
+    )
       .then(setData)
       .catch(() => {});
   }, [data?.date, scope]);
@@ -186,9 +198,14 @@ function CallsInner() {
       </div>
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold text-slate-900">
-          Confirmation calls
-        </h1>
+        <div>
+          <h1 className="text-xl font-semibold text-slate-900">
+            Confirmation calls
+          </h1>
+          {scope === "store" && data?.store_name && (
+            <p className="text-sm text-slate-500">{data.store_name}</p>
+          )}
+        </div>
         <div
           className="flex rounded-md border border-slate-300 text-sm"
           role="group"
@@ -196,9 +213,9 @@ function CallsInner() {
         >
           {(
             [
-              ["mine", "Mine"],
-              ["all", "Everyone"],
-            ] as ["mine" | "all", string][]
+              ["store", "My store"],
+              ["all", "All stores"],
+            ] as ["store" | "all", string][]
           ).map(([value, label]) => (
             <button
               key={value}
@@ -209,7 +226,7 @@ function CallsInner() {
                 scope === value
                   ? "bg-slate-900 font-medium text-white"
                   : "text-slate-600 hover:bg-slate-50"
-              } ${value === "mine" ? "rounded-l-md" : "rounded-r-md border-l border-slate-300"}`}
+              } ${value === "store" ? "rounded-l-md" : "rounded-r-md border-l border-slate-300"}`}
             >
               {label}
             </button>
@@ -280,8 +297,8 @@ function CallsInner() {
             </p>
           ) : items.length === 0 ? (
             <p className="rounded-lg border border-dashed border-slate-300 bg-white px-6 py-10 text-center text-sm text-slate-600">
-              {scope === "mine"
-                ? "None of your stops are on this day. Try another day or Everyone."
+              {scope === "store"
+                ? "No stops for your store on this day. Try another day or All stores."
                 : "No deliveries to call for this day."}
             </p>
           ) : (
@@ -289,7 +306,7 @@ function CallsInner() {
               {items.map((item) => {
                 const meta = statusMeta(item.status);
                 const winText = windowTextFor(item);
-                const lastCall = lastCallText(item.last_call);
+                const lastCallBy = lastCallByText(item.last_call);
                 return (
                   <li
                     key={item.stop_id}
@@ -320,7 +337,7 @@ function CallsInner() {
                           >
                             {item.journey_number ?? "Order"}
                           </button>
-                          {scope === "all" && item.assigned_employee_name && (
+                          {item.assigned_employee_name && (
                             <span className="text-xs text-slate-500">
                               {item.assigned_employee_name}
                             </span>
@@ -353,8 +370,12 @@ function CallsInner() {
                           <p className="text-xs text-slate-500">
                             {item.attempts} attempt
                             {item.attempts === 1 ? "" : "s"}
-                            {lastCall ? ` · ${lastCall}` : ""}
                           </p>
+                          {lastCallBy && (
+                            <p className="text-xs text-slate-500">
+                              {lastCallBy}
+                            </p>
+                          )}
                         </div>
                       </div>
                       <button

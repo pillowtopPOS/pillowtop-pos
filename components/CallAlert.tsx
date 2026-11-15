@@ -7,6 +7,7 @@ import Modal, { isAnyModalOpen, openModalCount } from "@/components/Modal";
 import { Phone } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
+  fetchConfirmationStoreId,
   fetchDeliveryCallAlert,
   fetchDeliveryCutoffContext,
   fetchDeliveryLastCallTime,
@@ -76,12 +77,14 @@ export default function CallAlert() {
   // cached; a valid result with last_call_time null (feature off) is.
   const lastCallRef = useRef<{
     at: number;
+    storeId: string | null;
     value: { timezone: string | null; last_call_time: string | null };
   } | null>(null);
-  const getLastCallContext = useCallback(async () => {
+  const getLastCallContext = useCallback(async (storeId: string | null) => {
     const cached = lastCallRef.current;
     if (
       cached &&
+      cached.storeId === storeId &&
       shouldReuseCachedContext(
         cached.at,
         Date.now(),
@@ -100,7 +103,7 @@ export default function CallAlert() {
       last_call_time: lc?.last_call_time ?? null,
     };
     lastCallRef.current =
-      value.timezone !== null ? { at: Date.now(), value } : null;
+      value.timezone !== null ? { at: Date.now(), storeId, value } : null;
     return value;
   }, []);
   // The alert's own open state, readable inside runCheck without a
@@ -119,19 +122,28 @@ export default function CallAlert() {
     pathname.startsWith("/delivery/calls/");
   hiddenPathRef.current = hiddenPath;
 
+  // Resolved store for the current check, readable by suppress()
+  // without a stale closure.
+  const storeIdRef = useRef<string | null>(null);
+
   const suppressionFor = useCallback(
-    (date: string): CallAlertSuppression | null => {
+    (date: string, storeId: string | null): CallAlertSuppression | null => {
       const uid = userIdRef.current;
       if (!uid) return null;
-      return readCallAlertSuppression(alertStorageKey(uid, date));
+      return readCallAlertSuppression(alertStorageKey(uid, date, storeId));
     },
     []
   );
 
   const persistSuppression = useCallback(
-    (date: string, value: CallAlertSuppression) => {
+    (
+      date: string,
+      storeId: string | null,
+      value: CallAlertSuppression
+    ) => {
       const uid = userIdRef.current;
-      if (uid) writeCallAlertSuppression(alertStorageKey(uid, date), value);
+      if (uid)
+        writeCallAlertSuppression(alertStorageKey(uid, date, storeId), value);
     },
     []
   );
@@ -182,13 +194,19 @@ export default function CallAlert() {
         // RPC — it would just log a permission error.
         if (!userIdRef.current) return;
         if (bailIfHidden()) return;
-        const s = await fetchDeliveryCallAlert();
+        // Active store from the session (fresh read every check, so a
+        // /store-select switch is picked up without a reload); the RPC
+        // falls back to home_store_id when this is null.
+        const storeId = await fetchConfirmationStoreId();
+        storeIdRef.current = storeId;
+        if (bailIfHidden()) return;
+        const s = await fetchDeliveryCallAlert(storeId);
         if (bailIfHidden()) return;
         setState(s);
         // Today's last-call moment in the company timezone, when the
         // m140 setting exists. Evaluated fresh on every check so a tab
         // left open across the checkpoint still fires once.
-        const lc = await getLastCallContext();
+        const lc = await getLastCallContext(storeId);
         if (bailIfHidden()) return;
         let lastCallAt: number | null = null;
         if (lc?.last_call_time && lc.timezone) {
@@ -203,7 +221,7 @@ export default function CallAlert() {
             ? decideCallAlert(
                 s,
                 now,
-                suppressionFor(s.date),
+                suppressionFor(s.date, storeId),
                 lastCallAt
               )
             : "hidden";
@@ -299,9 +317,9 @@ export default function CallAlert() {
 
   function suppress(kind: CallAlertSuppression["kind"], until?: number) {
     if (!state?.date) return;
-    persistSuppression(state.date, {
+    persistSuppression(state.date, storeIdRef.current, {
       kind,
-      count: state.team_open,
+      count: state.store_open,
       until,
       createdAt: Date.now(),
     });
@@ -310,12 +328,9 @@ export default function CallAlert() {
 
   if (!open || !state?.date) return null;
 
-  const team = state.team_open;
-  const mine = state.my_open;
+  const team = state.store_open;
   const dayLabel = confirmationDayLabel(state.date);
-  const copy = callAlertCopy(team, mine, reminder);
-  const listHref =
-    copy.scope === "all" ? "/delivery/calls?scope=all" : "/delivery/calls";
+  const copy = callAlertCopy(team, reminder, state.store_name);
 
   return (
     <Modal onClose={() => suppress("dismissed")} closeOnBackdrop={false}>
@@ -351,7 +366,7 @@ export default function CallAlert() {
         <div className="mt-5 flex flex-col gap-2">
           <Link
             ref={openCallRef}
-            href={listHref}
+            href="/delivery/calls"
             onClick={() => suppress("dismissed")}
             className="flex min-h-[44px] items-center justify-center rounded-md bg-brand-600 px-3 py-2 text-center text-sm font-medium text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2"
           >

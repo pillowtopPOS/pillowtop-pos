@@ -7,9 +7,11 @@ import {
   confirmationDayLabel,
   confirmationWindowText,
   formatPhoneDashed,
+  lastCallByText,
   lastCallText,
   lastCallValueToSave,
   lastCallWhen,
+  resolveCallStoreId,
 } from "../lib/delivery/calls.ts";
 
 let failures = 0;
@@ -149,6 +151,41 @@ eq(
   null,
   "missing occurred_at -> null"
 );
+
+// ---- last-call-by line + store resolution (m141) -----------------------
+eq(
+  lastCallByText(
+    { outcome: "left_voicemail", occurred_at: "2026-11-12T16:50:00", by_name: "Sam" },
+    NOW
+  ),
+  "Last call: Left voicemail by Sam yesterday 4:50 PM",
+  "lastCallByText with logger"
+);
+eq(
+  lastCallByText(
+    { outcome: "no_answer", occurred_at: "2026-11-13T09:05:00", by_name: null },
+    NOW
+  ),
+  "Last call: No answer today 9:05 AM",
+  "lastCallByText without logger"
+);
+eq(lastCallByText(null, NOW), null, "lastCallByText no call -> null");
+eq(
+  resolveCallStoreId("store-a", "home-b"),
+  "store-a",
+  "active store wins"
+);
+eq(
+  resolveCallStoreId(null, "home-b"),
+  "home-b",
+  "falls back to home store"
+);
+eq(
+  resolveCallStoreId(undefined, null),
+  null,
+  "no store anywhere -> null"
+);
+eq(resolveCallStoreId("", "home-b"), "", "empty string is not nullish");
 
 // ---- phone display formatting ------------------------------------------
 eq(formatPhoneDashed("3035550166"), "303-555-0166", "10 digits dashed");

@@ -23,8 +23,7 @@ const base: CallAlertState = {
   eligible: true,
   date: "2026-11-16",
   route_closed: true,
-  team_open: 4,
-  my_open: 2,
+  store_open: 4,
   total_stops: 14,
 };
 const NOW = Date.parse("2026-11-15T20:00:00Z");
@@ -32,11 +31,11 @@ const NOW = Date.parse("2026-11-15T20:00:00Z");
 // --- gating ---
 check("not eligible", decideCallAlert({ ...base, eligible: false }, NOW, null), "hidden");
 check("route open", decideCallAlert({ ...base, route_closed: false }, NOW, null), "hidden");
-check("zero open", decideCallAlert({ ...base, team_open: 0 }, NOW, null), "hidden");
+check("zero open", decideCallAlert({ ...base, store_open: 0 }, NOW, null), "hidden");
 check("no date", decideCallAlert({ ...base, date: null }, NOW, null), "hidden");
 check("null state", decideCallAlert(null, NOW, null), "hidden");
 check("shown", decideCallAlert(base, NOW, null), "show");
-check("one open still shows", decideCallAlert({ ...base, team_open: 1 }, NOW, null), "show");
+check("one open still shows", decideCallAlert({ ...base, store_open: 1 }, NOW, null), "show");
 
 // --- dismissed ---
 check(
@@ -51,7 +50,7 @@ check(
 );
 check(
   "dismissed then count rises shown",
-  decideCallAlert({ ...base, team_open: 5 }, NOW, { kind: "dismissed", count: 4 }),
+  decideCallAlert({ ...base, store_open: 5 }, NOW, { kind: "dismissed", count: 4 }),
   "show"
 );
 
@@ -69,7 +68,7 @@ check(
 );
 check(
   "snooze then count rises shown early",
-  decideCallAlert({ ...base, team_open: 5 }, NOW + 1000, { kind: "snoozed", count: 4, until }),
+  decideCallAlert({ ...base, store_open: 5 }, NOW + 1000, { kind: "snoozed", count: 4, until }),
   "show"
 );
 check(
@@ -118,7 +117,7 @@ check(
 );
 check(
   "count rise after last call shows normal text",
-  decideCallAlert({ ...base, team_open: 5 }, LAST + 1, { kind: "dismissed", count: 4, createdAt: LAST - 1 }, LAST),
+  decideCallAlert({ ...base, store_open: 5 }, LAST + 1, { kind: "dismissed", count: 4, createdAt: LAST - 1 }, LAST),
   "show"
 );
 check(
@@ -173,85 +172,81 @@ check(
   false
 );
 
-// --- pop-up copy helper ---
+// --- pop-up copy helper (store-scoped, m141) ---
 {
-  const c = callAlertCopy(1, 1, false);
-  check("copy t1 m1 title", c.title, "1 customer needs a confirmation call");
-  check("copy t1 m1 support", c.support, "This customer is assigned to you.");
+  const c = callAlertCopy(1, false, "Main Street");
+  check("copy t1 title", c.title, "1 customer needs a confirmation call");
+  check("copy t1 support", c.support, "From Main Street.");
   check(
     "copy t1 reassurance",
     c.reassurance,
     "This call stays on the call list until someone logs it."
   );
-  check("copy t1 m1 scope", c.scope, "mine");
 }
 {
-  const c = callAlertCopy(1, 0, false);
-  check("copy t1 m0 support", c.support, "This customer is not assigned to you.");
-  check("copy t1 m0 scope", c.scope, "all");
+  const c = callAlertCopy(1, false, null);
+  check("copy t1 no store support", c.support, "From your store.");
 }
 {
-  const c = callAlertCopy(4, 4, false);
+  const c = callAlertCopy(4, false, "Main Street");
   check("copy tall title", c.title, "4 customers need confirmation calls");
-  check("copy tall support", c.support, "All 4 are assigned to you.");
   check(
     "copy tall reassurance",
     c.reassurance,
     "These calls stay on the call list until someone logs them."
   );
-  check("copy tall scope", c.scope, "mine");
 }
 {
-  const c = callAlertCopy(4, 2, false);
-  check("copy tmix support", c.support, "2 of the 4 are assigned to you.");
-  check("copy tmix scope", c.scope, "mine");
-}
-{
-  const c = callAlertCopy(4, 1, false);
-  check("copy tmix1 support", c.support, "1 of the 4 is assigned to you.");
-}
-{
-  const c = callAlertCopy(4, 0, false);
-  check("copy t0 support", c.support, "None of these are assigned to you.");
-  check("copy t0 scope", c.scope, "all");
-}
-{
-  const c = callAlertCopy(1, 1, true);
+  const c = callAlertCopy(1, true, "Main Street");
   check("copy reminder t1 title", c.title, "1 customer still needs a second call");
-  check("copy reminder t1 support", c.support, "This customer is assigned to you.");
-  check("copy reminder t1 reassurance", c.reassurance, "This call stays on the call list until someone logs it.");
+  check("copy reminder t1 support", c.support, "From Main Street.");
 }
 {
-  const c = callAlertCopy(3, 0, true);
+  const c = callAlertCopy(3, true, null);
   check("copy reminder t3 title", c.title, "3 customers still need a second call");
-  check("copy reminder t3 support", c.support, "None of these are assigned to you.");
-  check("copy reminder t3 scope", c.scope, "all");
+  check("copy reminder t3 support", c.support, "From your store.");
 }
 
-// --- date changes -> suppression is keyed per date ---
+// --- suppression key includes the store ---
 check(
-  "key includes user and date",
-  alertStorageKey("u1", "2026-11-16"),
-  "delivery-call-alert:u1:2026-11-16"
+  "key includes user, date and store",
+  alertStorageKey("u1", "2026-11-16", "s1"),
+  "delivery-call-alert:u1:2026-11-16:s1"
+);
+check(
+  "null store still keys",
+  alertStorageKey("u1", "2026-11-16", null),
+  "delivery-call-alert:u1:2026-11-16:none"
+);
+check(
+  "different store different key",
+  alertStorageKey("u1", "2026-11-16", "s2") !==
+    alertStorageKey("u1", "2026-11-16", "s1"),
+  true
 );
 check(
   "different date different key",
-  alertStorageKey("u1", "2026-11-17") !== alertStorageKey("u1", "2026-11-16"),
+  alertStorageKey("u1", "2026-11-17", "s1") !== alertStorageKey("u1", "2026-11-16", "s1"),
   true
 );
-// A suppression written for one date does not exist under another.
-writeCallAlertSuppression(alertStorageKey("u-test", "2026-11-16"), {
+// A suppression written for one store does not exist under another.
+writeCallAlertSuppression(alertStorageKey("u-test", "2026-11-16", "s1"), {
   kind: "dismissed",
   count: 4,
 });
 check(
-  "other date has no suppression",
-  readCallAlertSuppression(alertStorageKey("u-test", "2026-11-17")),
+  "other store has no suppression",
+  readCallAlertSuppression(alertStorageKey("u-test", "2026-11-16", "s2")),
   null
 );
 check(
-  "same date reads suppression back",
-  readCallAlertSuppression(alertStorageKey("u-test", "2026-11-16")),
+  "other date has no suppression",
+  readCallAlertSuppression(alertStorageKey("u-test", "2026-11-17", "s1")),
+  null
+);
+check(
+  "same store+date reads suppression back",
+  readCallAlertSuppression(alertStorageKey("u-test", "2026-11-16", "s1")),
   { kind: "dismissed", count: 4 }
 );
 

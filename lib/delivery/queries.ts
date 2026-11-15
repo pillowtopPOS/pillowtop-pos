@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/client";
 import { fetchCurrentEmployee } from "@/lib/journeys/queries";
+import { resolveCallStoreId } from "@/lib/delivery/calls";
 import { localTodayISO } from "@/lib/dates";
 
 export type DeliveryTruckDay = {
@@ -681,19 +682,38 @@ export type ConfirmationCallList = {
   day_end: string | null;
   available_dates: ConfirmationCallListDate[];
   scope: string;
+  store_id: string | null;
+  store_name: string | null;
   items: ConfirmationCallListItem[];
 };
 
+/** The store confirmation calls belong to: the session's
+ *  active_store_id (set at /store-select), falling back to the
+ *  employee's home_store_id. Null when neither resolves; the RPCs
+ *  then apply the same fallback server-side. */
+export async function fetchConfirmationStoreId(): Promise<string | null> {
+  const supabase = createClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const active = session?.user?.user_metadata?.active_store_id;
+  if (typeof active === "string" && active) return active;
+  const employee = await fetchCurrentEmployee().catch(() => null);
+  return resolveCallStoreId(null, employee?.home_store_id ?? null);
+}
+
 /** The night-before call list. p_date null lets the RPC pick the next
- *  delivery day; the response's `date` is the day actually returned. */
+ *  delivery day; the response's `date` is the day actually returned.
+ *  scope 'store' = the resolved store's customers, 'all' = company. */
 export async function fetchDeliveryConfirmationList(
   date: string | null,
-  scope: "mine" | "all"
+  scope: "store" | "all",
+  storeId: string | null = null
 ): Promise<ConfirmationCallList> {
   const supabase = createClient();
   const { data, error } = await (supabase as any).rpc(
     "get_delivery_confirmation_list",
-    { p_date: date, p_scope: scope }
+    { p_date: date, p_scope: scope, p_store_id: storeId }
   );
   if (error) throw new Error(error.message);
   const d = data as ConfirmationCallList | null;
@@ -704,6 +724,8 @@ export async function fetchDeliveryConfirmationList(
     day_end: d?.day_end ?? null,
     available_dates: d?.available_dates ?? [],
     scope: d?.scope ?? scope,
+    store_id: d?.store_id ?? null,
+    store_name: d?.store_name ?? null,
     items: d?.items ?? [],
   };
 }
@@ -718,36 +740,41 @@ export async function fetchDeliveryLogConfirmationCalls(): Promise<boolean> {
   return data === true;
 }
 
-/** Pop-up feed (m139): eligibility, the call-list day, whether the
- *  route is closed, and open-call counts. Null-safe defaults; throws
- *  on RPC error so callers can stay silent when m139 is not installed. */
-export async function fetchDeliveryCallAlert(): Promise<{
+/** Pop-up feed (m139/m141): eligibility, the call-list day, whether
+ *  the route is closed, and the active store's open-call count.
+ *  Null-safe defaults; throws on RPC error so callers can stay
+ *  silent when the function is not installed. */
+export async function fetchDeliveryCallAlert(storeId: string | null): Promise<{
   eligible: boolean;
   date: string | null;
   route_closed: boolean;
-  team_open: number;
-  my_open: number;
+  store_open: number;
+  store_id: string | null;
+  store_name: string | null;
   total_stops: number;
 }> {
   const supabase = createClient();
   const { data, error } = await (supabase as any).rpc(
-    "get_delivery_call_alert"
+    "get_delivery_call_alert",
+    { p_store_id: storeId }
   );
   if (error) throw new Error(error.message);
   const d = data as {
     eligible?: boolean;
     date?: string | null;
     route_closed?: boolean;
-    team_open?: number;
-    my_open?: number;
+    store_open?: number;
+    store_id?: string | null;
+    store_name?: string | null;
     total_stops?: number;
   } | null;
   return {
     eligible: d?.eligible === true,
     date: d?.date ?? null,
     route_closed: d?.route_closed === true,
-    team_open: d?.team_open ?? 0,
-    my_open: d?.my_open ?? 0,
+    store_open: d?.store_open ?? 0,
+    store_id: d?.store_id ?? null,
+    store_name: d?.store_name ?? null,
     total_stops: d?.total_stops ?? 0,
   };
 }

@@ -8,15 +8,18 @@ export type CallAlertState = {
   eligible: boolean;
   date: string | null;
   route_closed: boolean;
-  team_open: number;
-  my_open: number;
+  // m141: the active store's unconfirmed count (was team_open /
+  // my_open before scopes became store/all).
+  store_open: number;
+  store_id?: string | null;
+  store_name?: string | null;
   total_stops?: number;
 };
 
 // One active suppression per user+date. "dismissed" hides until
-// team_open rises strictly above count or the daily last-call
+// store_open rises strictly above count or the daily last-call
 // checkpoint arrives; "snoozed" hides until `until` (epoch ms) or
-// until team_open rises above count, whichever first. `createdAt`
+// until store_open rises above count, whichever first. `createdAt`
 // (epoch ms) marks when the suppression was written; records saved
 // before it existed are treated as created before any last-call
 // moment, so the once-a-day reminder still reaches them.
@@ -44,10 +47,10 @@ export function decideCallAlert(
   lastCallAt?: number | null
 ): "show" | "reminder" | "hidden" {
   if (!state?.eligible || !state.date) return "hidden";
-  if (!state.route_closed || state.team_open <= 0) return "hidden";
+  if (!state.route_closed || state.store_open <= 0) return "hidden";
   const s = suppression ?? null;
   // A rising count always resurfaces the pop-up, whatever the kind.
-  const countRose = !!s && state.team_open > s.count;
+  const countRose = !!s && state.store_open > s.count;
   const suppressed =
     !!s &&
     !countRose &&
@@ -81,26 +84,23 @@ export function shouldReuseCachedContext(
 
 // ------------------------------------------------------------
 // Pop-up copy. Pure presentation strings for CallAlert — no
-// behavior. `total` is team_open (everyone needing a call),
-// `mine` is my_open, `reminder` selects the second-call wording.
+// behavior. `total` is store_open (the active store's
+// needing-a-call count), `reminder` selects the second-call
+// wording, `storeName` names the store in the support line.
 // ------------------------------------------------------------
 
 export type CallAlertCopy = {
   title: string;
   support: string;
   reassurance: string;
-  // Which tab the call list should open on: "all" when nothing is
-  // mine, so a covering coworker sees the customers.
-  scope: "mine" | "all";
 };
 
 export function callAlertCopy(
   total: number,
-  mine: number,
-  reminder: boolean
+  reminder: boolean,
+  storeName?: string | null
 ): CallAlertCopy {
   const t = Math.max(total, 0);
-  const m = Math.max(mine, 0);
   const plural = t > 1;
   return {
     title: reminder
@@ -110,26 +110,19 @@ export function callAlertCopy(
       : plural
         ? `${t} customers need confirmation calls`
         : "1 customer needs a confirmation call",
-    support: !plural
-      ? m >= 1
-        ? "This customer is assigned to you."
-        : "This customer is not assigned to you."
-      : m >= t
-        ? `All ${t} are assigned to you.`
-        : m === 0
-          ? "None of these are assigned to you."
-          : m === 1
-            ? `1 of the ${t} is assigned to you.`
-            : `${m} of the ${t} are assigned to you.`,
+    support: storeName ? `From ${storeName}.` : "From your store.",
     reassurance: plural
       ? "These calls stay on the call list until someone logs them."
       : "This call stays on the call list until someone logs it.",
-    scope: m > 0 ? "mine" : "all",
   };
 }
 
-export function alertStorageKey(userId: string, date: string): string {
-  return `delivery-call-alert:${userId}:${date}`;
+export function alertStorageKey(
+  userId: string,
+  date: string,
+  storeId: string | null
+): string {
+  return `delivery-call-alert:${userId}:${date}:${storeId ?? "none"}`;
 }
 
 // localStorage is the durable copy; a module-level Map keeps
