@@ -6,7 +6,12 @@ import Modal from "@/components/Modal";
 import DeliveryBookingModal from "@/components/delivery/DeliveryBookingModal";
 import DeliveryContactPanel from "@/components/delivery/DeliveryContactPanel";
 import ConfirmationCallModal from "@/components/delivery/ConfirmationCallModal";
-import { confirmationWindowText } from "@/lib/delivery/calls";
+import {
+  CONFIRMATION_STATUS_META,
+  CONFIRMATION_TONE_TEXT,
+  confirmationWindowText,
+  type ConfirmationCallStatus,
+} from "@/lib/delivery/calls";
 import {
   cancelDeliveryStop,
   fetchDeliveryConfirmationList,
@@ -247,6 +252,32 @@ export default function JourneyDelivery({
   const stop = delivery?.active_stop ?? null;
   const latest = delivery?.history?.[0] ?? null;
   const confStamp = confirmedStamp(confRow?.last_call?.occurred_at);
+  // Status line: Confirmed and the window-changed notice keep their
+  // wording; every other logged outcome shows its real label plus the
+  // last-call time in the call list's tone. "Not confirmed yet" is
+  // reserved for no call logged at all.
+  const confStatus = confRow?.status as ConfirmationCallStatus | null;
+  const confMeta = confStatus
+    ? CONFIRMATION_STATUS_META[confStatus]
+    : undefined;
+  const confLineText =
+    confStatus === "confirmed"
+      ? `Confirmed${confStamp ? ` ${confStamp}` : ""}`
+      : confStatus === "confirmed_window_changed"
+        ? "Window changed since confirmed"
+        : !confStatus || confStatus === "not_called"
+          ? "Not confirmed yet"
+          : `${confMeta?.label ?? confRow?.status ?? ""}${
+              confStamp ? ` ${confStamp}` : ""
+            }`;
+  const confLineClass =
+    confStatus === "confirmed_window_changed"
+      ? "text-amber-700"
+      : confStatus === "confirmed"
+        ? "text-emerald-700"
+        : !confStatus || confStatus === "not_called"
+          ? "text-slate-500"
+          : CONFIRMATION_TONE_TEXT[confMeta?.tone ?? "grey"];
   const releasedBySystem =
     latest !== null &&
     latest.action === "CANCELLED" &&
@@ -321,22 +352,10 @@ export default function JourneyDelivery({
                       </p>
                     )}
                   <p
-                    className={`mt-0.5 text-xs ${
-                      confRow.status === "confirmed_window_changed"
-                        ? "text-amber-700"
-                        : confRow.status === "confirmed"
-                          ? "text-emerald-700"
-                          : "text-slate-500"
-                    }`}
+                    className={`mt-0.5 text-xs ${confLineClass}`}
                     data-testid="delivery-confirmation-line"
                   >
-                    {confRow.status === "confirmed"
-                      ? `Confirmed${confStamp ? ` ${confStamp}` : ""}`
-                      : confRow.status === "confirmed_window_changed"
-                        ? "Window changed since confirmed"
-                        : confRow.status === "emailed"
-                          ? `Emailed${confStamp ? ` ${confStamp}` : ""}`
-                          : "Not confirmed yet"}
+                    {confLineText}
                   </p>
                 </>
               )}

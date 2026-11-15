@@ -79,6 +79,55 @@ export function shouldReuseCachedContext(
   );
 }
 
+// ------------------------------------------------------------
+// Pop-up copy. Pure presentation strings for CallAlert — no
+// behavior. `total` is team_open (everyone needing a call),
+// `mine` is my_open, `reminder` selects the second-call wording.
+// ------------------------------------------------------------
+
+export type CallAlertCopy = {
+  title: string;
+  support: string;
+  reassurance: string;
+  // Which tab the call list should open on: "all" when nothing is
+  // mine, so a covering coworker sees the customers.
+  scope: "mine" | "all";
+};
+
+export function callAlertCopy(
+  total: number,
+  mine: number,
+  reminder: boolean
+): CallAlertCopy {
+  const t = Math.max(total, 0);
+  const m = Math.max(mine, 0);
+  const plural = t > 1;
+  return {
+    title: reminder
+      ? plural
+        ? `${t} customers still need a second call`
+        : "1 customer still needs a second call"
+      : plural
+        ? `${t} customers need confirmation calls`
+        : "1 customer needs a confirmation call",
+    support: !plural
+      ? m >= 1
+        ? "This customer is assigned to you."
+        : "This customer is not assigned to you."
+      : m >= t
+        ? `All ${t} are assigned to you.`
+        : m === 0
+          ? "None of these are assigned to you."
+          : m === 1
+            ? `1 of the ${t} is assigned to you.`
+            : `${m} of the ${t} are assigned to you.`,
+    reassurance: plural
+      ? "These calls stay on the call list until someone logs them."
+      : "This call stays on the call list until someone logs it.",
+    scope: m > 0 ? "mine" : "all",
+  };
+}
+
 export function alertStorageKey(userId: string, date: string): string {
   return `delivery-call-alert:${userId}:${date}`;
 }

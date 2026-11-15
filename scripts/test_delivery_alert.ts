@@ -2,6 +2,7 @@
 // and suppression storage. Run: node scripts/test_delivery_alert.ts
 import {
   alertStorageKey,
+  callAlertCopy,
   decideCallAlert,
   readCallAlertSuppression,
   shouldReuseCachedContext,
@@ -171,6 +172,61 @@ check(
   shouldReuseCachedContext(null, NOW, TTL, false),
   false
 );
+
+// --- pop-up copy helper ---
+{
+  const c = callAlertCopy(1, 1, false);
+  check("copy t1 m1 title", c.title, "1 customer needs a confirmation call");
+  check("copy t1 m1 support", c.support, "This customer is assigned to you.");
+  check(
+    "copy t1 reassurance",
+    c.reassurance,
+    "This call stays on the call list until someone logs it."
+  );
+  check("copy t1 m1 scope", c.scope, "mine");
+}
+{
+  const c = callAlertCopy(1, 0, false);
+  check("copy t1 m0 support", c.support, "This customer is not assigned to you.");
+  check("copy t1 m0 scope", c.scope, "all");
+}
+{
+  const c = callAlertCopy(4, 4, false);
+  check("copy tall title", c.title, "4 customers need confirmation calls");
+  check("copy tall support", c.support, "All 4 are assigned to you.");
+  check(
+    "copy tall reassurance",
+    c.reassurance,
+    "These calls stay on the call list until someone logs them."
+  );
+  check("copy tall scope", c.scope, "mine");
+}
+{
+  const c = callAlertCopy(4, 2, false);
+  check("copy tmix support", c.support, "2 of the 4 are assigned to you.");
+  check("copy tmix scope", c.scope, "mine");
+}
+{
+  const c = callAlertCopy(4, 1, false);
+  check("copy tmix1 support", c.support, "1 of the 4 is assigned to you.");
+}
+{
+  const c = callAlertCopy(4, 0, false);
+  check("copy t0 support", c.support, "None of these are assigned to you.");
+  check("copy t0 scope", c.scope, "all");
+}
+{
+  const c = callAlertCopy(1, 1, true);
+  check("copy reminder t1 title", c.title, "1 customer still needs a second call");
+  check("copy reminder t1 support", c.support, "This customer is assigned to you.");
+  check("copy reminder t1 reassurance", c.reassurance, "This call stays on the call list until someone logs it.");
+}
+{
+  const c = callAlertCopy(3, 0, true);
+  check("copy reminder t3 title", c.title, "3 customers still need a second call");
+  check("copy reminder t3 support", c.support, "None of these are assigned to you.");
+  check("copy reminder t3 scope", c.scope, "all");
+}
 
 // --- date changes -> suppression is keyed per date ---
 check(

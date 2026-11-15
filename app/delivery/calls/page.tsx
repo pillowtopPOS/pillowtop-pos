@@ -7,7 +7,7 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import JourneyPeek, {
   type JourneyPeekStopDetails,
@@ -42,6 +42,7 @@ function statusMeta(status: string) {
 
 function CallsInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [allowed, setAllowed] = useState<boolean | null>(null);
   const [data, setData] = useState<ConfirmationCallList | null>(null);
   const [scope, setScope] = useState<"mine" | "all">("mine");
@@ -102,7 +103,13 @@ function CallsInner() {
       }
       // p_date null: the RPC picks the next delivery day and returns it
       // as `date`, which every later fetch reuses explicitly.
-      load(null, "mine");
+      // ?scope=all opens the Everyone tab once (the call-alert pop-up
+      // links here when nothing is mine); plain visits still default
+      // to Mine.
+      const initialScope =
+        searchParams.get("scope") === "all" ? "all" : "mine";
+      setScope(initialScope);
+      load(null, initialScope);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

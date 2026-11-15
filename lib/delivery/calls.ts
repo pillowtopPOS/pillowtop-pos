@@ -151,6 +151,14 @@ export const CONFIRMATION_PILL_CLASSES: Record<ConfirmationPillTone, string> = {
   red: "bg-red-100 text-red-800",
 };
 
+/** Text color per pill tone, for status lines that are not pills. */
+export const CONFIRMATION_TONE_TEXT: Record<ConfirmationPillTone, string> = {
+  grey: "text-slate-500",
+  green: "text-emerald-700",
+  amber: "text-amber-700",
+  red: "text-red-600",
+};
+
 /** What the Last call reminder setting should save: null turns the
  *  feature off; a "HH:MM" string sets it. An empty time with the
  *  toggle on also saves null (nothing to remind at). */
