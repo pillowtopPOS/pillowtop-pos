@@ -16,23 +16,37 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 const layerStack: symbol[] = [];
 
+/** How many Modal layers are currently mounted. */
+export function openModalCount(): number {
+  return layerStack.length;
+}
+
+/** True while any shared Modal is open anywhere in the app. */
+export function isAnyModalOpen(): boolean {
+  return layerStack.length > 0;
+}
+
 export default function Modal({
   onClose,
   dirty = false,
   saving = false,
   children,
   overlayClassName = "fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4",
+  closeOnBackdrop = true,
 }: {
   onClose: () => void;
   dirty?: boolean;
   saving?: boolean;
   children: ReactNode;
   overlayClassName?: string;
+  // Backdrop click closes by default; pass false for pop-ups that
+  // must only close via their own buttons or Escape.
+  closeOnBackdrop?: boolean;
 }) {
   const layer = useRef(Symbol("modal"));
   const downOnOverlay = useRef(false);
-  const latest = useRef({ onClose, dirty, saving });
-  latest.current = { onClose, dirty, saving };
+  const latest = useRef({ onClose, dirty, saving, closeOnBackdrop });
+  latest.current = { onClose, dirty, saving, closeOnBackdrop };
   // Dirty-close confirmation replaces window.confirm — a second Modal on
   // the layer stack, so Escape/backdrop close only it, never the form.
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -72,7 +86,11 @@ export default function Modal({
         downOnOverlay.current = e.target === e.currentTarget;
       }}
       onPointerUp={(e) => {
-        if (downOnOverlay.current && e.target === e.currentTarget) {
+        if (
+          latest.current.closeOnBackdrop &&
+          downOnOverlay.current &&
+          e.target === e.currentTarget
+        ) {
           requestClose();
         }
         downOnOverlay.current = false;

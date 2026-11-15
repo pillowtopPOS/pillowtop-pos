@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import Modal from "@/components/Modal";
+import Modal, { isAnyModalOpen, openModalCount } from "@/components/Modal";
 import { createClient } from "@/lib/supabase/client";
 import { fetchDeliveryCallAlert } from "@/lib/delivery/queries";
 import { confirmationDayLabel } from "@/lib/delivery/calls";
@@ -23,18 +23,16 @@ const FOCUS_THROTTLE_MS = 15_000;
 const POLL_MS = 60_000;
 const SNOOZE_MS = 30 * 60_000;
 
-function isBusyUi(): boolean {
+// `alertOpen` = this pop-up's own Modal is mounted. While it is NOT
+// open, any shared Modal counts as busy; while it IS open, only
+// layers beyond its own count, so the alert can still re-evaluate
+// and auto-close.
+function isBusyUi(alertOpen: boolean): boolean {
   if (typeof document === "undefined") return false;
-  // Any OTHER dialog holds the pop-up; our own must not count or the
-  // alert could never re-evaluate (or auto-close) while it is open.
-  const otherDialog = Array.from(
-    document.querySelectorAll('[role="dialog"]')
-  ).some(
-    (el) =>
-      !(el instanceof HTMLElement && el.dataset.testid === "call-alert")
-  );
-  if (otherDialog) return true;
+  const modalBusy = alertOpen ? openModalCount() > 1 : isAnyModalOpen();
+  if (modalBusy) return true;
   const el = document.activeElement;
+  if (el instanceof HTMLElement && el.isContentEditable) return true;
   return (
     el instanceof HTMLInputElement ||
     el instanceof HTMLTextAreaElement ||
@@ -53,8 +51,16 @@ export default function CallAlert() {
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<CallAlertState | null>(null);
   const userIdRef = useRef<string | null>(null);
+  const sessionRef = useRef<Promise<string | null> | null>(null);
   const lastCheckRef = useRef(0);
   const missingLoggedRef = useRef(false);
+  // The alert's own open state, readable inside runCheck without a
+  // stale closure (runCheck is created once).
+  const openRef = useRef(false);
+  openRef.current = open;
+  // Same for the hidden-path check — keeps runCheck's identity stable
+  // so effects subscribe once instead of on every navigation.
+  const hiddenPathRef = useRef(false);
 
   const hiddenPath =
     pathname == null ||
@@ -62,6 +68,7 @@ export default function CallAlert() {
     pathname.endsWith("/print") ||
     pathname === "/delivery/calls" ||
     pathname.startsWith("/delivery/calls/");
+  hiddenPathRef.current = hiddenPath;
 
   const suppressionFor = useCallback(
     (date: string): CallAlertSuppression | null => {
@@ -80,6 +87,17 @@ export default function CallAlert() {
     []
   );
 
+  // Session user id, fetched once and shared — runCheck awaits it so
+  // suppression is never read without the user it belongs to.
+  const getUserId = useCallback(() => {
+    if (!sessionRef.current) {
+      sessionRef.current = createClient()
+        .auth.getSession()
+        .then(({ data: { session } }) => session?.user?.id ?? null);
+    }
+    return sessionRef.current;
+  }, []);
+
   const runCheck = useCallback(
     async (throttled: boolean) => {
       const now = Date.now();
@@ -87,14 +105,15 @@ export default function CallAlert() {
         return;
       }
       lastCheckRef.current = now;
-      if (hiddenPath) {
+      if (hiddenPathRef.current) {
         setOpen(false);
         return;
       }
-      // Never interrupt typing or talk over another dialog; the next
+      // Never interrupt typing or talk over another modal; the next
       // scheduled check retries once they are gone.
-      if (isBusyUi()) return;
+      if (isBusyUi(openRef.current)) return;
       try {
+        userIdRef.current = await getUserId();
         const s = await fetchDeliveryCallAlert();
         setState(s);
         const decision =
@@ -111,14 +130,11 @@ export default function CallAlert() {
         }
       }
     },
-    [hiddenPath, suppressionFor]
+    [suppressionFor, getUserId]
   );
 
   useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      userIdRef.current = session?.user?.id ?? null;
-    });
+    void getUserId();
     void runCheck(false);
 
     const onFocus = () => void runCheck(true);
@@ -142,11 +158,17 @@ export default function CallAlert() {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener(CONFIRMATION_CALLS_CHANGED_EVENT, onChanged);
     };
-  }, [runCheck]);
+  }, [runCheck, getUserId]);
 
   // Path changes re-evaluate immediately (e.g. navigating away from
-  // /delivery/calls or onto a hidden route).
+  // /delivery/calls or onto a hidden route). The mount effect already
+  // ran the first check, so skip this effect's initial run.
+  const pathnameInitRef = useRef(true);
   useEffect(() => {
+    if (pathnameInitRef.current) {
+      pathnameInitRef.current = false;
+      return;
+    }
     void runCheck(false);
   }, [pathname, runCheck]);
 
@@ -167,7 +189,7 @@ export default function CallAlert() {
   const dayLabel = confirmationDayLabel(state.date);
 
   return (
-    <Modal onClose={() => suppress("dismissed")}>
+    <Modal onClose={() => suppress("dismissed")} closeOnBackdrop={false}>
       <div
         role="dialog"
         aria-modal="true"
