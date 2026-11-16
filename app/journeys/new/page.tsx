@@ -1216,126 +1216,6 @@ export default function NewJourneyPage() {
                 )}
               </>
             )}
-            {selectedCustomer && existingHasPrimary && fulfillmentType === "delivery" && (
-              <fieldset className="rounded-md border border-slate-200 p-3">
-                <legend className="px-1 text-xs font-medium uppercase text-slate-500">
-                  Delivery address
-                </legend>
-                <div className="space-y-2">
-                  <label className="flex items-start gap-2 text-sm text-slate-700">
-                    <input
-                      type="radio"
-                      name="new-order-ship-to"
-                      checked={shipToChoice === "primary"}
-                      onChange={() => setShipToChoice("primary")}
-                      className="mt-1"
-                    />
-                    <span>
-                      <span className="font-medium">Primary address</span>
-                      <span className="block text-xs text-slate-500">
-                        {formatShipToLine({
-                          street_address: selectedCustomer.street_address,
-                          street_address_line_2:
-                            selectedCustomer.street_address_line_2,
-                          city: selectedCustomer.city,
-                          state: selectedCustomer.state,
-                          zip_code: selectedCustomer.zip_code,
-                        }) || "No address on file"}
-                      </span>
-                    </span>
-                  </label>
-                  {savedAddresses.map((a) => (
-                    <label
-                      key={a.id}
-                      className="flex items-start gap-2 text-sm text-slate-700"
-                    >
-                      <input
-                        type="radio"
-                        name="new-order-ship-to"
-                        checked={shipToChoice === "saved" && shipToAddressId === a.id}
-                        onChange={() => {
-                          setShipToChoice("saved");
-                          setShipToAddressId(a.id);
-                        }}
-                        className="mt-1"
-                      />
-                      <span>
-                        <span className="font-medium">
-                          {a.label || "Saved address"}
-                        </span>
-                        <span className="block text-xs text-slate-500">
-                          {formatShipToLine(a)}
-                        </span>
-                      </span>
-                    </label>
-                  ))}
-                  <label className="flex items-start gap-2 text-sm text-slate-700">
-                    <input
-                      type="radio"
-                      name="new-order-ship-to"
-                      checked={shipToChoice === "new"}
-                      onChange={() => setShipToChoice("new")}
-                      className="mt-1"
-                    />
-                    <span className="font-medium">New address</span>
-                  </label>
-                  {shipToChoice === "new" && (
-                    <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
-                      <input
-                        value={shipToNew.label}
-                        onChange={(e) =>
-                          setShipToNew((a) => ({ ...a, label: e.target.value }))
-                        }
-                        placeholder="Label (optional, e.g. Cabin)"
-                        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                      />
-                      <input
-                        value={shipToNew.street}
-                        onChange={(e) =>
-                          setShipToNew((a) => ({ ...a, street: e.target.value }))
-                        }
-                        placeholder="Street address"
-                        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                      />
-                      <input
-                        value={shipToNew.line2}
-                        onChange={(e) =>
-                          setShipToNew((a) => ({ ...a, line2: e.target.value }))
-                        }
-                        placeholder="Address Line 2 (optional)"
-                        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                      />
-                      <div className="grid grid-cols-3 gap-2">
-                        <input
-                          placeholder="City"
-                          value={shipToNew.city}
-                          onChange={(e) =>
-                            setShipToNew((a) => ({ ...a, city: e.target.value }))
-                          }
-                          className="rounded-md border border-slate-300 px-3 py-2 text-sm"
-                        />
-                        <input
-                          placeholder="State"
-                          value={shipToNew.state}
-                          onChange={(e) =>
-                            setShipToNew((a) => ({ ...a, state: e.target.value }))
-                          }
-                          className="rounded-md border border-slate-300 px-3 py-2 text-sm"
-                        />
-                        <input
-                          placeholder="ZIP"
-                          value={shipToNew.zip}
-                          onChange={(e) =>
-                            setShipToNew((a) => ({ ...a, zip: e.target.value }))
-                          }
-                          className="rounded-md border border-slate-300 px-3 py-2 text-sm"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </fieldset>
-            )}
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setStep(0)}
@@ -1517,6 +1397,126 @@ export default function NewJourneyPage() {
                 <option value="pickup">Pickup</option>
               </select>
             </div>
+            {selectedCustomer && existingHasPrimary && fulfillmentType === "delivery" && (
+              <fieldset className="rounded-md border border-slate-200 p-3">
+                <legend className="px-1 text-xs font-medium uppercase text-slate-500">
+                  Delivery address
+                </legend>
+                <div className="space-y-2">
+                  <label className="flex items-start gap-2 text-sm text-slate-700">
+                    <input
+                      type="radio"
+                      name="new-order-ship-to"
+                      checked={shipToChoice === "primary"}
+                      onChange={() => setShipToChoice("primary")}
+                      className="mt-1"
+                    />
+                    <span>
+                      <span className="font-medium">Primary address</span>
+                      <span className="block text-xs text-slate-500">
+                        {formatShipToLine({
+                          street_address: selectedCustomer.street_address,
+                          street_address_line_2:
+                            selectedCustomer.street_address_line_2,
+                          city: selectedCustomer.city,
+                          state: selectedCustomer.state,
+                          zip_code: selectedCustomer.zip_code,
+                        }) || "No address on file"}
+                      </span>
+                    </span>
+                  </label>
+                  {savedAddresses.map((a) => (
+                    <label
+                      key={a.id}
+                      className="flex items-start gap-2 text-sm text-slate-700"
+                    >
+                      <input
+                        type="radio"
+                        name="new-order-ship-to"
+                        checked={shipToChoice === "saved" && shipToAddressId === a.id}
+                        onChange={() => {
+                          setShipToChoice("saved");
+                          setShipToAddressId(a.id);
+                        }}
+                        className="mt-1"
+                      />
+                      <span>
+                        <span className="font-medium">
+                          {a.label || "Saved address"}
+                        </span>
+                        <span className="block text-xs text-slate-500">
+                          {formatShipToLine(a)}
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                  <label className="flex items-start gap-2 text-sm text-slate-700">
+                    <input
+                      type="radio"
+                      name="new-order-ship-to"
+                      checked={shipToChoice === "new"}
+                      onChange={() => setShipToChoice("new")}
+                      className="mt-1"
+                    />
+                    <span className="font-medium">New address</span>
+                  </label>
+                  {shipToChoice === "new" && (
+                    <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+                      <input
+                        value={shipToNew.label}
+                        onChange={(e) =>
+                          setShipToNew((a) => ({ ...a, label: e.target.value }))
+                        }
+                        placeholder="Label (optional, e.g. Cabin)"
+                        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                      />
+                      <input
+                        value={shipToNew.street}
+                        onChange={(e) =>
+                          setShipToNew((a) => ({ ...a, street: e.target.value }))
+                        }
+                        placeholder="Street address"
+                        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                      />
+                      <input
+                        value={shipToNew.line2}
+                        onChange={(e) =>
+                          setShipToNew((a) => ({ ...a, line2: e.target.value }))
+                        }
+                        placeholder="Address Line 2 (optional)"
+                        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                      />
+                      <div className="grid grid-cols-3 gap-2">
+                        <input
+                          placeholder="City"
+                          value={shipToNew.city}
+                          onChange={(e) =>
+                            setShipToNew((a) => ({ ...a, city: e.target.value }))
+                          }
+                          className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+                        />
+                        <input
+                          placeholder="State"
+                          value={shipToNew.state}
+                          onChange={(e) =>
+                            setShipToNew((a) => ({ ...a, state: e.target.value }))
+                          }
+                          className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+                        />
+                        <input
+                          placeholder="ZIP"
+                          value={shipToNew.zip}
+                          onChange={(e) =>
+                            setShipToNew((a) => ({ ...a, zip: e.target.value }))
+                          }
+                          className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </fieldset>
+            )}
             <div>
               <label className="block text-sm font-medium text-slate-700">Assigned employee</label>
               <select
