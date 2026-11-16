@@ -20,7 +20,10 @@ import type { CreateJourneyInput } from "@/lib/journeys/queries";
 import ProductPicker, { type ProductSelection } from "@/components/ProductPicker";
 import { fetchProductAvailabilityByLocation, type LocationAvailability } from "@/lib/inventory/queries";
 import { fetchInTransitArrivals } from "@/lib/transfers/queries";
-import { resolveLineItemLocation } from "@/lib/journeys/fulfillment";
+import {
+  resolveLineItemLocation,
+  lineItemFulfillmentPayload,
+} from "@/lib/journeys/fulfillment";
 import Modal from "@/components/Modal";
 import { isStoreConfirmedToday, storeSelectUrl } from "@/lib/journeys/storeConfirm";
 import {
@@ -455,6 +458,24 @@ export default function NewJourneyPage() {
     );
   }, [canSubmitQuote, total, purchase]);
 
+  // A line whose effective fulfillment is not Pickup never carries a
+  // pickup location. Runs when the order-level choice flips so a stale
+  // location cannot survive a Pickup -> Delivery switch.
+  useEffect(() => {
+    setLineItems((prev) => {
+      let changed = false;
+      const next = prev.map((item) => {
+        const effective = item.fulfillment_type_override ?? fulfillmentType;
+        if (effective !== "pickup" && item.pickup_location_id) {
+          changed = true;
+          return { ...item, pickup_location_id: null };
+        }
+        return item;
+      });
+      return changed ? next : prev;
+    });
+  }, [fulfillmentType]);
+
   function addLineItem(selection: ProductSelection) {
     const unitPrice = selection.salePrice ?? selection.price ?? 0;
     const item: LineItem = {
@@ -496,14 +517,21 @@ export default function NewJourneyPage() {
     const baseInput = {
       customer,
       customerId: selectedCustomer?.id ?? null,
-      lineItems: lineItems.map((item) => ({
-        productId: item.product_id,
-        itemName: item.item_name,
-        quantity: item.quantity,
-        unitPrice: item.unit_price,
-        fulfillmentTypeOverride: item.fulfillment_type_override,
-        pickupLocationId: item.pickup_location_id,
-      })),
+      lineItems: lineItems.map((item) => {
+        const payload = lineItemFulfillmentPayload({
+          explicitChoice: item.fulfillment_type_override,
+          pickupLocationId: item.pickup_location_id,
+          orderFulfillment: fulfillmentType,
+        });
+        return {
+          productId: item.product_id,
+          itemName: item.item_name,
+          quantity: item.quantity,
+          unitPrice: item.unit_price,
+          fulfillmentTypeOverride: payload.fulfillmentTypeOverride,
+          pickupLocationId: payload.pickupLocationId,
+        };
+      }),
       storeId,
       fulfillmentType,
       assignedEmployeeId,
@@ -1452,13 +1480,16 @@ export default function NewJourneyPage() {
                             onChange={(e) => {
                               const choice = e.target.value as "delivery" | "pickup";
                               updateLineItem(item.id, {
-                                // Store inherit (null) when the line
-                                // matches the order's fulfillment.
+                                // Explicit choice only when it differs
+                                // from the order; null means the line
+                                // follows the order's fulfillment.
                                 fulfillment_type_override:
                                   choice === fulfillmentType ? null : choice,
+                                // A non-pickup line never carries a
+                                // pickup location.
                                 pickup_location_id:
                                   choice === "pickup"
-                                    ? item.pickup_location_id ?? storeId
+                                    ? item.pickup_location_id
                                     : null,
                               });
                             }}
@@ -1474,12 +1505,10 @@ export default function NewJourneyPage() {
                               value={item.pickup_location_id ?? storeId}
                               onChange={(e) =>
                                 updateLineItem(item.id, {
-                                  // m032: pickup_location_id is only valid
-                                  // when the line's own override is
-                                  // 'pickup', so picking a location on an
-                                  // inherited line pins it to pickup.
-                                  fulfillment_type_override:
-                                    item.fulfillment_type_override ?? "pickup",
+                                  // Picking a location alone is not an
+                                  // explicit fulfillment choice; the
+                                  // submit payload adds the 'pickup'
+                                  // override the m032 trigger requires.
                                   pickup_location_id: e.target.value,
                                 })
                               }

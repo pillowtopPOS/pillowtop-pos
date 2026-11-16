@@ -6,7 +6,10 @@ import { Check, MoreHorizontal, Trash2, Truck, X, Copy,
 } from "lucide-react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { resolveLineItemLocation } from "@/lib/journeys/fulfillment";
+import {
+  resolveLineItemLocation,
+  lineItemFulfillmentPayload,
+} from "@/lib/journeys/fulfillment";
 import { formatPhone } from "@/lib/format/phone";
 import {
   getExchangeAction,
@@ -620,6 +623,13 @@ export default function JourneyWorkspace({
     .sort((a, b) => new Date(a.due_at).getTime() - new Date(b.due_at).getTime())[0];
 
   const [lineItems, setLineItems] = useState<JourneyLineItem[]>([]);
+  // Lines whose fulfillment dropdown the user explicitly set this
+  // session. Picking a pickup location alone does not count; the DB
+  // cannot tell a location-pinned 'pickup' override from a chosen one,
+  // so explicitness is tracked here.
+  const [explicitLineChoices, setExplicitLineChoices] = useState<
+    Record<string, "delivery" | "pickup">
+  >({});
   const [lineItemsLoading, setLineItemsLoading] = useState(false);
   // True once the first line-items fetch for this journey has resolved —
   // background refetches (every events change re-runs the fetch) must not
@@ -800,6 +810,35 @@ export default function JourneyWorkspace({
     setFulfillmentSaving(true);
     try {
       await updateJourneyFulfillment(journey.id, value);
+      // Recompute every line against the new order fulfillment. A line
+      // follows the order unless the user explicitly set its dropdown;
+      // a location-pinned 'pickup' override is not explicit.
+      for (const item of lineItems) {
+        const stored = item.fulfillment_type_override;
+        const explicit =
+          explicitLineChoices[item.id] ??
+          // A 'pickup' override carrying a location on a journey that was
+          // pickup is location-driven, not a chosen override.
+          (journey.fulfillment_type === "pickup" &&
+          stored === "pickup" &&
+          item.pickup_location_id
+            ? null
+            : stored);
+        const payload = lineItemFulfillmentPayload({
+          explicitChoice: explicit,
+          pickupLocationId: item.pickup_location_id,
+          orderFulfillment: value,
+        });
+        const unchanged =
+          payload.fulfillmentTypeOverride === stored &&
+          payload.pickupLocationId === (item.pickup_location_id ?? null);
+        if (!unchanged) {
+          await updateJourneyLineItem(item.id, {
+            fulfillment_type_override: payload.fulfillmentTypeOverride,
+            pickup_location_id: payload.pickupLocationId,
+          });
+        }
+      }
       await handlePanelRefresh();
     } catch (e: any) {
       setPanelError(e.message ?? "Failed to update fulfillment type");
@@ -1787,18 +1826,26 @@ export default function JourneyWorkspace({
                         canReassign && (
                         <div className="mt-1.5 space-y-1">
                           <select
-                            value={item.fulfillment_type_override ?? journey.fulfillment_type}
+                            value={
+                              explicitLineChoices[item.id] ??
+                              item.fulfillment_type_override ??
+                              journey.fulfillment_type
+                            }
                             onChange={(e) => {
                               const choice = e.target.value as "delivery" | "pickup";
+                              setExplicitLineChoices((m) => ({
+                                ...m,
+                                [item.id]: choice,
+                              }));
+                              const payload = lineItemFulfillmentPayload({
+                                explicitChoice: choice,
+                                pickupLocationId: item.pickup_location_id,
+                                orderFulfillment: journey.fulfillment_type,
+                              });
                               updateLineItem(item.id, {
-                                // Store inherit (null) when the line
-                                // matches the journey's fulfillment.
                                 fulfillment_type_override:
-                                  choice === journey.fulfillment_type ? null : choice,
-                                pickup_location_id:
-                                  choice === "pickup"
-                                    ? item.pickup_location_id ?? journey.store_id
-                                    : null,
+                                  payload.fulfillmentTypeOverride,
+                                pickup_location_id: payload.pickupLocationId,
                               });
                             }}
                             className="w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs"
@@ -1806,15 +1853,17 @@ export default function JourneyWorkspace({
                             <option value="delivery" disabled={!hasDeliveryAddress}>Delivery</option>
                             <option value="pickup">Pickup</option>
                           </select>
-                          {(item.fulfillment_type_override ?? journey.fulfillment_type) === "pickup" && (
+                          {(explicitLineChoices[item.id] ??
+                            item.fulfillment_type_override ??
+                            journey.fulfillment_type) === "pickup" && (
                             <select
                               value={item.pickup_location_id ?? journey.store_id}
                               onChange={(e) => updateLineItem(item.id, {
                                 // m032: pickup_location_id requires the
                                 // line's own override to be 'pickup';
-                                // picking a location on an inherited
-                                // pickup line pins it to pickup.
-                                fulfillment_type_override: item.fulfillment_type_override ?? "pickup",
+                                // the location pick itself is not an
+                                // explicit fulfillment choice.
+                                fulfillment_type_override: "pickup",
                                 pickup_location_id: e.target.value,
                               })}
                               className="w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs"
