@@ -1417,7 +1417,15 @@ export default function NewJourneyPage() {
                             <select
                               value={item.pickup_location_id ?? storeId}
                               onChange={(e) =>
-                                updateLineItem(item.id, { pickup_location_id: e.target.value })
+                                updateLineItem(item.id, {
+                                  // m032: pickup_location_id is only valid
+                                  // when the line's own override is
+                                  // 'pickup', so picking a location on an
+                                  // inherited line pins it to pickup.
+                                  fulfillment_type_override:
+                                    item.fulfillment_type_override ?? "pickup",
+                                  pickup_location_id: e.target.value,
+                                })
                               }
                               className="w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs"
                             >

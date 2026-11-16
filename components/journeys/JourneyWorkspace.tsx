@@ -1801,7 +1801,14 @@ export default function JourneyWorkspace({
                           {(item.fulfillment_type_override ?? journey.fulfillment_type) === "pickup" && (
                             <select
                               value={item.pickup_location_id ?? journey.store_id}
-                              onChange={(e) => updateLineItem(item.id, { pickup_location_id: e.target.value })}
+                              onChange={(e) => updateLineItem(item.id, {
+                                // m032: pickup_location_id requires the
+                                // line's own override to be 'pickup';
+                                // picking a location on an inherited
+                                // pickup line pins it to pickup.
+                                fulfillment_type_override: item.fulfillment_type_override ?? "pickup",
+                                pickup_location_id: e.target.value,
+                              })}
                               className="w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs"
                             >
                               {stores.filter((s) => s.location_type !== "WAREHOUSE_QUARANTINE").map((s) => (
