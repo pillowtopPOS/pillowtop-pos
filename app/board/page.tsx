@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { isStoreConfirmedToday, storeSelectUrl } from "@/lib/journeys/storeConfirm";
+import { formatPhone } from "@/lib/format/phone";
 import { BOARD_STATES, type SleepJourneyState } from "@/lib/constants";
 import {
   fetchJourneys,
@@ -820,7 +821,7 @@ function BoardContent() {
                       ? `${j.customer.first_name} ${j.customer.last_name}`
                       : "Unknown"}
                   </td>
-                  <td className="px-4 py-2">{j.customer?.phone ?? "—"}</td>
+                  <td className="px-4 py-2">{j.customer?.phone ? formatPhone(j.customer.phone) : "—"}</td>
                   <td className="px-4 py-2">{j.product_summary ?? "—"}</td>
                   <td className="px-4 py-2">
                     {j.cancelled_at ? "Cancelled" : j.current_state}
@@ -1372,7 +1373,7 @@ function JourneyCard({
         </p>
       )}
       <p className="truncate text-[10px] leading-tight text-slate-500">
-        {journey.customer?.phone ?? "—"}
+        {journey.customer?.phone ? formatPhone(journey.customer.phone) : "—"}
       </p>
       {journey.product_summary && (
         <p className="truncate text-[10px] leading-tight text-slate-600">

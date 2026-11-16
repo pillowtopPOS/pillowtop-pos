@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { fetchOpportunities, type Opportunity } from "@/lib/journeys/queries";
+import { formatPhone } from "@/lib/format/phone";
 
 export default function OpportunitiesPage() {
   const router = useRouter();
@@ -68,7 +69,7 @@ export default function OpportunitiesPage() {
                 <p className="text-xs text-slate-500">{o.source ?? "—"}</p>
               </div>
               <div className="mt-1 text-xs text-slate-500">
-                {o.phone} · {o.email}
+                {formatPhone(o.phone)} · {o.email}
               </div>
               {o.product_summary && (
                 <p className="mt-1 text-xs text-slate-600">{o.product_summary}</p>

@@ -909,7 +909,9 @@ export type CustomerInput = {
   firstName: string;
   lastName: string;
   phone: string;
+  phone2?: string;
   email: string;
+  referralSource?: string;
   streetAddress?: string;
   streetAddressLine2?: string;
   city?: string;
@@ -928,6 +930,10 @@ export type LineItemInput = {
 
 type BaseCreateInput = {
   customer: CustomerInput;
+  // When set (repeat customer picked on the form), the journey reuses this
+  // customers row instead of inserting a new one; changed fields are
+  // written back to it once. company_id is set by the m142 trigger.
+  customerId?: string | null;
   lineItems: LineItemInput[];
   storeId: string;
   assignedEmployeeId: string | null;
@@ -960,23 +966,85 @@ export async function createJourney(input: CreateJourneyInput): Promise<string> 
     throw new Error("Not authenticated");
   }
 
-  const customerId = crypto.randomUUID();
+  let customerId = input.customerId ?? null;
 
-  const { error: customerError } = await supabase.from("customers").insert({
-    id: customerId,
-    first_name: input.customer.firstName,
-    last_name: input.customer.lastName,
-    phone: input.customer.phone,
-    email: input.customer.email,
-    street_address: input.customer.streetAddress ?? null,
-    street_address_line_2: input.customer.streetAddressLine2 ?? null,
-    city: input.customer.city ?? null,
-    state: input.customer.state ?? null,
-    zip_code: input.customer.zipCode ?? null,
-  });
+  if (customerId) {
+    // Repeat customer: diff the form values against the stored row and
+    // write back only what changed. Scalars in one update; the address
+    // goes through updateCustomerAddress so its error handling and the
+    // m036 trigger apply.
+    const { data: existing, error: existingError } = await supabase
+      .from("customers")
+      .select(
+        "first_name, last_name, phone, phone2, email, referral_source, street_address, street_address_line_2, city, state, zip_code"
+      )
+      .eq("id", customerId)
+      .single();
 
-  if (customerError) {
-    throw new Error(customerError.message);
+    if (existingError || !existing) {
+      throw new Error(existingError?.message ?? "Selected customer not found");
+    }
+    // referral_source/phone2 are m142 columns and may be absent from the
+    // generated types until the migration ships.
+    const ex = existing as Record<string, string | null>;
+
+    const scalarUpdates: Record<string, string | null> = {};
+    const scalars: Array<[string, string | null | undefined, string | null]> = [
+      ["phone", input.customer.phone, ex.phone],
+      ["phone2", input.customer.phone2, ex.phone2],
+      ["email", input.customer.email, ex.email],
+      ["referral_source", input.customer.referralSource, ex.referral_source],
+    ];
+    for (const [col, next, prev] of scalars) {
+      const nextTrim = next?.trim() || null;
+      const prevTrim = prev?.trim() || null;
+      if (nextTrim !== prevTrim) scalarUpdates[col] = nextTrim;
+    }
+    if (Object.keys(scalarUpdates).length > 0) {
+      const { error: updateError } = await supabase
+        .from("customers")
+        .update(scalarUpdates)
+        .eq("id", customerId);
+      if (updateError) throw new Error(updateError.message);
+    }
+
+    const address = {
+      street_address: input.customer.streetAddress ?? null,
+      street_address_line_2: input.customer.streetAddressLine2 ?? null,
+      city: input.customer.city ?? null,
+      state: input.customer.state ?? null,
+      zip_code: input.customer.zipCode ?? null,
+    };
+    const addressChanged =
+      (address.street_address?.trim() || null) !== (ex.street_address?.trim() || null) ||
+      (address.street_address_line_2?.trim() || null) !== (ex.street_address_line_2?.trim() || null) ||
+      (address.city?.trim() || null) !== (ex.city?.trim() || null) ||
+      (address.state?.trim() || null) !== (ex.state?.trim() || null) ||
+      (address.zip_code?.trim() || null) !== (ex.zip_code?.trim() || null);
+    if (addressChanged) {
+      await updateCustomerAddress(customerId, address);
+    }
+  } else {
+    customerId = crypto.randomUUID();
+
+    const { error: customerError } = await supabase.from("customers").insert({
+      id: customerId,
+      first_name: input.customer.firstName,
+      last_name: input.customer.lastName,
+      phone: input.customer.phone,
+      phone2: input.customer.phone2?.trim() || null,
+      email: input.customer.email,
+      referral_source: input.customer.referralSource || null,
+      street_address: input.customer.streetAddress ?? null,
+      street_address_line_2: input.customer.streetAddressLine2 ?? null,
+      city: input.customer.city ?? null,
+      state: input.customer.state ?? null,
+      zip_code: input.customer.zipCode ?? null,
+    });
+
+    if (customerError) {
+      throw new Error(customerError.message);
+    }
   }
 
   const firstItem = input.lineItems[0];

@@ -302,20 +302,6 @@ export function contactDisplayNote(note: string | null): string | null {
   return cleaned || null;
 }
 
-/** "(555) 222-0001" for a 10-digit US number; falls back to the trimmed
- *  input when it is not a recognizable US number. */
-export function formatPhoneDisplay(phone: string | null | undefined): string {
-  const trimmed = (phone ?? "").trim();
-  const digits = trimmed.replace(/\D/g, "");
-  const ten = digits.length === 11 && digits.startsWith("1")
-    ? digits.slice(1)
-    : digits;
-  if (ten.length === 10) {
-    return `(${ten.slice(0, 3)}) ${ten.slice(3, 6)}-${ten.slice(6)}`;
-  }
-  return trimmed;
-}
-
 /** "Waiting on customer until Fri" day label from an ISO timestamp. */
 export function holdUntilDayLabel(iso: string | null): string {
   if (!iso) return "";

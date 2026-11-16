@@ -27,6 +27,12 @@ import {
   defaultAssigneeId,
   parseAssigneeChoice,
 } from "@/lib/journeys/assignee";
+import { formatPhone, formatPhoneAsYouType } from "@/lib/format/phone";
+import { REFERRAL_SOURCES } from "@/lib/customers/referralSources";
+import {
+  fetchMatchingCustomers,
+  type CustomerMatch,
+} from "@/lib/customers/lookup";
 
 const PAYMENT_METHODS = [
   "Credit card",
@@ -87,13 +93,20 @@ export default function NewJourneyPage() {
     firstName: "",
     lastName: "",
     phone: "",
+    phone2: "",
     email: "",
+    referralSource: "",
     streetAddress: "",
     streetAddressLine2: "",
     city: "",
     state: "",
     zipCode: "",
   });
+  // Repeat-customer lookup (m142): candidates from find_matching_customers,
+  // ids the rep dismissed, and the customer chosen via "Use this customer".
+  const [customerMatches, setCustomerMatches] = useState<CustomerMatch[]>([]);
+  const [dismissedMatchIds, setDismissedMatchIds] = useState<Set<string>>(new Set());
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerMatch | null>(null);
   const [storeId, setStoreId] = useState("");
   const [fulfillmentType, setFulfillmentType] = useState<"delivery" | "pickup">("delivery");
   const [assignedEmployeeId, setAssignedEmployeeId] = useState<string | null>(null);
@@ -191,6 +204,83 @@ export default function NewJourneyPage() {
 
   const hasDeliveryAddress = customer.streetAddress.trim() !== "";
 
+  // Repeat-customer lookup: fires 400ms after the rep stops typing when
+  // the phone is a full 10 digits, the email has an @, or both names are
+  // 2+ characters. Warn-only: it never gates Continue. Skipped while an
+  // existing customer is selected (the panel is collapsed then anyway).
+  const lookupPhoneDigits = customer.phone.replace(/\D/g, "");
+  const lookupPhoneValid =
+    lookupPhoneDigits.length === 10 ||
+    (lookupPhoneDigits.length === 11 && lookupPhoneDigits.startsWith("1"));
+  const lookupEmailValid = customer.email.includes("@");
+  const lookupNameValid =
+    customer.firstName.trim().length >= 2 && customer.lastName.trim().length >= 2;
+  const lookupActive =
+    !selectedCustomer &&
+    (lookupPhoneValid || lookupEmailValid || lookupNameValid);
+
+  useEffect(() => {
+    if (!lookupActive) {
+      setCustomerMatches([]);
+      return;
+    }
+    const handle = setTimeout(() => {
+      fetchMatchingCustomers({
+        first: customer.firstName,
+        last: customer.lastName,
+        phone: customer.phone,
+        email: customer.email,
+      }).then(setCustomerMatches);
+    }, 400);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    lookupActive,
+    customer.firstName,
+    customer.lastName,
+    customer.phone,
+    customer.email,
+  ]);
+
+  const visibleMatches = customerMatches.filter(
+    (m) => !dismissedMatchIds.has(m.id)
+  );
+
+  function useCustomerMatch(match: CustomerMatch) {
+    setCustomer({
+      firstName: match.first_name ?? "",
+      lastName: match.last_name ?? "",
+      phone: formatPhone(match.phone),
+      phone2: formatPhone(match.phone2),
+      email: match.email ?? "",
+      referralSource: match.referral_source ?? "",
+      streetAddress: match.street_address ?? "",
+      streetAddressLine2: match.street_address_line_2 ?? "",
+      city: match.city ?? "",
+      state: match.state ?? "",
+      zipCode: match.zip_code ?? "",
+    });
+    setSelectedCustomer(match);
+  }
+
+  function clearSelectedCustomer() {
+    setSelectedCustomer(null);
+  }
+
+  // With an existing customer selected, address edits write back to that
+  // customer's row (and therefore their earlier orders) at submit time.
+  const selectedAddressDirty = (() => {
+    if (!selectedCustomer) return false;
+    const norm = (v: string | null | undefined) => (v ?? "").trim();
+    return (
+      norm(customer.streetAddress) !== norm(selectedCustomer.street_address) ||
+      norm(customer.streetAddressLine2) !== norm(selectedCustomer.street_address_line_2) ||
+      norm(customer.city) !== norm(selectedCustomer.city) ||
+      norm(customer.state) !== norm(selectedCustomer.state) ||
+      norm(customer.zipCode) !== norm(selectedCustomer.zip_code)
+    );
+  })();
+
   const canSubmitQuote = useMemo(() => {
     return (
       customer.firstName &&
@@ -253,6 +343,7 @@ export default function NewJourneyPage() {
 
     const baseInput = {
       customer,
+      customerId: selectedCustomer?.id ?? null,
       lineItems: lineItems.map((item) => ({
         productId: item.product_id,
         itemName: item.item_name,
@@ -674,6 +765,109 @@ export default function NewJourneyPage() {
         {step === 1 && (
           <div className="space-y-4">
             <h2 className="text-sm font-semibold text-slate-700">Customer</h2>
+
+            {selectedCustomer ? (
+              <div className="flex items-center justify-between rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                <span>
+                  Using existing customer: {selectedCustomer.first_name}{" "}
+                  {selectedCustomer.last_name}.
+                </span>
+                <button
+                  type="button"
+                  onClick={clearSelectedCustomer}
+                  className="ml-3 shrink-0 font-medium text-emerald-700 underline hover:text-emerald-900"
+                >
+                  Change
+                </button>
+              </div>
+            ) : visibleMatches.length > 0 ? (
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                <p className="mb-2 text-xs font-medium uppercase text-slate-500">
+                  Possible existing customers
+                </p>
+                <div className="space-y-2">
+                  {visibleMatches.map((m) => {
+                    const nameOnly =
+                      m.reasons.length === 1 && m.reasons[0] === "name";
+                    const addrLine = [
+                      [m.street_address, m.street_address_line_2]
+                        .filter(Boolean)
+                        .join(" "),
+                      [m.city, m.state, m.zip_code].filter(Boolean).join(", "),
+                    ]
+                      .filter(Boolean)
+                      .join(" - ");
+                    const orderLine =
+                      m.journey_count > 0
+                        ? `${m.journey_count} order${m.journey_count === 1 ? "" : "s"}${
+                            m.last_order_at
+                              ? `, last ${new Date(m.last_order_at).toLocaleDateString()}`
+                              : ""
+                          }`
+                        : "No orders yet";
+                    return (
+                      <div
+                        key={m.id}
+                        className={`rounded-md border bg-white p-2 text-sm ${
+                          nameOnly ? "border-slate-200 opacity-80" : "border-amber-200"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-medium text-slate-900">
+                              {m.first_name} {m.last_name}
+                            </p>
+                            <p className="text-xs text-slate-600">
+                              {[formatPhone(m.phone), m.phone2 ? formatPhone(m.phone2) : null]
+                                .filter(Boolean)
+                                .join(" / ") || "No phone"}
+                              {m.email ? ` - ${m.email}` : ""}
+                            </p>
+                            {addrLine && (
+                              <p className="text-xs text-slate-500">{addrLine}</p>
+                            )}
+                            <p className="text-xs text-slate-500">{orderLine}</p>
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {m.reasons.map((r) => (
+                                <span
+                                  key={r}
+                                  className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600"
+                                >
+                                  {r === "phone"
+                                    ? "Same phone"
+                                    : r === "email"
+                                      ? "Same email"
+                                      : "Same name"}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 flex-col gap-1">
+                            <button
+                              type="button"
+                              onClick={() => useCustomerMatch(m)}
+                              className="rounded-md bg-brand-600 px-2 py-1 text-xs font-medium text-white hover:bg-brand-700"
+                            >
+                              Use this customer
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDismissedMatchIds((s) => new Set(s).add(m.id))
+                              }
+                              className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                            >
+                              Not the same person
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700">First name</label>
@@ -692,14 +886,43 @@ export default function NewJourneyPage() {
                 />
               </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700">Phone</label>
-              <input
-                type="tel"
-                value={customer.phone}
-                onChange={(e) => setCustomer((c) => ({ ...c, phone: e.target.value }))}
-                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700">Phone</label>
+                <input
+                  type="tel"
+                  value={customer.phone}
+                  onChange={(e) =>
+                    setCustomer((c) => ({
+                      ...c,
+                      phone: formatPhoneAsYouType(e.target.value),
+                    }))
+                  }
+                  onBlur={(e) =>
+                    setCustomer((c) => ({ ...c, phone: formatPhone(e.target.value) }))
+                  }
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700">
+                  Second phone <span className="font-normal text-slate-400">(optional)</span>
+                </label>
+                <input
+                  type="tel"
+                  value={customer.phone2}
+                  onChange={(e) =>
+                    setCustomer((c) => ({
+                      ...c,
+                      phone2: formatPhoneAsYouType(e.target.value),
+                    }))
+                  }
+                  onBlur={(e) =>
+                    setCustomer((c) => ({ ...c, phone2: formatPhone(e.target.value) }))
+                  }
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                />
+              </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700">Email</label>
@@ -709,6 +932,26 @@ export default function NewJourneyPage() {
                 onChange={(e) => setCustomer((c) => ({ ...c, email: e.target.value }))}
                 className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700">
+                How did you hear about us?{" "}
+                <span className="font-normal text-slate-400">(optional)</span>
+              </label>
+              <select
+                value={customer.referralSource}
+                onChange={(e) =>
+                  setCustomer((c) => ({ ...c, referralSource: e.target.value }))
+                }
+                className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              >
+                <option value="">Select…</option>
+                {REFERRAL_SOURCES.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700">Street address</label>
@@ -732,6 +975,11 @@ export default function NewJourneyPage() {
               <input placeholder="State" value={customer.state} onChange={(e) => setCustomer((c) => ({ ...c, state: e.target.value }))} className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
               <input placeholder="ZIP" value={customer.zipCode} onChange={(e) => setCustomer((c) => ({ ...c, zipCode: e.target.value }))} className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
             </div>
+            {selectedCustomer && selectedAddressDirty && (
+              <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                This also changes the address on this customer&apos;s earlier orders.
+              </p>
+            )}
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setStep(0)}

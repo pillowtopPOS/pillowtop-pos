@@ -7,6 +7,7 @@ import { Check, MoreHorizontal, Trash2, Truck, X, Copy,
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { resolveLineItemLocation } from "@/lib/journeys/fulfillment";
+import { formatPhone } from "@/lib/format/phone";
 import {
   getExchangeAction,
   getJourneyExchangeActions,
@@ -1506,7 +1507,7 @@ export default function JourneyWorkspace({
               {journey.customer?.phone && (
                 <p className="mt-0.5 text-base font-medium text-slate-800">
                   <span className="sr-only">Phone: </span>
-                  {journey.customer.phone}
+                  {formatPhone(journey.customer.phone)}
                 </p>
               )}
               {journey.customer?.email && (
@@ -1530,7 +1531,7 @@ export default function JourneyWorkspace({
                       <span className="sr-only">Additional contact: </span>
                       {c.name}
                       {c.role_label ? ` — ${c.role_label}` : ""}
-                      {c.phone ? ` · ${c.phone}` : ""}
+                      {c.phone ? ` · ${formatPhone(c.phone)}` : ""}
                     </p>
                   ))}
                 </div>

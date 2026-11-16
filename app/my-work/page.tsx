@@ -11,6 +11,7 @@ import DeliveryContactModal from "@/components/delivery/DeliveryContactModal";
 import CopyButton from "@/components/CopyButton";
 import { Mail, Phone } from "lucide-react";
 import { formatPhoneDashed } from "@/lib/delivery/calls";
+import { formatPhone } from "@/lib/format/phone";
 import { confirmationDayLabel } from "@/lib/delivery/calls";
 import { useConfirmationCallCount } from "@/lib/delivery/useConfirmationCallCount";
 import {
@@ -450,7 +451,7 @@ export default function MyWorkPage() {
                   <p className="text-xs text-slate-500">{o.product_summary ?? "—"}</p>
                 </div>
                 <div className="text-right text-xs text-slate-500">
-                  {o.phone}
+                  {formatPhone(o.phone)}
                 </div>
               </div>
             );
