@@ -26,7 +26,7 @@ alter table public.customers
   add column if not exists updated_at timestamptz not null default now();
 
 comment on column public.customers.company_id is
-  'Company that owns this customer. Set from the caller''s employee company on insert when absent; backfilled from the customer''s journeys.'';
+  'Company that owns this customer. Set from the caller''s employee company on insert when absent; backfilled from the customer''s journeys.';
 comment on column public.customers.phone2 is
   'Optional second phone number, formatted xxx-xxx-xxxx by trigger when recognizable.';
 comment on column public.customers.referral_source is
@@ -294,3 +294,37 @@ revoke execute on function public.find_matching_customers(text, text, text, text
   from public, anon;
 grant execute on function public.find_matching_customers(text, text, text, text)
   to authenticated;
+
+-- 9. Tenant guards on customers.company_id (found in review: with the old
+--    INSERT policy (check true) any signed-in user could plant a customer in
+--    ANOTHER company, and the new company-scoped SELECT then shows it there).
+drop policy if exists "Customers insertable by authenticated users" on public.customers;
+create policy "Customers insertable by authenticated users"
+  on public.customers for insert
+  to authenticated
+  with check (
+    company_id is not null
+    and company_id = public.current_employee_company_id()
+  );
+
+create or replace function public.customers_lock_company_id()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  -- Signed-in users can never move a customer between companies. Service
+  -- role (auth.uid() is null) may, for data repair.
+  if auth.uid() is not null
+     and old.company_id is not null
+     and new.company_id is distinct from old.company_id then
+    raise exception 'A customer cannot be moved to another company';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_customers_lock_company_id on public.customers;
+create trigger trg_customers_lock_company_id
+before update on public.customers
+for each row execute function public.customers_lock_company_id();
