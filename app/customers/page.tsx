@@ -167,12 +167,8 @@ function CustomersPageInner() {
                       const lines = addressLines(c);
                       if (lines.length === 0) return "-";
                       return (
-                        <div className="max-w-[220px]">
-                          {lines.slice(0, 3).map((l, i) => (
-                            <p key={i} className="truncate leading-snug">
-                              {l}
-                            </p>
-                          ))}
+                        <div className="line-clamp-3 max-w-[240px] whitespace-pre-line">
+                          {lines.join("\n")}
                         </div>
                       );
                     })()}
