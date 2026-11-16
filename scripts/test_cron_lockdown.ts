@@ -237,6 +237,14 @@ async function main() {
   });
   check("cron wrong secret -> 401", r.status === 401, `got ${r.status}`);
   r = await fetch(`${base}/api/cron`, {
+    headers: { authorization: `Bearer ${CRON_SECRET}é` },
+  });
+  check(
+    "cron non-ASCII header -> 401",
+    r.status === 401,
+    `got ${r.status}`
+  );
+  r = await fetch(`${base}/api/cron`, {
     headers: { authorization: `Bearer ${CRON_SECRET}` },
   });
   check("cron right secret -> 200", r.status === 200, `got ${r.status} ${await r.text()}`);

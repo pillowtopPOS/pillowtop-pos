@@ -10,8 +10,10 @@ const TRANSFERS_CRON_KEY = "transfers";
 function authorized(request: Request, secret: string): boolean {
   const auth = request.headers.get("authorization") ?? "";
   const expected = `Bearer ${secret}`;
-  if (auth.length !== expected.length) return false;
-  return timingSafeEqual(Buffer.from(auth), Buffer.from(expected));
+  const authBytes = Buffer.from(auth, "utf8");
+  const expectedBytes = Buffer.from(expected, "utf8");
+  if (authBytes.length !== expectedBytes.length) return false;
+  return timingSafeEqual(authBytes, expectedBytes);
 }
 
 export async function GET(request: Request) {
