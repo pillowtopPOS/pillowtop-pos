@@ -730,6 +730,30 @@ export async function fetchDeliveryConfirmationList(
   };
 }
 
+/** journey_id -> store name for the call list's All stores rows.
+ *  The list RPC does not return per-row store names (m141 is frozen),
+ *  so the names are looked up client side with one targeted join. */
+export async function fetchJourneyStoreNames(
+  journeyIds: string[]
+): Promise<Record<string, string>> {
+  if (journeyIds.length === 0) return {};
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("sleep_journeys")
+    .select("id, store:stores!store_id ( name )")
+    .in("id", journeyIds);
+  if (error) return {};
+  const out: Record<string, string> = {};
+  for (const row of (data ?? []) as {
+    id: string;
+    store: { name: string | null } | { name: string | null }[] | null;
+  }[]) {
+    const store = Array.isArray(row.store) ? row.store[0] : row.store;
+    if (store?.name) out[row.id] = store.name;
+  }
+  return out;
+}
+
 /** Whether the signed-in employee may view/log confirmation calls. */
 export async function fetchDeliveryLogConfirmationCalls(): Promise<boolean> {
   const supabase = createClient();

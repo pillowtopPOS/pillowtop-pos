@@ -18,6 +18,7 @@ import {
   fetchConfirmationStoreId,
   fetchDeliveryConfirmationList,
   fetchDeliveryLogConfirmationCalls,
+  fetchJourneyStoreNames,
   type ConfirmationCallList,
   type ConfirmationCallListItem,
 } from "@/lib/delivery/queries";
@@ -47,6 +48,8 @@ function CallsInner() {
   const [allowed, setAllowed] = useState<boolean | null>(null);
   const [data, setData] = useState<ConfirmationCallList | null>(null);
   const [scope, setScope] = useState<"store" | "all">("store");
+  // journey_id -> store name, only needed for the All stores rows.
+  const [storeNames, setStoreNames] = useState<Record<string, string>>({});
   // Resolved once on mount; the RPC falls back to home_store_id when
   // null, matching fetchConfirmationStoreId's contract.
   const storeIdRef = useRef<string | null>(null);
@@ -177,6 +180,23 @@ function CallsInner() {
 
   const items = data?.items ?? [];
   const confirmedCount = items.filter((i) => i.status === "confirmed").length;
+
+  // All stores rows need each order's store name; the list RPC does
+  // not return it, so look the names up once per loaded list.
+  useEffect(() => {
+    if (scope !== "all" || items.length === 0) {
+      setStoreNames({});
+      return;
+    }
+    let alive = true;
+    fetchJourneyStoreNames(items.map((i) => i.journey_id)).then((m) => {
+      if (alive) setStoreNames(m);
+    });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope, data]);
 
   const windowTextFor = (item: ConfirmationCallListItem): string =>
     confirmationWindowText(
@@ -337,9 +357,12 @@ function CallsInner() {
                           >
                             {item.journey_number ?? "Order"}
                           </button>
-                          {item.assigned_employee_name && (
-                            <span className="text-xs text-slate-500">
-                              {item.assigned_employee_name}
+                          <span className="text-xs text-slate-500">
+                            {item.assigned_employee_name ?? "Unassigned"}
+                          </span>
+                          {scope === "all" && storeNames[item.journey_id] && (
+                            <span className="text-xs text-slate-400">
+                              {storeNames[item.journey_id]}
                             </span>
                           )}
                           <span

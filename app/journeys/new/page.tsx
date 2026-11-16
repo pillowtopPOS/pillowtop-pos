@@ -23,6 +23,10 @@ import { fetchInTransitArrivals } from "@/lib/transfers/queries";
 import { resolveLineItemLocation } from "@/lib/journeys/fulfillment";
 import Modal from "@/components/Modal";
 import { isStoreConfirmedToday, storeSelectUrl } from "@/lib/journeys/storeConfirm";
+import {
+  defaultAssigneeId,
+  parseAssigneeChoice,
+} from "@/lib/journeys/assignee";
 
 const PAYMENT_METHODS = [
   "Credit card",
@@ -120,6 +124,10 @@ export default function NewJourneyPage() {
         setStores(s);
         setEmployees(e);
         setStoreId(activeStore && s.find((st) => st.id === activeStore) ? activeStore : (s[0]?.id ?? ""));
+        // Default the salesperson to the signed-in employee; the
+        // select still allows any employee or a deliberate Unassigned.
+        const me = e.find((emp) => emp.auth_user_id === session.user.id);
+        setAssignedEmployeeId(defaultAssigneeId(me ?? null));
         setLoading(false);
       });
     });
@@ -888,7 +896,7 @@ export default function NewJourneyPage() {
               <label className="block text-sm font-medium text-slate-700">Assigned employee</label>
               <select
                 value={assignedEmployeeId ?? ""}
-                onChange={(e) => setAssignedEmployeeId(e.target.value === "" ? null : e.target.value)}
+                onChange={(e) => setAssignedEmployeeId(parseAssigneeChoice(e.target.value))}
                 className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               >
                 <option value="">Unassigned</option>
