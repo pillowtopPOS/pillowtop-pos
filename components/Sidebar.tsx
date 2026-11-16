@@ -83,12 +83,13 @@ export default function Sidebar({
         return;
       }
 
-      // Poll the shared cron endpoint from any logged-in page, not just the
-      // Board — the daily jobs stay alive as long as anyone is signed in.
-      fetch("/api/cron").catch(console.error);
-      cronInterval = setInterval(() => {
-        fetch("/api/cron").catch(console.error);
-      }, 60000);
+      // Poll the company-scoped automation tick from any logged-in
+      // page, not just the Board — the daily jobs stay alive as long
+      // as anyone is signed in. POST keeps the session cookie flow.
+      const tick = () =>
+        fetch("/api/automation/tick", { method: "POST" }).catch(console.error);
+      tick();
+      cronInterval = setInterval(tick, 60000);
 
       setActiveStoreId(session.user.user_metadata?.active_store_id ?? null);
       Promise.all([fetchCurrentEmployee(), fetchStores()]).then(([e, s]) => {

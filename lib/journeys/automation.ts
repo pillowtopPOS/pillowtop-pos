@@ -1,18 +1,39 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 
-export async function processAutomaticTransitions() {
+// companyId scopes every read/write below to one company (used by the
+// signed-in /api/automation/tick route). sleep_journeys has no
+// company_id column — the journey's store carries it — so scoping
+// resolves the company's store ids first and filters on store_id.
+// Omitted (the nightly /api/cron), behavior is unchanged.
+export async function processAutomaticTransitions(companyId?: string) {
   const supabase = createAdminClient();
   const now = new Date();
+
+  let storeIds: string[] | null = null;
+  if (companyId) {
+    const { data: stores, error: storesError } = await supabase
+      .from("stores")
+      .select("id")
+      .eq("company_id", companyId);
+    if (storesError) throw new Error(storesError.message);
+    storeIds = (stores ?? []).map((s: { id: string }) => s.id);
+    if (storeIds.length === 0) {
+      revalidatePath("/board");
+      return;
+    }
+  }
 
   // Sleep trials that have exceeded their trial length. The anchor is
   // sleep_journeys.delivered_at — the actual delivery date — and the
   // journey's own policy snapshot when present (migration 057), falling
   // back to the store's current trial length for legacy rows.
-  const { data: trialJourneys, error: trialError } = await supabase
+  let journeyQuery = supabase
     .from("sleep_journeys")
     .select("id, store_id, current_state, delivered_at, trial_length_nights")
     .eq("current_state", "Sleep Trial");
+  if (storeIds) journeyQuery = journeyQuery.in("store_id", storeIds);
+  const { data: trialJourneys, error: trialError } = await journeyQuery;
 
   if (trialError) throw new Error(trialError.message);
 
@@ -21,10 +42,12 @@ export async function processAutomaticTransitions() {
   // journey stays in Sleep Trial until the action resolves. Set-based
   // lookup (the parked set stays small); on failure we log and treat
   // nothing as parked rather than silently completing exchanges.
-  const { data: parkedItems, error: parkedError } = await supabase
+  let parkedQuery = supabase
     .from("sleep_trial_items")
     .select("journey_id")
     .in("status", ["EXCHANGE_IN_PROGRESS", "RETURN_IN_PROGRESS"]);
+  if (companyId) parkedQuery = parkedQuery.eq("company_id", companyId);
+  const { data: parkedItems, error: parkedError } = await parkedQuery;
   if (parkedError) {
     console.error(
       "processAutomaticTransitions: parked trial item lookup failed",
@@ -41,6 +64,8 @@ export async function processAutomaticTransitions() {
 
     let nights = journey.trial_length_nights;
     if (nights == null) {
+      // store_id comes from the already company-filtered journey set,
+      // so this read cannot cross companies either way.
       const { data: store } = await supabase
         .from("stores")
         .select("trial_length_nights")
