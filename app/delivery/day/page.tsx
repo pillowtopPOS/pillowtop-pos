@@ -26,6 +26,7 @@ import {
   type DeliveryStopWindowInput,
 } from "@/lib/delivery/queries";
 import { confirmationDayLabel, formatPhoneDashed } from "@/lib/delivery/calls";
+import { useUnsavedChangesGuard } from "@/lib/useUnsavedChangesGuard";
 import {
   fillMissingWindows,
   minutesToLabel,
@@ -174,7 +175,6 @@ function DeliveryDayInner() {
   const [busy, setBusy] = useState(false);
   const [suggestMsg, setSuggestMsg] = useState<string | null>(null);
   const [closeConfirm, setCloseConfirm] = useState(false);
-  const [pendingNav, setPendingNav] = useState<string | null>(null);
   const [movingStop, setMovingStop] = useState<DeliveryDayPlanStop | null>(null);
   const [cancellingStop, setCancellingStop] = useState<DeliveryDayPlanStop | null>(null);
   const [cancelReason, setCancelReason] = useState("");
@@ -266,6 +266,18 @@ function DeliveryDayInner() {
   // write), so its size IS the unsaved-window-change count.
   const winDirtyCount = Object.keys(winDraft).length;
 
+  // Unsaved-changes guard: browser unload + in-app anchor clicks.
+  // Covers route AND window drafts.
+  const { pendingNav, confirmDiscard, cancelDiscard } =
+    useUnsavedChangesGuard({
+      dirty: dirty || winDirtyCount > 0,
+      onDiscard: () => {
+        setDirty(false);
+        setWinDraft({});
+        setWinEditing(null);
+      },
+    });
+
   // Quiet refetch when the tab regains focus — only when there is
   // nothing unsaved and nothing open that a reload could clobber.
   // Throttled to one refetch per 15 seconds.
@@ -306,46 +318,6 @@ function DeliveryDayInner() {
     resuggestTruck,
     load,
   ]);
-
-  // Unsaved-changes guard: browser unload + in-app anchor clicks.
-  // Covers route AND window drafts.
-  useEffect(() => {
-    if (!(dirty || winDirtyCount > 0)) return;
-    const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-    };
-    window.addEventListener("beforeunload", onBeforeUnload);
-    const onClick = (e: MouseEvent) => {
-      if (
-        e.defaultPrevented ||
-        e.button !== 0 ||
-        e.metaKey ||
-        e.ctrlKey ||
-        e.shiftKey ||
-        e.altKey
-      )
-        return;
-      const a = (e.target as HTMLElement).closest("a[href]");
-      if (!a) return;
-      // New-tab links (target=_blank, e.g. the peek's "Open full
-      // journey") never leave this page — no prompt needed.
-      if ((a as HTMLAnchorElement).target === "_blank") return;
-      const href = a.getAttribute("href");
-      if (!href || href.startsWith("#") || href.startsWith("mailto:")) return;
-      const url = new URL(href, window.location.href);
-      if (url.origin !== window.location.origin) return;
-      if (url.pathname === "/delivery/day" && url.search === window.location.search)
-        return;
-      e.preventDefault();
-      e.stopPropagation();
-      setPendingNav(url.pathname + url.search + url.hash);
-    };
-    document.addEventListener("click", onClick, true);
-    return () => {
-      window.removeEventListener("beforeunload", onBeforeUnload);
-      document.removeEventListener("click", onClick, true);
-    };
-  }, [dirty, winDirtyCount]);
 
   const canEdit = canManage && !isPast && !isClosed;
   // Move/cancel are exits, not route edits: allowed on a CLOSED day too.
@@ -1372,7 +1344,7 @@ function DeliveryDayInner() {
 
       {/* Leave-page discard confirm */}
       {pendingNav && (
-        <Modal onClose={() => setPendingNav(null)}>
+        <Modal onClose={cancelDiscard}>
           <div className="w-full max-w-xs rounded-lg border border-slate-200 bg-white p-5 shadow-lg">
             <h2 className="mb-2 text-base font-semibold text-slate-900">
               Discard changes?
@@ -1382,20 +1354,13 @@ function DeliveryDayInner() {
             </p>
             <div className="mt-4 flex gap-2">
               <button
-                onClick={() => {
-                  const href = pendingNav;
-                  setPendingNav(null);
-                  setDirty(false);
-                  setWinDraft({});
-                  setWinEditing(null);
-                  router.push(href);
-                }}
+                onClick={confirmDiscard}
                 className="flex-1 rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700"
               >
                 Discard changes
               </button>
               <button
-                onClick={() => setPendingNav(null)}
+                onClick={cancelDiscard}
                 className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
                 Keep editing

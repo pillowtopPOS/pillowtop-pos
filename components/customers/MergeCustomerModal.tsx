@@ -124,7 +124,7 @@ export default function MergeCustomerModal({
   const otherName = other ? customerDisplayName(other) : "";
   const movedCount = other?.journey_count ?? 0;
   const mergeSentence = other
-    ? `${movedCount} order${movedCount === 1 ? "" : "s"} move to ${keepName}. ${otherName} will be removed. This cannot be undone from the app.`
+    ? `${movedCount} order${movedCount === 1 ? "" : "s"} ${movedCount === 1 ? "moves" : "move"} to ${keepName}. ${otherName} will be removed. This cannot be undone from the app.`
     : "";
 
   async function doMerge() {

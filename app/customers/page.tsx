@@ -16,7 +16,11 @@ function CustomersPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const query = searchParams.get("q") ?? "";
-  const page = Math.max(0, parseInt(searchParams.get("page") ?? "0", 10) || 0);
+  const rawPage = searchParams.get("page");
+  // The param is a 0-based page index; anything that is not a non-negative
+  // integer falls back to page 1.
+  const page =
+    rawPage != null && /^\d+$/.test(rawPage) ? parseInt(rawPage, 10) : 0;
 
   const [input, setInput] = useState(query);
   const [items, setItems] = useState<CustomerListItem[]>([]);
@@ -66,6 +70,20 @@ function CustomersPageInner() {
     };
   }, [query, page]);
 
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const lastPageIndex = pageCount - 1;
+  // Never show a page past the end: clamp the display and fix the URL.
+  const shownPage = Math.min(page, lastPageIndex);
+
+  useEffect(() => {
+    if (loading || page <= lastPageIndex) return;
+    const params = new URLSearchParams();
+    if (query) params.set("q", query);
+    if (lastPageIndex > 0) params.set("page", String(lastPageIndex));
+    const qs = params.toString();
+    router.replace(qs ? `/customers?${qs}` : "/customers");
+  }, [loading, page, lastPageIndex, query, router]);
+
   function goToPage(next: number) {
     const params = new URLSearchParams();
     if (query) params.set("q", query);
@@ -74,9 +92,8 @@ function CustomersPageInner() {
     router.replace(qs ? `/customers?${qs}` : "/customers");
   }
 
-  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const rangeStart = total === 0 ? 0 : page * PAGE_SIZE + 1;
-  const rangeEnd = Math.min(total, (page + 1) * PAGE_SIZE);
+  const rangeStart = total === 0 ? 0 : shownPage * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(total, (shownPage + 1) * PAGE_SIZE);
 
   return (
     <main className="min-h-screen bg-slate-50 p-8">
@@ -177,18 +194,18 @@ function CustomersPageInner() {
           </span>
           <div className="flex gap-2">
             <button
-              onClick={() => goToPage(page - 1)}
-              disabled={page <= 0 || loading}
+              onClick={() => goToPage(shownPage - 1)}
+              disabled={shownPage <= 0 || loading}
               className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             >
               Previous
             </button>
             <span className="px-2 py-1.5 text-slate-500">
-              Page {page + 1} of {pageCount}
+              Page {shownPage + 1} of {pageCount}
             </span>
             <button
-              onClick={() => goToPage(page + 1)}
-              disabled={page + 1 >= pageCount || loading}
+              onClick={() => goToPage(shownPage + 1)}
+              disabled={shownPage + 1 >= pageCount || loading}
               className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             >
               Next

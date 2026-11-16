@@ -9,8 +9,15 @@ import {
   formatCustomerDate,
   formatCustomerDateTime,
   type CustomerDetail,
-  type CustomerPatch,
 } from "@/lib/customers/api";
+import {
+  customerFormFromDetail,
+  buildCustomerPatch,
+  customerFormDirty,
+  customerSinceError,
+  type CustomerFormState,
+} from "@/lib/customers/form";
+import { useUnsavedChangesGuard } from "@/lib/useUnsavedChangesGuard";
 import { customerDisplayName } from "@/lib/customers/lookup";
 import { fetchCurrentEmployee, type Employee } from "@/lib/journeys/queries";
 import { formatPhone, formatPhoneAsYouType } from "@/lib/format/phone";
@@ -19,92 +26,6 @@ import MergeCustomerModal from "@/components/customers/MergeCustomerModal";
 import ConfirmModal from "@/components/ConfirmModal";
 
 const MERGE_ROLES = ["owner", "admin", "manager"];
-
-type FormState = {
-  isCompany: boolean;
-  companyName: string;
-  firstName: string;
-  lastName: string;
-  phone: string;
-  phone2: string;
-  email: string;
-  streetAddress: string;
-  streetAddressLine2: string;
-  city: string;
-  state: string;
-  zipCode: string;
-  referralSource: string;
-  customerSince: string;
-};
-
-function formFromDetail(d: CustomerDetail): FormState {
-  return {
-    isCompany: d.is_company,
-    companyName: d.company_name ?? "",
-    firstName: d.first_name ?? "",
-    lastName: d.last_name ?? "",
-    phone: formatPhone(d.phone),
-    phone2: formatPhone(d.phone2),
-    email: d.email ?? "",
-    streetAddress: d.street_address ?? "",
-    streetAddressLine2: d.street_address_line_2 ?? "",
-    city: d.city ?? "",
-    state: d.state ?? "",
-    zipCode: d.zip_code ?? "",
-    referralSource: d.referral_source ?? "",
-    customerSince: d.customer_since?.slice(0, 10) ?? "",
-  };
-}
-
-const norm = (v: string) => v.trim();
-
-function buildPatch(form: FormState, saved: FormState): CustomerPatch {
-  const patch: CustomerPatch = {};
-  if (form.isCompany !== saved.isCompany) patch.is_company = form.isCompany;
-  if (form.isCompany) {
-    if (norm(form.companyName) !== norm(saved.companyName)) {
-      patch.company_name = form.companyName.trim() || null;
-    }
-  } else {
-    if (norm(form.firstName) !== norm(saved.firstName)) {
-      patch.first_name = form.firstName.trim();
-    }
-    if (norm(form.lastName) !== norm(saved.lastName)) {
-      patch.last_name = form.lastName.trim();
-    }
-  }
-  if (norm(form.phone) !== norm(saved.phone)) patch.phone = form.phone.trim();
-  if (norm(form.phone2) !== norm(saved.phone2)) {
-    patch.phone2 = form.phone2.trim() || null;
-  }
-  if (norm(form.email) !== norm(saved.email)) patch.email = form.email.trim();
-  if (norm(form.streetAddress) !== norm(saved.streetAddress)) {
-    patch.street_address = form.streetAddress.trim() || null;
-  }
-  if (norm(form.streetAddressLine2) !== norm(saved.streetAddressLine2)) {
-    patch.street_address_line_2 = form.streetAddressLine2.trim() || null;
-  }
-  if (norm(form.city) !== norm(saved.city)) {
-    patch.city = form.city.trim() || null;
-  }
-  if (norm(form.state) !== norm(saved.state)) {
-    patch.state = form.state.trim() || null;
-  }
-  if (norm(form.zipCode) !== norm(saved.zipCode)) {
-    patch.zip_code = form.zipCode.trim() || null;
-  }
-  if (norm(form.referralSource) !== norm(saved.referralSource)) {
-    patch.referral_source = form.referralSource || null;
-  }
-  if (form.customerSince !== saved.customerSince) {
-    patch.customer_since = form.customerSince;
-  }
-  return patch;
-}
-
-function isDirty(form: FormState, saved: FormState): boolean {
-  return Object.keys(buildPatch(form, saved)).length > 0;
-}
 
 const inputCls =
   "mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500";
@@ -134,7 +55,7 @@ export default function CustomerDetailPage() {
 
   const [customer, setCustomer] = useState<CustomerDetail | null>(null);
   const [employee, setEmployee] = useState<Employee | null>(null);
-  const [form, setForm] = useState<FormState | null>(null);
+  const [form, setForm] = useState<CustomerFormState | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -146,7 +67,7 @@ export default function CustomerDetailPage() {
   const load = useCallback(async () => {
     const detail = await getCustomer(customerId);
     setCustomer(detail);
-    setForm(formFromDetail(detail));
+    setForm(customerFormFromDetail(detail));
   }, [customerId]);
 
   useEffect(() => {
@@ -157,7 +78,7 @@ export default function CustomerDetailPage() {
       .then(([detail, emp]) => {
         if (cancelled) return;
         setCustomer(detail);
-        setForm(formFromDetail(detail));
+        setForm(customerFormFromDetail(detail));
         setEmployee(emp);
       })
       .catch((e) => {
@@ -173,10 +94,17 @@ export default function CustomerDetailPage() {
   }, [customerId]);
 
   const savedForm = useMemo(
-    () => (customer ? formFromDetail(customer) : null),
+    () => (customer ? customerFormFromDetail(customer) : null),
     [customer]
   );
-  const dirty = !!form && !!savedForm && isDirty(form, savedForm);
+  const dirty = !!form && !!savedForm && customerFormDirty(form, savedForm);
+
+  // Same guard the delivery day plan uses for in-app links and tab close.
+  const {
+    pendingNav,
+    confirmDiscard: confirmNavDiscard,
+    cancelDiscard: cancelNavDiscard,
+  } = useUnsavedChangesGuard({ dirty });
 
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const referralOptions = useMemo(() => {
@@ -189,7 +117,10 @@ export default function CustomerDetailPage() {
     return REFERRAL_SOURCES;
   }, [form?.referralSource]);
 
-  function set<K extends keyof FormState>(key: K, value: FormState[K]) {
+  function set<K extends keyof CustomerFormState>(
+    key: K,
+    value: CustomerFormState[K]
+  ) {
     setForm((f) => (f ? { ...f, [key]: value } : f));
     setNotice(null);
     setSaveError(null);
@@ -201,7 +132,7 @@ export default function CustomerDetailPage() {
         type="tel"
         value={form?.[key] ?? ""}
         onChange={(e) =>
-          set(key, formatPhoneAsYouType(e.target.value) as FormState[typeof key])
+          set(key, formatPhoneAsYouType(e.target.value) as CustomerFormState[typeof key])
         }
         onBlur={(e) => set(key, formatPhone(e.target.value))}
         className={inputCls}
@@ -233,14 +164,20 @@ export default function CustomerDetailPage() {
       return;
     }
 
-    const patch = buildPatch(form, savedForm);
+    const sinceErr = customerSinceError(form, savedForm);
+    if (sinceErr) {
+      setSaveError(sinceErr);
+      return;
+    }
+
+    const patch = buildCustomerPatch(form, savedForm);
     if (Object.keys(patch).length === 0) return;
 
     setSaving(true);
     try {
       const updated = await updateCustomer(customer.id, patch);
       setCustomer(updated);
-      setForm(formFromDetail(updated));
+      setForm(customerFormFromDetail(updated));
       setNotice("Customer saved.");
     } catch (e: any) {
       setSaveError(e?.message ?? "Could not save customer");
@@ -546,6 +483,15 @@ export default function CustomerDetailPage() {
           actionLabel="Discard changes"
           onConfirm={revert}
           onCancel={() => setConfirmDiscard(false)}
+        />
+      )}
+      {pendingNav && (
+        <ConfirmModal
+          title="Discard changes?"
+          message="You have unsaved changes."
+          actionLabel="Discard changes"
+          onConfirm={confirmNavDiscard}
+          onCancel={cancelNavDiscard}
         />
       )}
     </main>
