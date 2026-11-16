@@ -193,6 +193,29 @@ async function main() {
     p_street_address_line_2: null, p_city: null, p_state: null, p_zip_code: "99999",
   });
   check("cross-company customer refused", !!cross.error, cross.error?.message ?? "no error");
+
+  // ---- m036: delivery requires a customer primary street address ----
+  // custA2 has a saved address but no primary; the order-panel "no
+  // primary" path writes the primary via update_customer, after which
+  // delivery is allowed.
+  const noPrimary = await admin.from("sleep_journeys").insert({
+    customer_id: custA2, store_id: stA, current_state: "Active Opportunity",
+    fulfillment_type: "delivery",
+  }).select("id").single();
+  check("delivery refused without primary address", !!noPrimary.error, noPrimary.error?.message ?? "no error");
+
+  const setPrimary = await rpc(asMgr, "update_customer", {
+    p_id: custA2,
+    p_patch: { street_address: "5 New Primary", city: "Denver", state: "CO", zip_code: "80202" },
+  });
+  check("primary saved via update_customer", !setPrimary.error, setPrimary.error?.message ?? "");
+
+  const withPrimary = await admin.from("sleep_journeys").insert({
+    customer_id: custA2, store_id: stA, current_state: "Active Opportunity",
+    fulfillment_type: "delivery",
+  }).select("id").single();
+  check("delivery allowed after primary saved", !withPrimary.error && !!withPrimary.data?.id, withPrimary.error?.message ?? "");
+  if (withPrimary.data?.id) f.journeys.push(withPrimary.data.id);
 }
 
 main()

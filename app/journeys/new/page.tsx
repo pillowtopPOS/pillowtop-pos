@@ -152,6 +152,7 @@ export default function NewJourneyPage() {
     zip: "",
   });
   const [savedAddresses, setSavedAddresses] = useState<CustomerAddress[]>([]);
+  const [shipToSubmitError, setShipToSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
     const supabase = createClient();
@@ -233,6 +234,13 @@ export default function NewJourneyPage() {
   }, [loading, productKey]);
 
   const hasDeliveryAddress = customer.streetAddress.trim() !== "";
+  // An existing customer who already has a primary address gets it shown
+  // read-only here; the Ship to block is the only way to ship elsewhere.
+  // With no primary on file the inputs stay editable and are saved as the
+  // primary at submit, and there is nothing to choose between yet.
+  const existingHasPrimary =
+    !!selectedCustomer &&
+    (selectedCustomer.street_address ?? "").trim() !== "";
 
   // Repeat-customer lookup: fires 400ms after the rep stops typing when
   // the phone is a full 10 digits, the email has an @, or both names are
@@ -439,7 +447,11 @@ export default function NewJourneyPage() {
       if (result.contactWarning) {
         orderNotices.push(`Contact person: ${result.contactWarning}`);
       }
-      if (selectedCustomer && shipToChoice !== "primary") {
+      if (
+        fulfillmentType === "delivery" &&
+        selectedCustomer &&
+        shipToChoice !== "primary"
+      ) {
         try {
           let shipToId: string | null = null;
           if (shipToChoice === "saved") {
@@ -525,6 +537,20 @@ export default function NewJourneyPage() {
 
   async function handleSubmit() {
     if (!mode || saving) return;
+
+    setShipToSubmitError(null);
+    if (
+      fulfillmentType === "delivery" &&
+      selectedCustomer &&
+      existingHasPrimary &&
+      shipToChoice === "new" &&
+      !shipToNew.street.trim()
+    ) {
+      setShipToSubmitError(
+        "Enter a street address or choose another ship-to"
+      );
+      return;
+    }
 
     if (mode === "purchase") {
       const paid = parseFloat(purchase.paymentAmount) || 0;
@@ -1143,34 +1169,54 @@ export default function NewJourneyPage() {
                 ))}
               </select>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700">Street address</label>
-              <input
-                value={customer.streetAddress}
-                onChange={(e) => setCustomer((c) => ({ ...c, streetAddress: e.target.value }))}
-                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700">Address Line 2</label>
-              <input
-                value={customer.streetAddressLine2}
-                onChange={(e) => setCustomer((c) => ({ ...c, streetAddressLine2: e.target.value }))}
-                placeholder="Apartment, suite, etc. (optional)"
-                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              />
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <input placeholder="City" value={customer.city} onChange={(e) => setCustomer((c) => ({ ...c, city: e.target.value }))} className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
-              <input placeholder="State" value={customer.state} onChange={(e) => setCustomer((c) => ({ ...c, state: e.target.value }))} className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
-              <input placeholder="ZIP" value={customer.zipCode} onChange={(e) => setCustomer((c) => ({ ...c, zipCode: e.target.value }))} className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
-            </div>
-            {selectedCustomer && selectedAddressDirty && (
-              <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                This also changes the address on this customer&apos;s earlier orders.
-              </p>
+            {existingHasPrimary ? (
+              <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="text-sm text-slate-800">
+                  {formatShipToLine({
+                    street_address: selectedCustomer!.street_address,
+                    street_address_line_2:
+                      selectedCustomer!.street_address_line_2,
+                    city: selectedCustomer!.city,
+                    state: selectedCustomer!.state,
+                    zip_code: selectedCustomer!.zip_code,
+                  })}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Edit it on the customer page.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">Street address</label>
+                  <input
+                    value={customer.streetAddress}
+                    onChange={(e) => setCustomer((c) => ({ ...c, streetAddress: e.target.value }))}
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">Address Line 2</label>
+                  <input
+                    value={customer.streetAddressLine2}
+                    onChange={(e) => setCustomer((c) => ({ ...c, streetAddressLine2: e.target.value }))}
+                    placeholder="Apartment, suite, etc. (optional)"
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  />
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <input placeholder="City" value={customer.city} onChange={(e) => setCustomer((c) => ({ ...c, city: e.target.value }))} className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
+                  <input placeholder="State" value={customer.state} onChange={(e) => setCustomer((c) => ({ ...c, state: e.target.value }))} className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
+                  <input placeholder="ZIP" value={customer.zipCode} onChange={(e) => setCustomer((c) => ({ ...c, zipCode: e.target.value }))} className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
+                </div>
+                {selectedCustomer && selectedAddressDirty && (
+                  <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                    This also changes the address on this customer&apos;s earlier orders.
+                  </p>
+                )}
+              </>
             )}
-            {selectedCustomer && (
+            {selectedCustomer && existingHasPrimary && fulfillmentType === "delivery" && (
               <fieldset className="rounded-md border border-slate-200 p-3">
                 <legend className="px-1 text-xs font-medium uppercase text-slate-500">
                   Ship to
@@ -1514,7 +1560,19 @@ export default function NewJourneyPage() {
                 className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
             </div>
-            <div className="flex justify-end gap-2">
+            <div className="flex items-center justify-end gap-2">
+              {shipToSubmitError &&
+                fulfillmentType === "delivery" &&
+                selectedCustomer &&
+                shipToChoice === "new" &&
+                !shipToNew.street.trim() && (
+                  <p
+                    role="alert"
+                    className="mr-auto rounded-md bg-red-50 px-3 py-2 text-sm text-red-700"
+                  >
+                    {shipToSubmitError}
+                  </p>
+                )}
               <button
                 onClick={() => setStep(2)}
                 className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
@@ -1588,7 +1646,19 @@ export default function NewJourneyPage() {
               </div>
             )}
 
-            <div className="flex justify-end gap-2">
+            <div className="flex items-center justify-end gap-2">
+              {shipToSubmitError &&
+                fulfillmentType === "delivery" &&
+                selectedCustomer &&
+                shipToChoice === "new" &&
+                !shipToNew.street.trim() && (
+                  <p
+                    role="alert"
+                    className="mr-auto rounded-md bg-red-50 px-3 py-2 text-sm text-red-700"
+                  >
+                    {shipToSubmitError}
+                  </p>
+                )}
               <button
                 onClick={() => setStep(2)}
                 className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"

@@ -48,6 +48,7 @@ import {
   addCustomerAddress,
   setJourneyShipTo,
   getCustomer,
+  updateCustomer,
   type CustomerAddress,
 } from "@/lib/customers/api";
 import {
@@ -735,6 +736,10 @@ export default function JourneyWorkspace({
     journey.fulfillment_type === "pickup" ||
     !!journey.cancelled_at ||
     !!journey.delivered_at;
+  // Delivery orders require a primary address (m036), so with none on
+  // file the chooser's "new" option writes the primary instead of a
+  // saved ship-to row.
+  const customerHasPrimary = !!journey.customer?.street_address?.trim();
 
   // Latest scheduled delivery date, if a delivery_scheduled event
   // carries one — drives the Fulfillment status line. Shown only while
@@ -836,6 +841,21 @@ export default function JourneyWorkspace({
     setShipToSaving(true);
     try {
       let addressId: string | null = null;
+      if (shipToMode === "new" && !customerHasPrimary) {
+        // No primary on file: save this as the customer's primary
+        // address. Delivery requires it; no ship-to row is written.
+        await updateCustomer(journey.customer.id, {
+          street_address: shipToNew.street.trim(),
+          street_address_line_2: shipToNew.line2.trim() || null,
+          city: shipToNew.city.trim() || null,
+          state: shipToNew.state.trim() || null,
+          zip_code: shipToNew.zip.trim() || null,
+        });
+        setShipToOpen(false);
+        await handlePanelRefresh();
+        setShipToSaving(false);
+        return;
+      }
       if (shipToMode === "new") {
         if (!shipToNew.street.trim()) {
           setPanelError("Street address is required.");
@@ -2201,16 +2221,20 @@ export default function JourneyWorkspace({
                       onChange={() => setShipToMode("new")}
                       className="mt-1"
                     />
-                    <span className="font-medium">New address</span>
+                    <span className="font-medium">
+                      {customerHasPrimary ? "New address" : "Address (none on file yet)"}
+                    </span>
                   </label>
                   {shipToMode === "new" && (
                     <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
-                      <input
-                        value={shipToNew.label}
-                        onChange={(e) => setShipToNew((a) => ({ ...a, label: e.target.value }))}
-                        placeholder="Label (optional, e.g. Cabin)"
-                        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                      />
+                      {customerHasPrimary && (
+                        <input
+                          value={shipToNew.label}
+                          onChange={(e) => setShipToNew((a) => ({ ...a, label: e.target.value }))}
+                          placeholder="Label (optional, e.g. Cabin)"
+                          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                        />
+                      )}
                       <input
                         value={shipToNew.street}
                         onChange={(e) => setShipToNew((a) => ({ ...a, street: e.target.value }))}
