@@ -148,3 +148,6 @@ vite.config.ts.timestamp-*
 
 # Production verification build output
 .next-prod/
+
+.tmp_*.sql
+Claude outputs/

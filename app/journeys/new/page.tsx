@@ -302,6 +302,10 @@ export default function NewJourneyPage() {
   const [customerSearchDone, setCustomerSearchDone] = useState(false);
   const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
   const [customerSearchIndex, setCustomerSearchIndex] = useState(-1);
+  const [customerSearchLoadingId, setCustomerSearchLoadingId] = useState<
+    string | null
+  >(null);
+  const [customerSearchError, setCustomerSearchError] = useState("");
   const customerSearchRef = useRef<HTMLInputElement>(null);
 
   const customerSearchActive = customerSearch.trim().length >= 2;
@@ -336,29 +340,42 @@ export default function NewJourneyPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerSearch, customerSearchActive, selectedCustomer]);
 
-  function pickCustomerSearchResult(item: CustomerListItem) {
-    const match: CustomerMatch = {
-      id: item.id,
-      first_name: item.first_name,
-      last_name: item.last_name,
-      is_company: item.is_company,
-      company_name: item.company_name,
-      phone: item.phone,
-      phone2: item.phone2,
-      email: item.email,
-      street_address: item.street_address ?? null,
-      street_address_line_2: item.street_address_line_2 ?? null,
-      city: item.city,
-      state: item.state,
-      zip_code: item.zip_code ?? null,
-      referral_source: null,
-      journey_count: item.journey_count,
-      last_order_at: item.last_order_at,
-      reasons: [],
-    };
-    setCustomerSearchOpen(false);
-    setCustomerSearch("");
-    useCustomerMatch(match);
+  async function pickCustomerSearchResult(item: CustomerListItem) {
+    if (customerSearchLoadingId) return;
+    setCustomerSearchLoadingId(item.id);
+    setCustomerSearchError("");
+    try {
+      // The search row lacks referral_source and a few other fields the
+      // repeat-customer write-back diffs against, so load the full record
+      // before filling the form.
+      const detail = await getCustomer(item.id);
+      const match: CustomerMatch = {
+        id: detail.id,
+        first_name: detail.first_name,
+        last_name: detail.last_name,
+        is_company: detail.is_company,
+        company_name: detail.company_name,
+        phone: detail.phone,
+        phone2: detail.phone2,
+        email: detail.email,
+        street_address: detail.street_address,
+        street_address_line_2: detail.street_address_line_2,
+        city: detail.city,
+        state: detail.state,
+        zip_code: detail.zip_code,
+        referral_source: detail.referral_source,
+        journey_count: detail.journey_count,
+        last_order_at: null,
+        reasons: [],
+      };
+      setCustomerSearchOpen(false);
+      setCustomerSearch("");
+      useCustomerMatch(match);
+    } catch {
+      setCustomerSearchError("Could not load this customer. Try again.");
+    } finally {
+      setCustomerSearchLoadingId(null);
+    }
   }
 
   const visibleMatches = customerMatches.filter(
@@ -1003,6 +1020,11 @@ export default function NewJourneyPage() {
                   placeholder="Search by name, phone or email"
                   className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                 />
+                {customerSearchError && (
+                  <p role="alert" className="mt-1 text-xs text-red-600">
+                    {customerSearchError}
+                  </p>
+                )}
                 {customerSearchOpen && customerSearchActive && (
                   <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-md border border-slate-200 bg-white shadow-lg">
                     {customerSearchDone && customerSearchItems.length === 0 ? (
@@ -1016,10 +1038,11 @@ export default function NewJourneyPage() {
                           <li key={item.id}>
                             <button
                               type="button"
+                              disabled={customerSearchLoadingId === item.id}
                               onMouseDown={(e) => e.preventDefault()}
                               onClick={() => pickCustomerSearchResult(item)}
                               onMouseEnter={() => setCustomerSearchIndex(i)}
-                              className={`flex w-full flex-col px-3 py-2 text-left text-sm ${
+                              className={`flex w-full flex-col px-3 py-2 text-left text-sm disabled:opacity-60 ${
                                 i === customerSearchIndex
                                   ? "bg-brand-50"
                                   : "hover:bg-slate-50"
@@ -1029,9 +1052,11 @@ export default function NewJourneyPage() {
                                 {item.display_name}
                               </span>
                               <span className="text-xs text-slate-500">
-                                {[formatPhone(item.phone), item.city]
-                                  .filter(Boolean)
-                                  .join(" - ")}
+                                {customerSearchLoadingId === item.id
+                                  ? "Loading..."
+                                  : [formatPhone(item.phone), item.city]
+                                      .filter(Boolean)
+                                      .join(" - ")}
                               </span>
                             </button>
                           </li>

@@ -985,6 +985,72 @@ export type CreateJourneyResult = {
   contactWarning: string | null;
 };
 
+// Repeat customer: diff the form values against the stored row and
+// write back only what changed. Scalars in one update; the address
+// goes through updateCustomerAddress so its error handling and the
+// m036 trigger apply. Exported so tests can exercise the exact
+// write-back createJourney performs.
+export async function syncRepeatCustomerFields(
+  supabase: ReturnType<typeof createClient>,
+  customerId: string,
+  customer: CustomerInput
+) {
+  const { data: existing, error: existingError } = await supabase
+    .from("customers")
+    .select(
+      "first_name, last_name, phone, phone2, email, referral_source, street_address, street_address_line_2, city, state, zip_code"
+    )
+    .eq("id", customerId)
+    .single();
+
+  if (existingError || !existing) {
+    throw new Error(existingError?.message ?? "Selected customer not found");
+  }
+  // referral_source/phone2 are m142 columns and may be absent from the
+  // generated types until the migration ships.
+  const ex = existing as Record<string, string | null>;
+
+  const scalarUpdates: Record<string, string | null> = {};
+  const scalars: Array<[string, string | null | undefined, string | null]> = [
+    ["phone", customer.phone, ex.phone],
+    ["phone2", customer.phone2, ex.phone2],
+    ["email", customer.email, ex.email],
+    ["referral_source", customer.referralSource, ex.referral_source],
+  ];
+  for (const [col, next, prev] of scalars) {
+    const nextTrim = next?.trim() || null;
+    const prevTrim = prev?.trim() || null;
+    if (nextTrim !== prevTrim) scalarUpdates[col] = nextTrim;
+  }
+  if (Object.keys(scalarUpdates).length > 0) {
+    const { data: updated, error: updateError } = await supabase
+      .from("customers")
+      .update(scalarUpdates)
+      .eq("id", customerId)
+      .select("id")
+      .maybeSingle();
+    if (updateError) throw new Error(updateError.message);
+    if (!updated) throw new Error("Could not update this customer");
+  }
+
+  const address = {
+    street_address: customer.streetAddress ?? null,
+    street_address_line_2: customer.streetAddressLine2 ?? null,
+    city: customer.city ?? null,
+    state: customer.state ?? null,
+    zip_code: customer.zipCode ?? null,
+  };
+  const addressChanged =
+    (address.street_address?.trim() || null) !== (ex.street_address?.trim() || null) ||
+    (address.street_address_line_2?.trim() || null) !== (ex.street_address_line_2?.trim() || null) ||
+    (address.city?.trim() || null) !== (ex.city?.trim() || null) ||
+    (address.state?.trim() || null) !== (ex.state?.trim() || null) ||
+    (address.zip_code?.trim() || null) !== (ex.zip_code?.trim() || null);
+  if (addressChanged) {
+    await updateCustomerAddress(customerId, address);
+  }
+}
+
 export async function createJourney(input: CreateJourneyInput): Promise<CreateJourneyResult> {
   const supabase = createClient();
 
@@ -1000,64 +1066,7 @@ export async function createJourney(input: CreateJourneyInput): Promise<CreateJo
   let customerId = input.customerId ?? null;
 
   if (customerId) {
-    // Repeat customer: diff the form values against the stored row and
-    // write back only what changed. Scalars in one update; the address
-    // goes through updateCustomerAddress so its error handling and the
-    // m036 trigger apply.
-    const { data: existing, error: existingError } = await supabase
-      .from("customers")
-      .select(
-        "first_name, last_name, phone, phone2, email, referral_source, street_address, street_address_line_2, city, state, zip_code"
-      )
-      .eq("id", customerId)
-      .single();
-
-    if (existingError || !existing) {
-      throw new Error(existingError?.message ?? "Selected customer not found");
-    }
-    // referral_source/phone2 are m142 columns and may be absent from the
-    // generated types until the migration ships.
-    const ex = existing as Record<string, string | null>;
-
-    const scalarUpdates: Record<string, string | null> = {};
-    const scalars: Array<[string, string | null | undefined, string | null]> = [
-      ["phone", input.customer.phone, ex.phone],
-      ["phone2", input.customer.phone2, ex.phone2],
-      ["email", input.customer.email, ex.email],
-      ["referral_source", input.customer.referralSource, ex.referral_source],
-    ];
-    for (const [col, next, prev] of scalars) {
-      const nextTrim = next?.trim() || null;
-      const prevTrim = prev?.trim() || null;
-      if (nextTrim !== prevTrim) scalarUpdates[col] = nextTrim;
-    }
-    if (Object.keys(scalarUpdates).length > 0) {
-      const { data: updated, error: updateError } = await supabase
-        .from("customers")
-        .update(scalarUpdates)
-        .eq("id", customerId)
-        .select("id")
-        .maybeSingle();
-      if (updateError) throw new Error(updateError.message);
-      if (!updated) throw new Error("Could not update this customer");
-    }
-
-    const address = {
-      street_address: input.customer.streetAddress ?? null,
-      street_address_line_2: input.customer.streetAddressLine2 ?? null,
-      city: input.customer.city ?? null,
-      state: input.customer.state ?? null,
-      zip_code: input.customer.zipCode ?? null,
-    };
-    const addressChanged =
-      (address.street_address?.trim() || null) !== (ex.street_address?.trim() || null) ||
-      (address.street_address_line_2?.trim() || null) !== (ex.street_address_line_2?.trim() || null) ||
-      (address.city?.trim() || null) !== (ex.city?.trim() || null) ||
-      (address.state?.trim() || null) !== (ex.state?.trim() || null) ||
-      (address.zip_code?.trim() || null) !== (ex.zip_code?.trim() || null);
-    if (addressChanged) {
-      await updateCustomerAddress(customerId, address);
-    }
+    await syncRepeatCustomerFields(supabase, customerId, input.customer);
   } else {
     customerId = crypto.randomUUID();
 
