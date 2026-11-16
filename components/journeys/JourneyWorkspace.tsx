@@ -1787,14 +1787,22 @@ export default function JourneyWorkspace({
                         canReassign && (
                         <div className="mt-1.5 space-y-1">
                           <select
-                            value={item.fulfillment_type_override ?? "inherit"}
-                            onChange={(e) => updateLineItem(item.id, {
-                              fulfillment_type_override: e.target.value === "inherit" ? null : e.target.value as "delivery" | "pickup",
-                              pickup_location_id: e.target.value === "pickup" ? item.pickup_location_id ?? journey.store_id : null,
-                            })}
+                            value={item.fulfillment_type_override ?? journey.fulfillment_type}
+                            onChange={(e) => {
+                              const choice = e.target.value as "delivery" | "pickup";
+                              updateLineItem(item.id, {
+                                // Store inherit (null) when the line
+                                // matches the journey's fulfillment.
+                                fulfillment_type_override:
+                                  choice === journey.fulfillment_type ? null : choice,
+                                pickup_location_id:
+                                  choice === "pickup"
+                                    ? item.pickup_location_id ?? journey.store_id
+                                    : null,
+                              });
+                            }}
                             className="w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs"
                           >
-                            <option value="inherit">Inherit Journey ({journey.fulfillment_type})</option>
                             <option value="delivery" disabled={!hasDeliveryAddress}>Delivery</option>
                             <option value="pickup">Pickup</option>
                           </select>

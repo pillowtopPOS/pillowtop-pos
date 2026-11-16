@@ -1272,22 +1272,22 @@ export default function NewJourneyPage() {
                       <div className="grid grid-cols-12 items-stretch gap-2">
                         <div className="col-span-4 min-w-0">
                           <select
-                            value={item.fulfillment_type_override ?? "inherit"}
-                            onChange={(e) =>
+                            value={item.fulfillment_type_override ?? fulfillmentType}
+                            onChange={(e) => {
+                              const choice = e.target.value as "delivery" | "pickup";
                               updateLineItem(item.id, {
+                                // Store inherit (null) when the line
+                                // matches the order's fulfillment.
                                 fulfillment_type_override:
-                                  e.target.value === "inherit"
-                                    ? null
-                                    : (e.target.value as "delivery" | "pickup"),
+                                  choice === fulfillmentType ? null : choice,
                                 pickup_location_id:
-                                  e.target.value === "pickup"
+                                  choice === "pickup"
                                     ? item.pickup_location_id ?? storeId
                                     : null,
-                              })
-                            }
+                              });
+                            }}
                             className="w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs"
                           >
-                            <option value="inherit">Inherit Journey ({fulfillmentType})</option>
                             <option value="delivery" disabled={!hasDeliveryAddress}>Delivery</option>
                             <option value="pickup">Pickup</option>
                           </select>
