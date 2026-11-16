@@ -69,3 +69,31 @@ export function lineItemFulfillmentPayload(opts: {
     pickupLocationId: null,
   };
 }
+
+// "Pickup at <place>" summary for an order. Pickup lines without their
+// own location collect at the order's store; lines with one collect
+// there instead. Multiple distinct locations are all named.
+export function pickupCollectionLabel(opts: {
+  items: {
+    fulfillment_type_override?: "delivery" | "pickup" | null;
+    pickup_location_id?: string | null;
+  }[];
+  journeyFulfillment: "delivery" | "pickup";
+  journeyStoreId: string;
+  storeName: (id: string) => string | null;
+}): string | null {
+  const ids = new Set<string>();
+  for (const item of opts.items) {
+    const effective = item.fulfillment_type_override ?? opts.journeyFulfillment;
+    if (effective === "pickup") {
+      ids.add(item.pickup_location_id ?? opts.journeyStoreId);
+    }
+  }
+  if (ids.size === 0) return null;
+  const names = Array.from(ids)
+    .map((id) => opts.storeName(id))
+    .filter((n): n is string => !!n);
+  if (names.length === 0) return "Pickup";
+  if (names.length === 1) return `Pickup at ${names[0]}`;
+  return `Pickup at ${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}

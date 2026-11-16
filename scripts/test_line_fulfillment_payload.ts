@@ -5,7 +5,10 @@
 // Run: npx tsx scripts/test_line_fulfillment_payload.ts
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync } from "node:fs";
-import { lineItemFulfillmentPayload } from "../lib/journeys/fulfillment";
+import {
+  lineItemFulfillmentPayload,
+  pickupCollectionLabel,
+} from "../lib/journeys/fulfillment";
 
 for (const line of readFileSync(".env.local", "utf8").split("\n")) {
   const m = line.match(/^([A-Z_]+)=(.*)$/);
@@ -77,6 +80,38 @@ async function main() {
   check("explicit delivery drops location",
     delLine.fulfillmentTypeOverride === "delivery" && delLine.pickupLocationId === null,
     JSON.stringify(delLine));
+
+  // ---- pickup summary label ----
+  const names: Record<string, string> = { st: "Main Street", wh: "Denver Main Warehouse" };
+  const storeName = (id: string) => names[id] ?? null;
+  const base = { journeyFulfillment: "pickup" as const, journeyStoreId: "st", storeName };
+
+  check("summary: line at warehouse shows warehouse",
+    pickupCollectionLabel({
+      ...base,
+      items: [{ fulfillment_type_override: "pickup", pickup_location_id: "wh" }],
+    }) === "Pickup at Denver Main Warehouse");
+
+  check("summary: inherited pickup line shows order store",
+    pickupCollectionLabel({
+      ...base,
+      items: [{ fulfillment_type_override: null, pickup_location_id: null }],
+    }) === "Pickup at Main Street");
+
+  check("summary: two locations lists both",
+    pickupCollectionLabel({
+      ...base,
+      items: [
+        { fulfillment_type_override: "pickup", pickup_location_id: "wh" },
+        { fulfillment_type_override: null, pickup_location_id: null },
+      ],
+    }) === "Pickup at Denver Main Warehouse and Main Street");
+
+  check("summary: delivery line ignored on pickup order",
+    pickupCollectionLabel({
+      ...base,
+      items: [{ fulfillment_type_override: "delivery", pickup_location_id: "wh" }],
+    }) === null);
 
   // ---- live DB: every payload shape inserts cleanly ----
   const co = (await admin.from("companies").insert({ name: `__${tag}__`, business_timezone: "America/Denver" }).select("id").single()).data!.id;

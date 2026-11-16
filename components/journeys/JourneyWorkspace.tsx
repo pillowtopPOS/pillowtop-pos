@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase/client";
 import {
   resolveLineItemLocation,
   lineItemFulfillmentPayload,
+  pickupCollectionLabel,
 } from "@/lib/journeys/fulfillment";
 import { formatPhone } from "@/lib/format/phone";
 import {
@@ -2071,7 +2072,14 @@ export default function JourneyWorkspace({
               </div>
               {journey.fulfillment_type === "pickup" && journey.store && (
                 <p className="mt-0.5 text-xs text-slate-500">
-                  Pickup at {journey.store.name}
+                  {pickupCollectionLabel({
+                    items: lineItems,
+                    journeyFulfillment: journey.fulfillment_type,
+                    journeyStoreId: journey.store_id,
+                    storeName: (id) =>
+                      stores.find((s) => s.id === id)?.name ??
+                      (id === journey.store_id ? journey.store?.name ?? null : null),
+                  }) ?? `Pickup at ${journey.store.name}`}
                 </p>
               )}
               {journey.fulfillment_type === "delivery" && customerAddress && (
