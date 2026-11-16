@@ -472,7 +472,7 @@ export default function NewJourneyPage() {
           }
         } catch (e: any) {
           orderNotices.push(
-            `Ship-to address: ${e?.message ?? "could not be set"}`
+            `Delivery address: ${e?.message ?? "could not be set"}`
           );
         }
       }
@@ -547,7 +547,7 @@ export default function NewJourneyPage() {
       !shipToNew.street.trim()
     ) {
       setShipToSubmitError(
-        "Enter a street address or choose another ship-to"
+        "Enter a street address or choose another delivery address"
       );
       return;
     }
@@ -1219,7 +1219,7 @@ export default function NewJourneyPage() {
             {selectedCustomer && existingHasPrimary && fulfillmentType === "delivery" && (
               <fieldset className="rounded-md border border-slate-200 p-3">
                 <legend className="px-1 text-xs font-medium uppercase text-slate-500">
-                  Ship to
+                  Delivery address
                 </legend>
                 <div className="space-y-2">
                   <label className="flex items-start gap-2 text-sm text-slate-700">

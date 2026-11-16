@@ -889,7 +889,7 @@ export default function JourneyWorkspace({
       setShipToOpen(false);
       await handlePanelRefresh();
     } catch (e: any) {
-      setPanelError(e?.message ?? "Failed to update ship-to address");
+      setPanelError(e?.message ?? "Failed to update delivery address");
     } finally {
       setShipToSaving(false);
     }
@@ -1620,7 +1620,7 @@ export default function JourneyWorkspace({
                   onClick={() => openShipToChooser()}
                   className="mt-1.5 text-xs text-brand-600 hover:text-brand-700"
                 >
-                  Ship to
+                  Change Delivery Address
                 </button>
               )}
             </RailCard>
@@ -2168,7 +2168,7 @@ export default function JourneyWorkspace({
             closeRequestRef={shipToCloseRef}
           >
             <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
-              <h2 className="mb-4 text-lg font-semibold text-slate-900">Ship to</h2>
+              <h2 className="mb-4 text-lg font-semibold text-slate-900">Change Delivery Address</h2>
               {shipToLoading ? (
                 <p className="text-sm text-slate-500">Loading…</p>
               ) : (
@@ -2382,7 +2382,7 @@ export default function JourneyWorkspace({
                 Address required
               </h2>
               <p className="mb-3 text-sm text-slate-600">
-                Add a ship-to address before selecting Delivery.
+                Add a delivery address before selecting Delivery.
               </p>
               <div className="mt-4 flex gap-2">
                 <button
