@@ -14,12 +14,18 @@ import {
   customerFormFromDetail,
   buildCustomerPatch,
   customerFormDirty,
-  customerSinceError,
   type CustomerFormState,
 } from "@/lib/customers/form";
 import { useUnsavedChangesGuard } from "@/lib/useUnsavedChangesGuard";
 import { customerDisplayName } from "@/lib/customers/lookup";
 import { fetchCurrentEmployee, type Employee } from "@/lib/journeys/queries";
+import {
+  fetchCustomerContacts,
+  createCustomerContact,
+  updateCustomerContact,
+  deleteCustomerContact,
+  type CustomerContact,
+} from "@/lib/journeys/interactions";
 import { formatPhone, formatPhoneAsYouType } from "@/lib/format/phone";
 import { REFERRAL_SOURCES } from "@/lib/customers/referralSources";
 import MergeCustomerModal from "@/components/customers/MergeCustomerModal";
@@ -65,6 +71,20 @@ export default function CustomerDetailPage() {
   const [mergeOpen, setMergeOpen] = useState(false);
   const messageRef = useRef<HTMLDivElement | null>(null);
 
+  // Contacts section state
+  const [contacts, setContacts] = useState<CustomerContact[]>([]);
+  const [contactsLoading, setContactsLoading] = useState(true);
+  const [contactForm, setContactForm] = useState<{
+    id: string | null;
+    name: string;
+    role: string;
+    phone: string;
+    email: string;
+  } | null>(null);
+  const [contactSaving, setContactSaving] = useState(false);
+  const [contactError, setContactError] = useState<string | null>(null);
+  const [contactDeleting, setContactDeleting] = useState<CustomerContact | null>(null);
+
   // Save/validation feedback renders next to the buttons at the bottom of
   // a long form; bring it into view when it appears.
   useEffect(() => {
@@ -83,18 +103,20 @@ export default function CustomerDetailPage() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    Promise.all([getCustomer(customerId), fetchCurrentEmployee()])
-      .then(([detail, emp]) => {
+    Promise.all([getCustomer(customerId), fetchCurrentEmployee(), fetchCustomerContacts(customerId)])
+      .then(([detail, emp, contactList]) => {
         if (cancelled) return;
         setCustomer(detail);
         setForm(customerFormFromDetail(detail));
         setEmployee(emp);
+        setContacts(contactList);
       })
       .catch((e) => {
         if (cancelled) return;
         setError(e?.message ?? "Could not load customer");
       })
       .finally(() => {
+        if (!cancelled) setContactsLoading(false);
         if (!cancelled) setLoading(false);
       });
     return () => {
@@ -115,7 +137,6 @@ export default function CustomerDetailPage() {
     cancelDiscard: cancelNavDiscard,
   } = useUnsavedChangesGuard({ dirty });
 
-  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const referralOptions = useMemo(() => {
     if (
       form?.referralSource &&
@@ -173,12 +194,6 @@ export default function CustomerDetailPage() {
       return;
     }
 
-    const sinceErr = customerSinceError(form, savedForm);
-    if (sinceErr) {
-      setSaveError(sinceErr);
-      return;
-    }
-
     const patch = buildCustomerPatch(form, savedForm);
     if (Object.keys(patch).length === 0) return;
 
@@ -192,6 +207,74 @@ export default function CustomerDetailPage() {
       setSaveError(e?.message ?? "Could not save customer");
     } finally {
       setSaving(false);
+    }
+  }
+
+  function startAddContact() {
+    setContactForm({ id: null, name: "", role: "", phone: "", email: "" });
+    setContactError(null);
+  }
+
+  function startEditContact(c: CustomerContact) {
+    setContactForm({
+      id: c.id,
+      name: c.name,
+      role: c.role_label ?? "",
+      phone: c.phone ? formatPhone(c.phone) : "",
+      email: c.email ?? "",
+    });
+    setContactError(null);
+  }
+
+  async function handleContactSave() {
+    if (!contactForm || contactSaving) return;
+    setContactError(null);
+    if (!contactForm.name.trim()) {
+      setContactError("Name is required.");
+      return;
+    }
+    const payload = {
+      name: contactForm.name.trim(),
+      role_label: contactForm.role.trim() || null,
+      phone: formatPhone(contactForm.phone) || null,
+      email: contactForm.email.trim() || null,
+    };
+    setContactSaving(true);
+    try {
+      if (contactForm.id) {
+        const updated = await updateCustomerContact(contactForm.id, payload);
+        setContacts((cs) => cs.map((c) => (c.id === updated.id ? updated : c)));
+      } else {
+        const created = await createCustomerContact({
+          customer_id: customerId,
+          ...payload,
+        });
+        setContacts((cs) => [...cs, created]);
+      }
+      setContactForm(null);
+    } catch (e: any) {
+      setContactError(e?.message ?? "Could not save contact");
+    } finally {
+      setContactSaving(false);
+    }
+  }
+
+  async function handleContactDelete() {
+    if (!contactDeleting) return;
+    setContactError(null);
+    try {
+      await deleteCustomerContact(contactDeleting.id);
+      setContacts((cs) => cs.filter((c) => c.id !== contactDeleting.id));
+      if (contactForm?.id === contactDeleting.id) setContactForm(null);
+    } catch (e: any) {
+      const msg = e?.message ?? "";
+      setContactError(
+        /foreign key|23503/i.test(msg)
+          ? "This contact is used in an activity log and cannot be removed."
+          : msg || "Could not delete contact"
+      );
+    } finally {
+      setContactDeleting(null);
     }
   }
 
@@ -338,6 +421,161 @@ export default function CustomerDetailPage() {
           </div>
         </Section>
 
+        <Section title="Contacts">
+          {contactsLoading ? (
+            <p className="text-sm text-slate-500">Loading…</p>
+          ) : contacts.length === 0 && !contactForm ? (
+            <p className="mb-3 text-sm text-slate-500">No contacts yet.</p>
+          ) : (
+            <ul className="mb-3 divide-y divide-slate-100">
+              {contacts.map((c) => (
+                <li
+                  key={c.id}
+                  className="flex items-center justify-between gap-3 py-2 text-sm"
+                >
+                  <div className="min-w-0">
+                    <span className="font-medium text-slate-900">{c.name}</span>
+                    {c.role_label && (
+                      <span className="ml-2 text-slate-500">{c.role_label}</span>
+                    )}
+                    {c.phone && (
+                      <span className="ml-2 whitespace-nowrap text-slate-500">
+                        {formatPhone(c.phone)}
+                      </span>
+                    )}
+                    {c.email && (
+                      <span className="ml-2 truncate text-slate-500">
+                        {c.email}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => startEditContact(c)}
+                      className="text-sm text-brand-600 hover:text-brand-700"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setContactDeleting(c)}
+                      className="text-sm text-red-600 hover:text-red-700"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {contactForm ? (
+            <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={labelCls}>Name</label>
+                  <input
+                    value={contactForm.name}
+                    onChange={(e) =>
+                      setContactForm({ ...contactForm, name: e.target.value })
+                    }
+                    className={inputCls}
+                  />
+                </div>
+                <div>
+                  <label className={labelCls}>Role</label>
+                  <input
+                    value={contactForm.role}
+                    onChange={(e) =>
+                      setContactForm({ ...contactForm, role: e.target.value })
+                    }
+                    className={inputCls}
+                  />
+                </div>
+                <div>
+                  <label className={labelCls}>Phone</label>
+                  <input
+                    type="tel"
+                    value={contactForm.phone}
+                    onChange={(e) =>
+                      setContactForm({
+                        ...contactForm,
+                        phone: formatPhoneAsYouType(e.target.value),
+                      })
+                    }
+                    onBlur={(e) =>
+                      setContactForm({
+                        ...contactForm,
+                        phone: formatPhone(e.target.value),
+                      })
+                    }
+                    className={inputCls}
+                  />
+                </div>
+                <div>
+                  <label className={labelCls}>Email</label>
+                  <input
+                    type="email"
+                    value={contactForm.email}
+                    onChange={(e) =>
+                      setContactForm({ ...contactForm, email: e.target.value })
+                    }
+                    className={inputCls}
+                  />
+                </div>
+              </div>
+              <div className="mt-3 flex items-center justify-end gap-2">
+                {contactError && (
+                  <p
+                    role="alert"
+                    className="mr-auto rounded-md bg-red-50 p-2 text-sm text-red-700"
+                  >
+                    {contactError}
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setContactForm(null);
+                    setContactError(null);
+                  }}
+                  disabled={contactSaving}
+                  className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleContactSave}
+                  disabled={contactSaving}
+                  className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                >
+                  {contactSaving ? "Saving…" : contactForm.id ? "Save" : "Add"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between">
+              {contactError && (
+                <p
+                  role="alert"
+                  className="rounded-md bg-red-50 p-2 text-sm text-red-700"
+                >
+                  {contactError}
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={startAddContact}
+                className="ml-auto rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Add contact
+              </button>
+            </div>
+          )}
+        </Section>
+
         <Section title="Address">
           <p className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700">
             Changing this address also changes it on all of this customer&apos;s
@@ -402,13 +640,9 @@ export default function CustomerDetailPage() {
             </div>
             <div>
               <label className={labelCls}>Customer since</label>
-              <input
-                type="date"
-                value={form.customerSince}
-                max={today}
-                onChange={(e) => set("customerSince", e.target.value)}
-                className={inputCls}
-              />
+              <p className="mt-1 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                {formatCustomerDate(customer.customer_since) || "-"}
+              </p>
             </div>
           </div>
         </Section>
@@ -491,6 +725,15 @@ export default function CustomerDetailPage() {
             );
             load().catch(() => {});
           }}
+        />
+      )}
+      {contactDeleting && (
+        <ConfirmModal
+          title="Delete contact?"
+          message={`${contactDeleting.name} will be removed from this customer.`}
+          actionLabel="Delete"
+          onConfirm={handleContactDelete}
+          onCancel={() => setContactDeleting(null)}
         />
       )}
       {confirmDiscard && (

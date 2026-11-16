@@ -15,6 +15,11 @@ export type CustomerListItem = {
   email: string | null;
   city: string | null;
   state: string | null;
+  // m144 adds the full address to search_customers; until then only
+  // city/state arrive and the Address column shows those alone.
+  street_address?: string | null;
+  street_address_line_2?: string | null;
+  zip_code?: string | null;
   customer_since: string | null;
   journey_count: number;
   last_order_at: string | null;

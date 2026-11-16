@@ -946,6 +946,10 @@ type BaseCreateInput = {
   storeId: string;
   assignedEmployeeId: string | null;
   fulfillmentType?: "delivery" | "pickup";
+  // Optional contact person for a company customer. Inserted into
+  // customer_contacts only after the journey exists, because contact
+  // RLS requires the customer to have a visible order.
+  contactPerson?: { name: string; phone?: string; role?: string } | null;
 };
 
 export type QuoteCreateInput = BaseCreateInput & {
@@ -962,7 +966,14 @@ export type PurchaseCreateInput = BaseCreateInput & {
 
 export type CreateJourneyInput = QuoteCreateInput | PurchaseCreateInput;
 
-export async function createJourney(input: CreateJourneyInput): Promise<string> {
+export type CreateJourneyResult = {
+  journeyId: string;
+  // Set when the optional contact person could not be saved. The order
+  // itself always succeeds; the caller surfaces this as a notice.
+  contactWarning: string | null;
+};
+
+export async function createJourney(input: CreateJourneyInput): Promise<CreateJourneyResult> {
   const supabase = createClient();
 
   const {
@@ -1119,7 +1130,39 @@ export async function createJourney(input: CreateJourneyInput): Promise<string> 
     );
   }
 
-  return journey.id;
+  // Optional company contact person. Runs last so a failure here can
+  // never fail or retry the order; the warning is returned instead.
+  let contactWarning: string | null = null;
+  const contactName = input.contactPerson?.name?.trim();
+  if (contactName && customerId) {
+    try {
+      const wanted = contactName.toLowerCase();
+      const { data: existing, error: lookupError } = await supabase
+        .from("customer_contacts")
+        .select("id, name")
+        .eq("customer_id", customerId);
+      if (lookupError) throw new Error(lookupError.message);
+      const duplicate = (existing ?? []).some(
+        (c) => (c.name ?? "").trim().toLowerCase() === wanted
+      );
+      if (!duplicate) {
+        const { error: contactError } = await supabase
+          .from("customer_contacts")
+          .insert({
+            customer_id: customerId,
+            name: contactName,
+            role_label: input.contactPerson?.role?.trim() || null,
+            phone: input.contactPerson?.phone?.trim() || null,
+          });
+        if (contactError) throw new Error(contactError.message);
+      }
+    } catch (e: any) {
+      contactWarning =
+        e?.message ?? "The contact person could not be saved.";
+    }
+  }
+
+  return { journeyId: journey.id, contactWarning };
 }
 
 export type PaymentOutcome =

@@ -4,11 +4,26 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   searchCustomers,
-  formatCustomerDate,
   formatCustomerDateTime,
   type CustomerListItem,
 } from "@/lib/customers/api";
 import { formatPhone } from "@/lib/format/phone";
+
+// Address cell: street + line 2, then "City, ST ZIP". Until m144 the RPC
+// only returns city/state, so the deeper parts render as blanks are
+// skipped. Capped at three truncated lines so rows stay even.
+function addressLines(c: CustomerListItem): string[] {
+  const cityLine = [
+    c.city,
+    [c.state, c.zip_code].filter(Boolean).join(" ") || null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  return [
+    [c.street_address, c.street_address_line_2].filter(Boolean).join(" "),
+    cityLine,
+  ].filter((l) => l.trim() !== "");
+}
 
 const PAGE_SIZE = 25;
 
@@ -119,13 +134,11 @@ function CustomersPageInner() {
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-medium uppercase text-slate-500">
                 <th className="px-4 py-2">Name</th>
-                <th className="px-4 py-2">Phone</th>
-                <th className="px-4 py-2">Second phone</th>
-                <th className="px-4 py-2">Email</th>
-                <th className="px-4 py-2">City</th>
-                <th className="px-4 py-2">Customer since</th>
+                <th className="whitespace-nowrap px-4 py-2">Phone</th>
+                <th className="whitespace-nowrap px-4 py-2">Second phone</th>
+                <th className="px-4 py-2">Address</th>
                 <th className="px-4 py-2">Orders</th>
-                <th className="px-4 py-2">Last order</th>
+                <th className="whitespace-nowrap px-4 py-2">Last order</th>
               </tr>
             </thead>
             <tbody>
@@ -133,7 +146,7 @@ function CustomersPageInner() {
                 <tr
                   key={c.id}
                   onClick={() => router.push(`/customers/${c.id}`)}
-                  className="cursor-pointer border-b border-slate-100 last:border-0 hover:bg-slate-50"
+                  className="cursor-pointer border-b border-slate-100 align-top last:border-0 hover:bg-slate-50"
                 >
                   <td className="px-4 py-2 font-medium text-slate-900">
                     {c.display_name || c.company_name || "Customer"}
@@ -143,21 +156,29 @@ function CustomersPageInner() {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-2 text-slate-600">
+                  <td className="whitespace-nowrap px-4 py-2 text-slate-600">
                     {formatPhone(c.phone) || "-"}
                   </td>
-                  <td className="px-4 py-2 text-slate-600">
+                  <td className="whitespace-nowrap px-4 py-2 text-slate-600">
                     {formatPhone(c.phone2) || "-"}
                   </td>
-                  <td className="px-4 py-2 text-slate-600">{c.email || "-"}</td>
                   <td className="px-4 py-2 text-slate-600">
-                    {[c.city, c.state].filter(Boolean).join(", ") || "-"}
-                  </td>
-                  <td className="px-4 py-2 text-slate-600">
-                    {formatCustomerDate(c.customer_since) || "-"}
+                    {(() => {
+                      const lines = addressLines(c);
+                      if (lines.length === 0) return "-";
+                      return (
+                        <div className="max-w-[220px]">
+                          {lines.slice(0, 3).map((l, i) => (
+                            <p key={i} className="truncate leading-snug">
+                              {l}
+                            </p>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td className="px-4 py-2 text-slate-600">{c.journey_count}</td>
-                  <td className="px-4 py-2 text-slate-600">
+                  <td className="whitespace-nowrap px-4 py-2 text-slate-600">
                     {formatCustomerDateTime(c.last_order_at) || "-"}
                   </td>
                 </tr>

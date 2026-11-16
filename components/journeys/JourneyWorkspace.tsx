@@ -1521,6 +1521,18 @@ export default function JourneyWorkspace({
                   {journey.customer.email}
                 </p>
               )}
+              {customerContacts.length > 0 && (
+                <div className="mt-2 text-sm text-slate-600">
+                  {customerContacts.map((c) => (
+                    <p key={c.id}>
+                      <span className="sr-only">Additional contact: </span>
+                      {c.name}
+                      {c.role_label ? ` · ${c.role_label}` : ""}
+                      {c.phone ? ` · ${formatPhone(c.phone)}` : ""}
+                    </p>
+                  ))}
+                </div>
+              )}
               {customerAddress ? (
                 <p className="mt-0.5 text-sm text-slate-600">
                   <span className="sr-only">Address: </span>
@@ -1528,18 +1540,6 @@ export default function JourneyWorkspace({
                 </p>
               ) : (
                 <p className="mt-0.5 text-sm text-slate-500">No address on file</p>
-              )}
-              {customerContacts.length > 0 && (
-                <div className="mt-2 text-sm text-slate-600">
-                  {customerContacts.map((c) => (
-                    <p key={c.id}>
-                      <span className="sr-only">Additional contact: </span>
-                      {c.name}
-                      {c.role_label ? ` — ${c.role_label}` : ""}
-                      {c.phone ? ` · ${formatPhone(c.phone)}` : ""}
-                    </p>
-                  ))}
-                </div>
               )}
               {journey.customer && (
                 <button

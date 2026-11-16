@@ -337,6 +337,48 @@ export async function createCustomerContact(input: {
   return data as unknown as CustomerContact;
 }
 
+const CONTACT_COLUMNS =
+  "id, customer_id, name, role_label, phone, email, is_delivery_contact, created_at";
+
+export async function updateCustomerContact(
+  id: string,
+  input: {
+    name?: string;
+    role_label?: string | null;
+    phone?: string | null;
+    email?: string | null;
+  }
+): Promise<CustomerContact> {
+  const supabase = createClient();
+  const patch: Record<string, string | null> = {};
+  if (input.name !== undefined) patch.name = input.name.trim();
+  if (input.role_label !== undefined) patch.role_label = input.role_label?.trim() || null;
+  if (input.phone !== undefined) patch.phone = input.phone?.trim() || null;
+  if (input.email !== undefined) patch.email = input.email?.trim() || null;
+  const { data, error } = await supabase
+    .from("customer_contacts")
+    .update(patch)
+    .eq("id", id)
+    .select(CONTACT_COLUMNS)
+    .single();
+
+  if (error) throw new Error(error.message);
+  return data as unknown as CustomerContact;
+}
+
+// journey_interactions.contact_id is ON DELETE SET NULL (m056), so a
+// delete keeps the activity rows and their name snapshots; it cannot
+// fail on a foreign key. Only RLS can refuse it.
+export async function deleteCustomerContact(id: string): Promise<void> {
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("customer_contacts")
+    .delete()
+    .eq("id", id);
+
+  if (error) throw new Error(error.message);
+}
+
 export type RecordInteractionInput = {
   journey_id: string;
   interaction_type: InteractionType;

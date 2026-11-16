@@ -111,6 +111,9 @@ function BoardContent() {
   // stay off the board lists — they still open by id everywhere else.
   const [hiddenJourneyIds, setHiddenJourneyIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  // One-shot notice left by /journeys/new when the order saved but the
+  // optional company contact person could not be inserted.
+  const [contactNotice, setContactNotice] = useState<string | null>(null);
 
   const [view, setView] = useState<"board" | "table">("board");
   const [search, setSearch] = useState("");
@@ -221,6 +224,20 @@ function BoardContent() {
 
     if (!opts?.background) setLoading(false);
   };
+
+  useEffect(() => {
+    try {
+      const msg = window.sessionStorage.getItem(
+        "pt_new_order_contact_warning"
+      );
+      if (msg) {
+        window.sessionStorage.removeItem("pt_new_order_contact_warning");
+        setContactNotice(msg);
+      }
+    } catch {
+      // sessionStorage unavailable; the notice is best-effort.
+    }
+  }, []);
 
   useEffect(() => {
     const supabase = createClient();
@@ -727,6 +744,22 @@ function BoardContent() {
       {boardError && (
         <p key="board-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {boardError}
+        </p>
+      )}
+
+      {contactNotice && (
+        <p className="mb-3 flex items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <span>
+            Order saved, but the contact person could not be added:{" "}
+            {contactNotice}
+          </span>
+          <button
+            type="button"
+            onClick={() => setContactNotice(null)}
+            className="shrink-0 text-amber-700 hover:text-amber-900"
+          >
+            Dismiss
+          </button>
         </p>
       )}
 

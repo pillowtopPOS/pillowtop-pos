@@ -18,7 +18,6 @@ export type CustomerFormState = {
   state: string;
   zipCode: string;
   referralSource: string;
-  customerSince: string;
 };
 
 export function customerFormFromDetail(d: CustomerDetail): CustomerFormState {
@@ -36,7 +35,6 @@ export function customerFormFromDetail(d: CustomerDetail): CustomerFormState {
     state: d.state ?? "",
     zipCode: d.zip_code ?? "",
     referralSource: d.referral_source ?? "",
-    customerSince: d.customer_since?.slice(0, 10) ?? "",
   };
 }
 
@@ -83,9 +81,6 @@ export function buildCustomerPatch(
   if (norm(form.referralSource) !== norm(saved.referralSource)) {
     patch.referral_source = form.referralSource || null;
   }
-  if (form.customerSince !== saved.customerSince) {
-    patch.customer_since = form.customerSince;
-  }
   return patch;
 }
 
@@ -96,27 +91,3 @@ export function customerFormDirty(
   return Object.keys(buildCustomerPatch(form, saved)).length > 0;
 }
 
-const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
-
-// customer_since cannot be cleared or left half-typed: the server only
-// accepts a real date. Returns the inline error to show, or null when the
-// field is unchanged or valid. The date input itself only emits "" or a
-// complete YYYY-MM-DD, so anything else here means a cleared field.
-export function customerSinceError(
-  form: CustomerFormState,
-  saved: CustomerFormState
-): string | null {
-  if (form.customerSince === saved.customerSince) return null;
-  const m = DATE_RE.exec(form.customerSince);
-  if (!m) return "Customer since needs a date.";
-  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  const dt = new Date(y, mo - 1, d);
-  if (
-    dt.getFullYear() !== y ||
-    dt.getMonth() !== mo - 1 ||
-    dt.getDate() !== d
-  ) {
-    return "Customer since needs a date.";
-  }
-  return null;
-}

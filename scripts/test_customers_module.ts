@@ -33,6 +33,7 @@ const f = {
   stores: [] as string[],
   customers: [] as string[],
   journeys: [] as string[],
+  interactions: [] as string[],
   employees: [] as string[],
   users: [] as string[],
 };
@@ -181,6 +182,69 @@ async function main() {
   // get_customer returns the merged order list
   const got = await rpc(asMgr, "get_customer", { p_id: cA });
   check("get_customer journey_count", got.data?.journey_count === afterA, String(got.data?.journey_count));
+
+  // ---- customer_contacts ----
+  // cA has orders after the merge so contact RLS allows writes; cD has
+  // no orders, so is_customer_visible is false and the insert must fail.
+  const cInsert = await asMgr
+    .from("customer_contacts")
+    .insert({
+      customer_id: cA,
+      name: `Pat ${tag}`,
+      role_label: "Office manager",
+      phone: "303-555-0166",
+      email: `${tag}pat@x.com`,
+    })
+    .select("id, name")
+    .single();
+  check("contact add on customer with order", !cInsert.error && !!cInsert.data?.id, cInsert.error?.message ?? "");
+  const contactId = cInsert.data?.id as string;
+
+  const cUpdate = await asMgr
+    .from("customer_contacts")
+    .update({ role_label: "Billing", phone: "303-555-0170" })
+    .eq("id", contactId)
+    .select("id, role_label, phone")
+    .single();
+  check("contact update", !cUpdate.error && cUpdate.data?.role_label === "Billing" && cUpdate.data?.phone === "303-555-0170", cUpdate.error?.message ?? JSON.stringify(cUpdate.data));
+
+  const noOrder = await asMgr
+    .from("customer_contacts")
+    .insert({ customer_id: cD, name: `Nope ${tag}` });
+  check("contact refused for customer with no orders", !!noOrder.error, noOrder.error?.message ?? "no error");
+
+  // journey_interactions.contact_id is ON DELETE SET NULL (m056): the
+  // activity row survives a contact delete with contact_id nulled.
+  const inter = await admin
+    .from("journey_interactions")
+    .insert({
+      journey_id: f.journeys[0],
+      customer_id: cA,
+      interaction_type: "internal_note",
+      channel: "internal",
+      direction: "internal",
+      summary: `contact fk ${tag}`,
+      contact_id: contactId,
+      contact_name_snapshot: `Pat ${tag}`,
+      occurred_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+  check("interaction linked to contact", !inter.error && !!inter.data?.id, inter.error?.message ?? "");
+  if (inter.data?.id) f.interactions.push(inter.data.id);
+
+  const cDelete = await asMgr.from("customer_contacts").delete().eq("id", contactId);
+  check("contact delete succeeds", !cDelete.error, cDelete.error?.message ?? "");
+  const interAfter = await admin
+    .from("journey_interactions")
+    .select("contact_id, contact_name_snapshot")
+    .eq("id", f.interactions[0])
+    .single();
+  check(
+    "activity row kept with contact_id nulled",
+    interAfter.data?.contact_id === null && interAfter.data?.contact_name_snapshot === `Pat ${tag}`,
+    JSON.stringify(interAfter.data)
+  );
 }
 
 main()
@@ -190,6 +254,9 @@ main()
   })
   .finally(async () => {
     try {
+      if (f.interactions.length) {
+        await admin.from("journey_interactions").delete().in("id", f.interactions);
+      }
       if (f.journeys.length) {
         await admin.from("journey_events").delete().in("journey_id", f.journeys);
         await admin.from("sleep_journeys").delete().in("id", f.journeys);

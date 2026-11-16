@@ -125,6 +125,13 @@ export default function NewJourneyPage() {
     paymentMethod: "",
     followUpDueAt: "",
   });
+  // Optional contact person for a company customer; saved to
+  // customer_contacts after the order exists.
+  const [contactPerson, setContactPerson] = useState({
+    name: "",
+    phone: "",
+    role: "",
+  });
 
   useEffect(() => {
     const supabase = createClient();
@@ -374,6 +381,7 @@ export default function NewJourneyPage() {
       storeId,
       fulfillmentType,
       assignedEmployeeId,
+      contactPerson: customer.isCompany ? contactPerson : null,
     };
 
     let input: CreateJourneyInput;
@@ -392,7 +400,19 @@ export default function NewJourneyPage() {
     let journeyId: string | undefined;
 
     try {
-      journeyId = await createJourney(input);
+      const result = await createJourney(input);
+      journeyId = result.journeyId;
+      if (result.contactWarning) {
+        // Order saved; tell the next screen the contact person failed.
+        try {
+          window.sessionStorage.setItem(
+            "pt_new_order_contact_warning",
+            result.contactWarning
+          );
+        } catch {
+          // best-effort notice only
+        }
+      }
 
       if (mode === "quote") {
         router.push("/board");
@@ -945,6 +965,55 @@ export default function NewJourneyPage() {
                   />
                 </div>
               </div>
+            )}
+            {customer.isCompany && (
+              <fieldset className="rounded-md border border-slate-200 p-3">
+                <legend className="px-1 text-xs font-medium uppercase text-slate-500">
+                  Contact person (optional)
+                </legend>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700">Name</label>
+                    <input
+                      value={contactPerson.name}
+                      onChange={(e) =>
+                        setContactPerson((c) => ({ ...c, name: e.target.value }))
+                      }
+                      className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700">Phone</label>
+                    <input
+                      type="tel"
+                      value={contactPerson.phone}
+                      onChange={(e) =>
+                        setContactPerson((c) => ({
+                          ...c,
+                          phone: formatPhoneAsYouType(e.target.value),
+                        }))
+                      }
+                      onBlur={(e) =>
+                        setContactPerson((c) => ({
+                          ...c,
+                          phone: formatPhone(e.target.value),
+                        }))
+                      }
+                      className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700">Role</label>
+                    <input
+                      value={contactPerson.role}
+                      onChange={(e) =>
+                        setContactPerson((c) => ({ ...c, role: e.target.value }))
+                      }
+                      className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    />
+                  </div>
+                </div>
+              </fieldset>
             )}
             <div className="grid grid-cols-2 gap-4">
               <div>
