@@ -27,6 +27,7 @@ import {
   type Store,
 } from "@/lib/journeys/queries";
 import type { Product } from "@/lib/inventory/queries";
+import { effectiveShipTo } from "@/lib/customers/shipTo";
 import Modal from "@/components/Modal";
 import ProductPicker, {
   type ProductSelection,
@@ -108,7 +109,7 @@ export default function ExchangeBuilderModal({
   );
 
   const hasDeliveryAddress =
-    (journey.customer?.street_address ?? "").trim() !== "";
+    !!effectiveShipTo(journey, journey.customer)?.street_address?.trim();
 
   // Stock display + trial eligibility both read catalog/store reference
   // data once on mount. The stock location is the session's active store

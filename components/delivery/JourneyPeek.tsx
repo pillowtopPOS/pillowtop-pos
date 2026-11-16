@@ -28,6 +28,7 @@ import {
   type JourneyWithDetails,
 } from "@/lib/journeys/queries";
 import { formatPhoneDashed } from "@/lib/delivery/calls";
+import { effectiveShipTo, formatShipToLine } from "@/lib/customers/shipTo";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = [
@@ -215,29 +216,18 @@ export default function JourneyPeek({
                 </p>
               )}
               {customer?.email && <p>Email: {customer.email}</p>}
-              {customer &&
-                (() => {
-                  const addrLine = [
-                    [
-                      customer.street_address,
-                      customer.street_address_line_2,
-                    ]
-                      .filter(Boolean)
-                      .join(" "),
-                    [customer.city, customer.state, customer.zip_code]
-                      .filter(Boolean)
-                      .join(", "),
-                  ]
-                    .filter(Boolean)
-                    .join(" · ");
-                  return addrLine ? (
-                    <p>{addrLine}</p>
-                  ) : (
-                    <p className="font-medium text-amber-700">
-                      No address on file
-                    </p>
-                  );
-                })()}
+              {(() => {
+                const addrLine = formatShipToLine(
+                  effectiveShipTo(journey, customer)
+                );
+                return addrLine ? (
+                  <p>{addrLine}</p>
+                ) : (
+                  <p className="font-medium text-amber-700">
+                    No address on file
+                  </p>
+                );
+              })()}
               {journey.store?.name && <p>Store: {journey.store.name}</p>}
             </div>
 

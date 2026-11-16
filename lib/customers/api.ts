@@ -34,6 +34,21 @@ export type CustomerJourneyRef = {
   created_at: string;
 };
 
+// m145: saved per-customer addresses. get_customer returns them without
+// customer_id/company_id; the add/update RPCs return the full row, so
+// those fields are optional here.
+export type CustomerAddress = {
+  id: string;
+  customer_id?: string;
+  label: string | null;
+  street_address: string;
+  street_address_line_2: string | null;
+  city: string | null;
+  state: string | null;
+  zip_code: string | null;
+  open_orders?: number;
+};
+
 export type CustomerDetail = {
   id: string;
   first_name: string;
@@ -52,6 +67,9 @@ export type CustomerDetail = {
   customer_since: string | null;
   created_at: string;
   updated_at: string;
+  // m145 additions; optional so the page still works before it lands.
+  primary_open_orders?: number;
+  addresses?: CustomerAddress[];
   journeys: CustomerJourneyRef[];
   journey_count: number;
 };
@@ -130,6 +148,80 @@ export async function mergeCustomers(
   });
   if (error) throw new Error(error.message);
   return data as { kept_customer_id: string; moved_journeys: number };
+}
+
+// ---- Saved addresses and per-order ship-to (migration 145) ----
+
+export type AddressFields = {
+  street_address: string;
+  street_address_line_2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip_code?: string | null;
+};
+
+// Dedupes on street + zip: may return an existing row.
+export async function addCustomerAddress(
+  customerId: string,
+  input: { label?: string | null } & AddressFields
+): Promise<CustomerAddress> {
+  const supabase = createClient();
+  const { data, error } = await (supabase.rpc as any)("add_customer_address", {
+    p_customer_id: customerId,
+    p_label: input.label ?? null,
+    p_street_address: input.street_address,
+    p_street_address_line_2: input.street_address_line_2 ?? null,
+    p_city: input.city ?? null,
+    p_state: input.state ?? null,
+    p_zip_code: input.zip_code ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return data as CustomerAddress;
+}
+
+export async function updateCustomerAddressRecord(
+  addressId: string,
+  patch: {
+    label?: string | null;
+    street_address?: string;
+    street_address_line_2?: string | null;
+    city?: string | null;
+    state?: string | null;
+    zip_code?: string | null;
+  }
+): Promise<CustomerAddress> {
+  const supabase = createClient();
+  const { data, error } = await (supabase.rpc as any)(
+    "update_customer_address",
+    { p_address_id: addressId, p_patch: patch }
+  );
+  if (error) throw new Error(error.message);
+  return data as CustomerAddress;
+}
+
+export async function archiveCustomerAddress(
+  addressId: string
+): Promise<CustomerAddress> {
+  const supabase = createClient();
+  const { data, error } = await (supabase.rpc as any)(
+    "archive_customer_address",
+    { p_address_id: addressId }
+  );
+  if (error) throw new Error(error.message);
+  return data as CustomerAddress;
+}
+
+export async function setJourneyShipTo(
+  journeyId: string,
+  addressId: string | null
+): Promise<{ changed: boolean; journey_id: string; ship_to_address_id: string | null }> {
+  const supabase = createClient();
+  const { data, error } = await (supabase.rpc as any)("set_journey_ship_to", {
+    p_journey_id: journeyId,
+    p_address_id: addressId,
+  });
+  if (error) throw new Error(error.message);
+  return data as { changed: boolean; journey_id: string; ship_to_address_id: string | null };
 }
 
 // customer_since is a date; last_order_at is a timestamp. Date-only values

@@ -25,6 +25,7 @@ import { confirmedStamp } from "@/lib/delivery/availability";
 import { CONFIRMATION_CALLS_CHANGED_EVENT } from "@/lib/delivery/useConfirmationCallCount";
 import { timeStrToMinutes, windowLabel } from "@/lib/delivery/windows";
 import type { JourneyWithDetails } from "@/lib/journeys/queries";
+import { effectiveShipTo, formatShipToLine } from "@/lib/customers/shipTo";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = [
@@ -286,14 +287,9 @@ export default function JourneyDelivery({
   const customerName = journey.customer
     ? `${journey.customer.first_name} ${journey.customer.last_name}`
     : "Customer";
-  const deliveryAddress = [
-    journey.customer?.street_address,
-    [journey.customer?.city, journey.customer?.state, journey.customer?.zip_code]
-      .filter(Boolean)
-      .join(" "),
-  ]
-    .filter(Boolean)
-    .join(", ");
+  const deliveryAddress = formatShipToLine(
+    effectiveShipTo(journey, journey.customer)
+  );
 
   return (
     <div className="mt-3 border-t border-slate-100 pt-3" data-testid="journey-delivery">

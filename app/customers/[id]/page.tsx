@@ -8,8 +8,13 @@ import {
   updateCustomer,
   formatCustomerDate,
   formatCustomerDateTime,
+  addCustomerAddress,
+  updateCustomerAddressRecord,
+  archiveCustomerAddress,
+  type CustomerAddress,
   type CustomerDetail,
 } from "@/lib/customers/api";
+import { formatShipToLine } from "@/lib/customers/shipTo";
 import {
   customerFormFromDetail,
   buildCustomerPatch,
@@ -84,6 +89,21 @@ export default function CustomerDetailPage() {
   const [contactSaving, setContactSaving] = useState(false);
   const [contactError, setContactError] = useState<string | null>(null);
   const [contactDeleting, setContactDeleting] = useState<CustomerContact | null>(null);
+
+  // Saved addresses (m145). The primary address stays in the Address
+  // section; these are the per-order ship-to choices.
+  const [savedAddressForm, setSavedAddressForm] = useState<{
+    id: string | null;
+    label: string;
+    street: string;
+    line2: string;
+    city: string;
+    state: string;
+    zip: string;
+  } | null>(null);
+  const [savedAddressSaving, setSavedAddressSaving] = useState(false);
+  const [savedAddressError, setSavedAddressError] = useState<string | null>(null);
+  const [archivingAddress, setArchivingAddress] = useState<CustomerAddress | null>(null);
 
   // Save/validation feedback renders next to the buttons at the bottom of
   // a long form; bring it into view when it appears.
@@ -275,6 +295,83 @@ export default function CustomerDetailPage() {
       );
     } finally {
       setContactDeleting(null);
+    }
+  }
+
+  // Address RPCs change only the addresses list; refresh just the
+  // customer record so in-progress form edits are not touched.
+  async function refreshCustomerMeta() {
+    const detail = await getCustomer(customerId);
+    setCustomer(detail);
+  }
+
+  function startAddSavedAddress() {
+    setSavedAddressForm({
+      id: null,
+      label: "",
+      street: "",
+      line2: "",
+      city: "",
+      state: "",
+      zip: "",
+    });
+    setSavedAddressError(null);
+  }
+
+  function startEditSavedAddress(a: CustomerAddress) {
+    setSavedAddressForm({
+      id: a.id,
+      label: a.label ?? "",
+      street: a.street_address ?? "",
+      line2: a.street_address_line_2 ?? "",
+      city: a.city ?? "",
+      state: a.state ?? "",
+      zip: a.zip_code ?? "",
+    });
+    setSavedAddressError(null);
+  }
+
+  async function handleSavedAddressSave() {
+    if (!savedAddressForm || savedAddressSaving) return;
+    setSavedAddressError(null);
+    if (!savedAddressForm.street.trim()) {
+      setSavedAddressError("Street address is required.");
+      return;
+    }
+    const fields = {
+      label: savedAddressForm.label.trim() || null,
+      street_address: savedAddressForm.street.trim(),
+      street_address_line_2: savedAddressForm.line2.trim() || null,
+      city: savedAddressForm.city.trim() || null,
+      state: savedAddressForm.state.trim() || null,
+      zip_code: savedAddressForm.zip.trim() || null,
+    };
+    setSavedAddressSaving(true);
+    try {
+      if (savedAddressForm.id) {
+        await updateCustomerAddressRecord(savedAddressForm.id, fields);
+      } else {
+        await addCustomerAddress(customerId, fields);
+      }
+      setSavedAddressForm(null);
+      await refreshCustomerMeta();
+    } catch (e: any) {
+      setSavedAddressError(e?.message ?? "Could not save address");
+    } finally {
+      setSavedAddressSaving(false);
+    }
+  }
+
+  async function handleSavedAddressArchive() {
+    if (!archivingAddress) return;
+    setSavedAddressError(null);
+    try {
+      await archiveCustomerAddress(archivingAddress.id);
+      await refreshCustomerMeta();
+    } catch (e: any) {
+      setSavedAddressError(e?.message ?? "Could not archive address");
+    } finally {
+      setArchivingAddress(null);
     }
   }
 
@@ -578,8 +675,9 @@ export default function CustomerDetailPage() {
 
         <Section title="Address">
           <p className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700">
-            Changing this address also changes it on all of this customer&apos;s
-            orders.
+            This is the customer&apos;s primary address, the default ship-to
+            for new orders. Saved addresses are chosen per order in the
+            Addresses section.
           </p>
           <div>
             <label className={labelCls}>Street address</label>
@@ -617,6 +715,180 @@ export default function CustomerDetailPage() {
               className={inputCls}
             />
           </div>
+        </Section>
+
+        <Section title="Addresses">
+          <div className="mb-4 rounded-md border border-slate-200 p-3">
+            <p className="text-xs font-medium uppercase text-slate-500">
+              Primary
+            </p>
+            <p className="mt-1 text-sm text-slate-800">
+              {formatShipToLine({
+                street_address: customer.street_address,
+                street_address_line_2: customer.street_address_line_2,
+                city: customer.city,
+                state: customer.state,
+                zip_code: customer.zip_code,
+              }) || "No address on file"}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              {customer.primary_open_orders ?? 0} open order
+              {(customer.primary_open_orders ?? 0) === 1 ? "" : "s"} ship here.
+              Edit it in the Address section above.
+            </p>
+          </div>
+
+          {(customer.addresses ?? []).length > 0 && (
+            <ul className="mb-3 divide-y divide-slate-100">
+              {(customer.addresses ?? []).map((a) => (
+                <li
+                  key={a.id}
+                  className="flex items-start justify-between gap-3 py-2 text-sm"
+                >
+                  <div className="min-w-0">
+                    <span className="font-medium text-slate-900">
+                      {a.label || "Saved address"}
+                    </span>
+                    <p className="text-slate-600">
+                      {formatShipToLine(a)}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {(a.open_orders ?? 0) > 0
+                        ? `${a.open_orders} open order${a.open_orders === 1 ? "" : "s"} ship here`
+                        : "No open orders"}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => startEditSavedAddress(a)}
+                      className="text-sm text-brand-600 hover:text-brand-700"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSavedAddressError(null);
+                        setArchivingAddress(a);
+                      }}
+                      className="text-sm text-red-600 hover:text-red-700"
+                    >
+                      Archive
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {savedAddressForm ? (
+            <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
+              <div className="space-y-3">
+                <input
+                  value={savedAddressForm.label}
+                  onChange={(e) =>
+                    setSavedAddressForm({ ...savedAddressForm, label: e.target.value })
+                  }
+                  placeholder="Label (optional, e.g. Cabin)"
+                  className={inputCls}
+                />
+                <input
+                  value={savedAddressForm.street}
+                  onChange={(e) =>
+                    setSavedAddressForm({ ...savedAddressForm, street: e.target.value })
+                  }
+                  placeholder="Street address"
+                  className={inputCls}
+                />
+                <input
+                  value={savedAddressForm.line2}
+                  onChange={(e) =>
+                    setSavedAddressForm({ ...savedAddressForm, line2: e.target.value })
+                  }
+                  placeholder="Address Line 2 (optional)"
+                  className={inputCls}
+                />
+                <div className="grid grid-cols-3 gap-3">
+                  <input
+                    placeholder="City"
+                    value={savedAddressForm.city}
+                    onChange={(e) =>
+                      setSavedAddressForm({ ...savedAddressForm, city: e.target.value })
+                    }
+                    className={inputCls}
+                  />
+                  <input
+                    placeholder="State"
+                    value={savedAddressForm.state}
+                    onChange={(e) =>
+                      setSavedAddressForm({ ...savedAddressForm, state: e.target.value })
+                    }
+                    className={inputCls}
+                  />
+                  <input
+                    placeholder="ZIP"
+                    value={savedAddressForm.zip}
+                    onChange={(e) =>
+                      setSavedAddressForm({ ...savedAddressForm, zip: e.target.value })
+                    }
+                    className={inputCls}
+                  />
+                </div>
+              </div>
+              <div className="mt-3 flex items-center justify-end gap-2">
+                {savedAddressError && (
+                  <p
+                    role="alert"
+                    className="mr-auto rounded-md bg-red-50 p-2 text-sm text-red-700"
+                  >
+                    {savedAddressError}
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSavedAddressForm(null);
+                    setSavedAddressError(null);
+                  }}
+                  disabled={savedAddressSaving}
+                  className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSavedAddressSave}
+                  disabled={savedAddressSaving}
+                  className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                >
+                  {savedAddressSaving
+                    ? "Saving…"
+                    : savedAddressForm.id
+                      ? "Save"
+                      : "Add address"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between">
+              {savedAddressError && (
+                <p
+                  role="alert"
+                  className="rounded-md bg-red-50 p-2 text-sm text-red-700"
+                >
+                  {savedAddressError}
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={startAddSavedAddress}
+                className="ml-auto rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Add address
+              </button>
+            </div>
+          )}
         </Section>
 
         <Section title="Marketing">
@@ -725,6 +997,15 @@ export default function CustomerDetailPage() {
             );
             load().catch(() => {});
           }}
+        />
+      )}
+      {archivingAddress && (
+        <ConfirmModal
+          title="Archive address?"
+          message={`${archivingAddress.label || "This address"} will be removed from the saved list. Orders already set to it keep their address.`}
+          actionLabel="Archive"
+          onConfirm={handleSavedAddressArchive}
+          onCancel={() => setArchivingAddress(null)}
         />
       )}
       {contactDeleting && (

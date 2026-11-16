@@ -34,6 +34,13 @@ import {
   customerDisplayName,
   type CustomerMatch,
 } from "@/lib/customers/lookup";
+import {
+  getCustomer,
+  addCustomerAddress,
+  setJourneyShipTo,
+  type CustomerAddress,
+} from "@/lib/customers/api";
+import { formatShipToLine } from "@/lib/customers/shipTo";
 
 const PAYMENT_METHODS = [
   "Credit card",
@@ -132,6 +139,19 @@ export default function NewJourneyPage() {
     phone: "",
     role: "",
   });
+  // Ship-to for an existing customer (m145): primary, a saved address,
+  // or a new one saved after the order exists.
+  const [shipToChoice, setShipToChoice] = useState<"primary" | "saved" | "new">("primary");
+  const [shipToAddressId, setShipToAddressId] = useState<string | null>(null);
+  const [shipToNew, setShipToNew] = useState({
+    label: "",
+    street: "",
+    line2: "",
+    city: "",
+    state: "",
+    zip: "",
+  });
+  const [savedAddresses, setSavedAddresses] = useState<CustomerAddress[]>([]);
 
   useEffect(() => {
     const supabase = createClient();
@@ -285,10 +305,20 @@ export default function NewJourneyPage() {
       zipCode: match.zip_code ?? "",
     });
     setSelectedCustomer(match);
+    setShipToChoice("primary");
+    setShipToAddressId(null);
+    setShipToNew({ label: "", street: "", line2: "", city: "", state: "", zip: "" });
+    setSavedAddresses([]);
+    getCustomer(match.id)
+      .then((d) => setSavedAddresses(d.addresses ?? []))
+      .catch(() => setSavedAddresses([]));
   }
 
   function clearSelectedCustomer() {
     setSelectedCustomer(null);
+    setShipToChoice("primary");
+    setShipToAddressId(null);
+    setSavedAddresses([]);
   }
 
   // With an existing customer selected, address edits write back to that
@@ -402,12 +432,43 @@ export default function NewJourneyPage() {
     try {
       const result = await createJourney(input);
       journeyId = result.journeyId;
+
+      // Post-order extras (contact person, ship-to) must never fail the
+      // order; collect warnings for the next screen instead.
+      const orderNotices: string[] = [];
       if (result.contactWarning) {
-        // Order saved; tell the next screen the contact person failed.
+        orderNotices.push(`Contact person: ${result.contactWarning}`);
+      }
+      if (selectedCustomer && shipToChoice !== "primary") {
+        try {
+          let shipToId: string | null = null;
+          if (shipToChoice === "saved") {
+            shipToId = shipToAddressId;
+          } else if (shipToNew.street.trim()) {
+            const created = await addCustomerAddress(selectedCustomer.id, {
+              label: shipToNew.label.trim() || null,
+              street_address: shipToNew.street.trim(),
+              street_address_line_2: shipToNew.line2.trim() || null,
+              city: shipToNew.city.trim() || null,
+              state: shipToNew.state.trim() || null,
+              zip_code: shipToNew.zip.trim() || null,
+            });
+            shipToId = created.id;
+          }
+          if (shipToId) {
+            await setJourneyShipTo(journeyId, shipToId);
+          }
+        } catch (e: any) {
+          orderNotices.push(
+            `Ship-to address: ${e?.message ?? "could not be set"}`
+          );
+        }
+      }
+      if (orderNotices.length > 0) {
         try {
           window.sessionStorage.setItem(
             "pt_new_order_contact_warning",
-            result.contactWarning
+            orderNotices.join(" ")
           );
         } catch {
           // best-effort notice only
@@ -1108,6 +1169,126 @@ export default function NewJourneyPage() {
               <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700">
                 This also changes the address on this customer&apos;s earlier orders.
               </p>
+            )}
+            {selectedCustomer && (
+              <fieldset className="rounded-md border border-slate-200 p-3">
+                <legend className="px-1 text-xs font-medium uppercase text-slate-500">
+                  Ship to
+                </legend>
+                <div className="space-y-2">
+                  <label className="flex items-start gap-2 text-sm text-slate-700">
+                    <input
+                      type="radio"
+                      name="new-order-ship-to"
+                      checked={shipToChoice === "primary"}
+                      onChange={() => setShipToChoice("primary")}
+                      className="mt-1"
+                    />
+                    <span>
+                      <span className="font-medium">Primary address</span>
+                      <span className="block text-xs text-slate-500">
+                        {formatShipToLine({
+                          street_address: selectedCustomer.street_address,
+                          street_address_line_2:
+                            selectedCustomer.street_address_line_2,
+                          city: selectedCustomer.city,
+                          state: selectedCustomer.state,
+                          zip_code: selectedCustomer.zip_code,
+                        }) || "No address on file"}
+                      </span>
+                    </span>
+                  </label>
+                  {savedAddresses.map((a) => (
+                    <label
+                      key={a.id}
+                      className="flex items-start gap-2 text-sm text-slate-700"
+                    >
+                      <input
+                        type="radio"
+                        name="new-order-ship-to"
+                        checked={shipToChoice === "saved" && shipToAddressId === a.id}
+                        onChange={() => {
+                          setShipToChoice("saved");
+                          setShipToAddressId(a.id);
+                        }}
+                        className="mt-1"
+                      />
+                      <span>
+                        <span className="font-medium">
+                          {a.label || "Saved address"}
+                        </span>
+                        <span className="block text-xs text-slate-500">
+                          {formatShipToLine(a)}
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                  <label className="flex items-start gap-2 text-sm text-slate-700">
+                    <input
+                      type="radio"
+                      name="new-order-ship-to"
+                      checked={shipToChoice === "new"}
+                      onChange={() => setShipToChoice("new")}
+                      className="mt-1"
+                    />
+                    <span className="font-medium">New address</span>
+                  </label>
+                  {shipToChoice === "new" && (
+                    <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+                      <input
+                        value={shipToNew.label}
+                        onChange={(e) =>
+                          setShipToNew((a) => ({ ...a, label: e.target.value }))
+                        }
+                        placeholder="Label (optional, e.g. Cabin)"
+                        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                      />
+                      <input
+                        value={shipToNew.street}
+                        onChange={(e) =>
+                          setShipToNew((a) => ({ ...a, street: e.target.value }))
+                        }
+                        placeholder="Street address"
+                        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                      />
+                      <input
+                        value={shipToNew.line2}
+                        onChange={(e) =>
+                          setShipToNew((a) => ({ ...a, line2: e.target.value }))
+                        }
+                        placeholder="Address Line 2 (optional)"
+                        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                      />
+                      <div className="grid grid-cols-3 gap-2">
+                        <input
+                          placeholder="City"
+                          value={shipToNew.city}
+                          onChange={(e) =>
+                            setShipToNew((a) => ({ ...a, city: e.target.value }))
+                          }
+                          className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+                        />
+                        <input
+                          placeholder="State"
+                          value={shipToNew.state}
+                          onChange={(e) =>
+                            setShipToNew((a) => ({ ...a, state: e.target.value }))
+                          }
+                          className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+                        />
+                        <input
+                          placeholder="ZIP"
+                          value={shipToNew.zip}
+                          onChange={(e) =>
+                            setShipToNew((a) => ({ ...a, zip: e.target.value }))
+                          }
+                          className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </fieldset>
             )}
             <div className="flex justify-end gap-2">
               <button

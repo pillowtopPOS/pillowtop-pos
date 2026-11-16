@@ -23,7 +23,6 @@ import {
   reconcilePayment,
   reassignJourneyEmployee,
   reassignJourneyStore,
-  updateCustomerAddress,
   updateJourneyFulfillment,
   updateJourneyLineItem,
   FOLLOW_UP_METHOD_LABELS,
@@ -41,6 +40,16 @@ import {
   fetchCustomerContacts,
   type CustomerContact,
 } from "@/lib/journeys/interactions";
+import {
+  effectiveShipTo,
+  formatShipToLine,
+} from "@/lib/customers/shipTo";
+import {
+  addCustomerAddress,
+  setJourneyShipTo,
+  getCustomer,
+  type CustomerAddress,
+} from "@/lib/customers/api";
 import {
   STATE_TRANSITIONS,
   type JourneyEventType,
@@ -646,9 +655,23 @@ export default function JourneyWorkspace({
   const [reassignReason, setReassignReason] = useState("");
   const [reassignSaving, setReassignSaving] = useState(false);
   const [fulfillmentSaving, setFulfillmentSaving] = useState(false);
-  const [editingAddress, setEditingAddress] = useState(false);
-  const [addressSaving, setAddressSaving] = useState(false);
-  const [address, setAddress] = useState({ street: "", line2: "", city: "", state: "", zip: "" });
+  // Ship-to chooser (m145): replaces the old editor that rewrote the
+  // customer's primary address on every order.
+  const [shipToOpen, setShipToOpen] = useState(false);
+  const [shipToLoading, setShipToLoading] = useState(false);
+  const [shipToSaving, setShipToSaving] = useState(false);
+  const [shipToMode, setShipToMode] = useState<"primary" | "saved" | "new">("primary");
+  const [shipToAddressId, setShipToAddressId] = useState<string | null>(null);
+  const [shipToNew, setShipToNew] = useState({
+    label: "",
+    street: "",
+    line2: "",
+    city: "",
+    state: "",
+    zip: "",
+  });
+  const [savedAddresses, setSavedAddresses] = useState<CustomerAddress[]>([]);
+  const [primaryOpenOrders, setPrimaryOpenOrders] = useState(0);
   const [lineAvailability, setLineAvailability] = useState<Record<string, number>>({});
   const [orderEditing, setOrderEditing] = useState(false);
   const [customerContacts, setCustomerContacts] = useState<CustomerContact[]>([]);
@@ -705,17 +728,13 @@ export default function JourneyWorkspace({
     () => resolveLineItemLocation({}, journey, stores),
     [stores, journey.store_id, journey.fulfillment_type]
   );
-  const hasDeliveryAddress =
-    (journey.customer?.street_address ?? "").trim() !== "";
-  const customerAddress = [
-    journey.customer?.street_address,
-    journey.customer?.street_address_line_2,
-    [journey.customer?.city, journey.customer?.state, journey.customer?.zip_code]
-      .filter(Boolean)
-      .join(" "),
-  ]
-    .filter(Boolean)
-    .join(", ");
+  const shipTo = effectiveShipTo(journey, journey.customer);
+  const hasDeliveryAddress = !!shipTo?.street_address?.trim();
+  const customerAddress = formatShipToLine(shipTo);
+  const shipToLocked =
+    journey.fulfillment_type === "pickup" ||
+    !!journey.cancelled_at ||
+    !!journey.delivered_at;
 
   // Latest scheduled delivery date, if a delivery_scheduled event
   // carries one — drives the Fulfillment status line. Shown only while
@@ -781,36 +800,67 @@ export default function JourneyWorkspace({
     }
   }
 
-  function openAddressEditor() {
+  async function openShipToChooser(prefillNew = false) {
+    if (!journey.customer) return;
     setPanelError(null);
-    setAddress({
-      street: journey.customer?.street_address ?? "",
-      line2: journey.customer?.street_address_line_2 ?? "",
-      city: journey.customer?.city ?? "",
-      state: journey.customer?.state ?? "",
-      zip: journey.customer?.zip_code ?? "",
-    });
-    setEditingAddress(true);
+    setShipToMode(
+      prefillNew
+        ? "new"
+        : journey.ship_to_address_id
+          ? "saved"
+          : "primary"
+    );
+    setShipToAddressId(journey.ship_to_address_id ?? null);
+    setShipToNew({ label: "", street: "", line2: "", city: "", state: "", zip: "" });
+    setShipToOpen(true);
+    setShipToLoading(true);
+    try {
+      const detail = await getCustomer(journey.customer.id);
+      setSavedAddresses(detail.addresses ?? []);
+      setPrimaryOpenOrders(detail.primary_open_orders ?? 0);
+    } catch (e: any) {
+      setPanelError(e?.message ?? "Could not load saved addresses");
+    } finally {
+      setShipToLoading(false);
+    }
   }
 
-  async function saveAddress() {
-    setPanelError(null);
+  const shipToNewDirty =
+    shipToMode === "new" &&
+    [shipToNew.label, shipToNew.street, shipToNew.line2, shipToNew.city, shipToNew.state, shipToNew.zip]
+      .some((v) => v.trim() !== "");
+
+  async function saveShipTo() {
     if (!journey.customer) return;
-    setAddressSaving(true);
+    setPanelError(null);
+    setShipToSaving(true);
     try {
-      await updateCustomerAddress(journey.customer.id, {
-        street_address: address.street.trim() || null,
-        street_address_line_2: address.line2.trim() || null,
-        city: address.city.trim() || null,
-        state: address.state.trim() || null,
-        zip_code: address.zip.trim() || null,
-      });
-      setEditingAddress(false);
+      let addressId: string | null = null;
+      if (shipToMode === "new") {
+        if (!shipToNew.street.trim()) {
+          setPanelError("Street address is required.");
+          setShipToSaving(false);
+          return;
+        }
+        const created = await addCustomerAddress(journey.customer.id, {
+          label: shipToNew.label.trim() || null,
+          street_address: shipToNew.street.trim(),
+          street_address_line_2: shipToNew.line2.trim() || null,
+          city: shipToNew.city.trim() || null,
+          state: shipToNew.state.trim() || null,
+          zip_code: shipToNew.zip.trim() || null,
+        });
+        addressId = created.id;
+      } else if (shipToMode === "saved") {
+        addressId = shipToAddressId;
+      }
+      await setJourneyShipTo(journey.id, addressId);
+      setShipToOpen(false);
       await handlePanelRefresh();
     } catch (e: any) {
-      setPanelError(e.message ?? "Failed to update customer address");
+      setPanelError(e?.message ?? "Failed to update ship-to address");
     } finally {
-      setAddressSaving(false);
+      setShipToSaving(false);
     }
   }
 
@@ -1139,23 +1189,16 @@ export default function JourneyWorkspace({
     }
   }
 
-  const addressDirty =
-    address.street !== (journey.customer?.street_address ?? "") ||
-    address.line2 !== (journey.customer?.street_address_line_2 ?? "") ||
-    address.city !== (journey.customer?.city ?? "") ||
-    address.state !== (journey.customer?.state ?? "") ||
-    address.zip !== (journey.customer?.zip_code ?? "");
-
   const panelDirty =
     (reassignMode !== null &&
       reassignMode !== "choose" &&
       (reassignTarget !== "" || reassignReason.trim() !== "")) ||
-    (editingAddress && addressDirty) ||
+    (shipToOpen && shipToNewDirty) ||
     activityState.dirty;
   const panelSaving =
     reassignSaving ||
     fulfillmentSaving ||
-    addressSaving ||
+    shipToSaving ||
     activityState.saving;
 
   // Attention column: a short prioritized list of real signals, all
@@ -1541,12 +1584,12 @@ export default function JourneyWorkspace({
               ) : (
                 <p className="mt-0.5 text-sm text-slate-500">No address on file</p>
               )}
-              {journey.customer && (
+              {journey.customer && !shipToLocked && (
                 <button
-                  onClick={openAddressEditor}
+                  onClick={() => openShipToChooser()}
                   className="mt-1.5 text-xs text-brand-600 hover:text-brand-700"
                 >
-                  {customerAddress ? "Edit address" : "Add address"}
+                  Ship to
                 </button>
               )}
             </RailCard>
@@ -2079,32 +2122,125 @@ export default function JourneyWorkspace({
           </aside>
         </div>
 
-        {editingAddress && journey.customer && (
+        {shipToOpen && journey.customer && (
           <Modal
-            onClose={() => setEditingAddress(false)}
-            dirty={addressDirty}
-            saving={addressSaving}
+            onClose={() => setShipToOpen(false)}
+            dirty={shipToNewDirty}
+            saving={shipToSaving}
           >
             <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
-              <h2 className="mb-4 text-lg font-semibold text-slate-900">Edit customer address</h2>
-              <div className="space-y-3">
-                <input value={address.street} onChange={(e) => setAddress((a) => ({ ...a, street: e.target.value }))} placeholder="Street address" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
-                <input value={address.line2} onChange={(e) => setAddress((a) => ({ ...a, line2: e.target.value }))} placeholder="Address Line 2 (optional)" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
-                <div className="grid grid-cols-3 gap-2">
-                  <input value={address.city} onChange={(e) => setAddress((a) => ({ ...a, city: e.target.value }))} placeholder="City" className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
-                  <input value={address.state} onChange={(e) => setAddress((a) => ({ ...a, state: e.target.value }))} placeholder="State" className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
-                  <input value={address.zip} onChange={(e) => setAddress((a) => ({ ...a, zip: e.target.value }))} placeholder="ZIP" className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
+              <h2 className="mb-4 text-lg font-semibold text-slate-900">Ship to</h2>
+              {shipToLoading ? (
+                <p className="text-sm text-slate-500">Loading…</p>
+              ) : (
+                <div className="space-y-3">
+                  <label className="flex items-start gap-2 text-sm text-slate-700">
+                    <input
+                      type="radio"
+                      name="ship-to"
+                      checked={shipToMode === "primary"}
+                      onChange={() => setShipToMode("primary")}
+                      className="mt-1"
+                    />
+                    <span>
+                      <span className="font-medium">Primary address</span>
+                      <span className="block text-xs text-slate-500">
+                        {[journey.customer.street_address, journey.customer.street_address_line_2]
+                          .filter(Boolean)
+                          .join(" ")}
+                        {[
+                          [journey.customer.city, journey.customer.state, journey.customer.zip_code]
+                            .filter(Boolean)
+                            .join(" "),
+                        ]
+                          .filter(Boolean)
+                          .map((s) => `, ${s}`)
+                          .join("") || "No address on file"}
+                        {primaryOpenOrders > 0 &&
+                          ` · ${primaryOpenOrders} open order${primaryOpenOrders === 1 ? "" : "s"} ship here`}
+                      </span>
+                    </span>
+                  </label>
+                  {savedAddresses.map((a) => (
+                    <label key={a.id} className="flex items-start gap-2 text-sm text-slate-700">
+                      <input
+                        type="radio"
+                        name="ship-to"
+                        checked={shipToMode === "saved" && shipToAddressId === a.id}
+                        onChange={() => {
+                          setShipToMode("saved");
+                          setShipToAddressId(a.id);
+                        }}
+                        className="mt-1"
+                      />
+                      <span>
+                        <span className="font-medium">
+                          {a.label || "Saved address"}
+                        </span>
+                        <span className="block text-xs text-slate-500">
+                          {[a.street_address, a.street_address_line_2]
+                            .filter(Boolean)
+                            .join(" ")}
+                          {[
+                            [a.city, a.state, a.zip_code].filter(Boolean).join(" "),
+                          ]
+                            .filter(Boolean)
+                            .map((s) => `, ${s}`)
+                            .join("")}
+                          {(a.open_orders ?? 0) > 0 &&
+                            ` · ${a.open_orders} open order${a.open_orders === 1 ? "" : "s"}`}
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                  <label className="flex items-start gap-2 text-sm text-slate-700">
+                    <input
+                      type="radio"
+                      name="ship-to"
+                      checked={shipToMode === "new"}
+                      onChange={() => setShipToMode("new")}
+                      className="mt-1"
+                    />
+                    <span className="font-medium">New address</span>
+                  </label>
+                  {shipToMode === "new" && (
+                    <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+                      <input
+                        value={shipToNew.label}
+                        onChange={(e) => setShipToNew((a) => ({ ...a, label: e.target.value }))}
+                        placeholder="Label (optional, e.g. Cabin)"
+                        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                      />
+                      <input
+                        value={shipToNew.street}
+                        onChange={(e) => setShipToNew((a) => ({ ...a, street: e.target.value }))}
+                        placeholder="Street address"
+                        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                      />
+                      <input
+                        value={shipToNew.line2}
+                        onChange={(e) => setShipToNew((a) => ({ ...a, line2: e.target.value }))}
+                        placeholder="Address Line 2 (optional)"
+                        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                      />
+                      <div className="grid grid-cols-3 gap-2">
+                        <input value={shipToNew.city} onChange={(e) => setShipToNew((a) => ({ ...a, city: e.target.value }))} placeholder="City" className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
+                        <input value={shipToNew.state} onChange={(e) => setShipToNew((a) => ({ ...a, state: e.target.value }))} placeholder="State" className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
+                        <input value={shipToNew.zip} onChange={(e) => setShipToNew((a) => ({ ...a, zip: e.target.value }))} placeholder="ZIP" className="rounded-md border border-slate-300 px-3 py-2 text-sm" />
+                      </div>
+                    </div>
+                  )}
+                  {panelError && (
+                    <p key="shipto-error" role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                      {panelError}
+                    </p>
+                  )}
+                  <div className="flex gap-2 pt-2">
+                    <button onClick={saveShipTo} disabled={shipToSaving || shipToLoading} className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50">{shipToSaving ? "Saving…" : "Save"}</button>
+                    <button onClick={() => setShipToOpen(false)} className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700">Cancel</button>
+                  </div>
                 </div>
-                {panelError && (
-                  <p key="address-error" role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                    {panelError}
-                  </p>
-                )}
-                <div className="flex gap-2 pt-2">
-                  <button onClick={saveAddress} disabled={addressSaving} className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50">{addressSaving ? "Saving…" : "Save"}</button>
-                  <button onClick={() => setEditingAddress(false)} className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700">Cancel</button>
-                </div>
-              </div>
+              )}
             </div>
           </Modal>
         )}
@@ -2201,13 +2337,13 @@ export default function JourneyWorkspace({
                 Address required
               </h2>
               <p className="mb-3 text-sm text-slate-600">
-                Add a customer street address before selecting Delivery.
+                Add a ship-to address before selecting Delivery.
               </p>
               <div className="mt-4 flex gap-2">
                 <button
                   onClick={() => {
                     setAddressPromptOpen(false);
-                    openAddressEditor();
+                    openShipToChooser(true);
                   }}
                   className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
                 >

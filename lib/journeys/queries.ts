@@ -26,6 +26,17 @@ export type JourneyWithDetails = {
   sale_kind: "STANDARD" | "EXCHANGE";
   parent_journey_id: string | null;
   exchange_action_id: string | null;
+  // m145: per-order ship-to. Null means the customer's primary address.
+  ship_to_address_id: string | null;
+  ship_to: {
+    id: string;
+    label: string | null;
+    street_address: string;
+    street_address_line_2: string | null;
+    city: string | null;
+    state: string | null;
+    zip_code: string | null;
+  } | null;
   customer: {
     id: string;
     first_name: string;
@@ -52,7 +63,8 @@ export type JourneyWithDetails = {
   } | null;
 };
 
-const JOURNEY_DETAIL_SELECT = `id, journey_number, current_state, product_summary, price, cancelled_at, fulfillment_type, delivered_at, inventory_ready_notified_at, trial_length_nights, minimum_adjustment_nights, created_at, updated_at, store_id, assigned_employee_id, sale_kind, parent_journey_id, exchange_action_id,
+const JOURNEY_DETAIL_SELECT = `id, journey_number, current_state, product_summary, price, cancelled_at, fulfillment_type, delivered_at, inventory_ready_notified_at, trial_length_nights, minimum_adjustment_nights, created_at, updated_at, store_id, assigned_employee_id, sale_kind, parent_journey_id, exchange_action_id, ship_to_address_id,
+      ship_to:customer_addresses!ship_to_address_id ( id, label, street_address, street_address_line_2, city, state, zip_code ),
       customer:customers!customer_id ( id, first_name, last_name, phone, phone2, email, street_address, street_address_line_2, city, state, zip_code ),
       employee:employees!assigned_employee_id ( id, name ),
       store:stores!store_id ( id, name, trial_length_nights, minimum_adjustment_nights, trial_ending_warning_days )`;
