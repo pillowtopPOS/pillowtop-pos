@@ -144,6 +144,25 @@ async function main() {
   f.customers.push(svcNull.data!.id);
   check("service-role insert leaves company_id null", svcNull.data!.company_id === null, String(svcNull.data!.company_id));
 
+  // ---- tenant guards (m142 section 9) ----
+  // signed-in user cannot plant a customer in another company
+  const crossCo = await asA.from("customers").insert({ company_id: coB, first_name: "Cross", last_name: "Co", phone: "3035550002", email: "cross@x.com" }).select("id").maybeSingle();
+  check("insert into another company rejected", !!crossCo.error, crossCo.error?.message ?? "no error");
+  if (crossCo.data) f.customers.push(crossCo.data.id);
+
+  // signed-in user cannot move an existing customer to another company
+  const moveCo = await asA.from("customers").update({ company_id: coB }).eq("id", c1).select("id").maybeSingle();
+  check("company_id change rejected", !!moveCo.error, moveCo.error?.message ?? "no error");
+
+  // a user with no company cannot insert at all
+  const noCoInsert = await asC.from("customers").insert({ first_name: "No", last_name: "Co", phone: "3035550003", email: "noco@x.com" }).select("id").maybeSingle();
+  check("no-company insert rejected", !!noCoInsert.error, noCoInsert.error?.message ?? "no error");
+  if (noCoInsert.data) f.customers.push(noCoInsert.data.id);
+
+  // service role may repair company_id
+  const repair = await admin.from("customers").update({ company_id: coA }).eq("id", svcNull.data!.id).select("id,company_id").single();
+  check("service role repairs company_id", repair.data?.company_id === coA, String(repair.data?.company_id));
+
   // ---- find_matching_customers ----
   // phone across formats (input parens vs stored dashed)
   let r = await rpc(asA, "find_matching_customers", { p_first: "", p_last: "", p_phone: "(303) 555-0100", p_email: "" });

@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/client";
 import { describeError } from "@/lib/utils";
 import type { SleepJourneyState } from "@/lib/constants";
 import type { JourneyEventType } from "./state";
+import { phoneDigitsMatch } from "@/lib/customers/search";
 import type { OpenExchangeWork } from "./exchange";
 
 export type JourneyWithDetails = {
@@ -30,6 +31,7 @@ export type JourneyWithDetails = {
     first_name: string;
     last_name: string;
     phone: string;
+    phone2: string | null;
     email: string;
     street_address: string | null;
     street_address_line_2: string | null;
@@ -51,7 +53,7 @@ export type JourneyWithDetails = {
 };
 
 const JOURNEY_DETAIL_SELECT = `id, journey_number, current_state, product_summary, price, cancelled_at, fulfillment_type, delivered_at, inventory_ready_notified_at, trial_length_nights, minimum_adjustment_nights, created_at, updated_at, store_id, assigned_employee_id, sale_kind, parent_journey_id, exchange_action_id,
-      customer:customers!customer_id ( id, first_name, last_name, phone, email, street_address, street_address_line_2, city, state, zip_code ),
+      customer:customers!customer_id ( id, first_name, last_name, phone, phone2, email, street_address, street_address_line_2, city, state, zip_code ),
       employee:employees!assigned_employee_id ( id, name ),
       store:stores!store_id ( id, name, trial_length_nights, minimum_adjustment_nights, trial_ending_warning_days )`;
 
@@ -251,6 +253,8 @@ export async function fetchJourneys(
       return (
         `${customer.first_name} ${customer.last_name}`.toLowerCase().includes(term) ||
         customer.phone.toLowerCase().includes(term) ||
+        phoneDigitsMatch(customer.phone, term) ||
+        phoneDigitsMatch(customer.phone2, term) ||
         customer.email.toLowerCase().includes(term)
       );
     });
@@ -1001,11 +1005,14 @@ export async function createJourney(input: CreateJourneyInput): Promise<string> 
       if (nextTrim !== prevTrim) scalarUpdates[col] = nextTrim;
     }
     if (Object.keys(scalarUpdates).length > 0) {
-      const { error: updateError } = await supabase
+      const { data: updated, error: updateError } = await supabase
         .from("customers")
         .update(scalarUpdates)
-        .eq("id", customerId);
+        .eq("id", customerId)
+        .select("id")
+        .maybeSingle();
       if (updateError) throw new Error(updateError.message);
+      if (!updated) throw new Error("Could not update this customer");
     }
 
     const address = {

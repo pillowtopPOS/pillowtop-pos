@@ -224,15 +224,21 @@ export default function NewJourneyPage() {
       setCustomerMatches([]);
       return;
     }
+    let cancelled = false;
     const handle = setTimeout(() => {
       fetchMatchingCustomers({
         first: customer.firstName,
         last: customer.lastName,
         phone: customer.phone,
         email: customer.email,
-      }).then(setCustomerMatches);
+      }).then((rows) => {
+        if (!cancelled) setCustomerMatches(rows);
+      });
     }, 400);
-    return () => clearTimeout(handle);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     lookupActive,
@@ -873,6 +879,7 @@ export default function NewJourneyPage() {
                 <label className="block text-sm font-medium text-slate-700">First name</label>
                 <input
                   value={customer.firstName}
+                  disabled={!!selectedCustomer}
                   onChange={(e) => setCustomer((c) => ({ ...c, firstName: e.target.value }))}
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                 />
@@ -881,6 +888,7 @@ export default function NewJourneyPage() {
                 <label className="block text-sm font-medium text-slate-700">Last name</label>
                 <input
                   value={customer.lastName}
+                  disabled={!!selectedCustomer}
                   onChange={(e) => setCustomer((c) => ({ ...c, lastName: e.target.value }))}
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                 />
