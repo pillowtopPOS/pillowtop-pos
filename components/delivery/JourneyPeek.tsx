@@ -210,7 +210,9 @@ export default function JourneyPeek({
                 <p>Phone: {formatPhoneDashed(customer.phone)}</p>
               )}
               {customer?.phone2 && (
-                <p>Second phone: {formatPhoneDashed(customer.phone2)}</p>
+                <p className="text-slate-500">
+                  Second: {formatPhoneDashed(customer.phone2)}
+                </p>
               )}
               {customer?.email && <p>Email: {customer.email}</p>}
               {customer &&

@@ -912,6 +912,10 @@ export async function updateCustomerAddress(
 export type CustomerInput = {
   firstName: string;
   lastName: string;
+  // Company customer (m143): the company name stands in for first_name and
+  // last_name is stored blank; the database trigger mirrors it anyway.
+  isCompany?: boolean;
+  companyName?: string;
   phone: string;
   phone2?: string;
   email: string;
@@ -1034,10 +1038,15 @@ export async function createJourney(input: CreateJourneyInput): Promise<string> 
   } else {
     customerId = crypto.randomUUID();
 
+    const isCompany = input.customer.isCompany === true;
+    const companyName = input.customer.companyName?.trim() || "";
     const { error: customerError } = await supabase.from("customers").insert({
       id: customerId,
-      first_name: input.customer.firstName,
-      last_name: input.customer.lastName,
+      first_name: isCompany ? companyName || input.customer.firstName : input.customer.firstName,
+      last_name: isCompany ? "" : input.customer.lastName,
+      ...(isCompany
+        ? { is_company: true, company_name: companyName || null }
+        : {}),
       phone: input.customer.phone,
       phone2: input.customer.phone2?.trim() || null,
       email: input.customer.email,

@@ -9,6 +9,7 @@ import {
   Package,
   Lightbulb,
   Truck,
+  Users,
   ChevronLeft,
   ChevronRight,
   Store as StoreIcon,
@@ -36,6 +37,7 @@ const NAV = [
   { href: "/inventory", label: "Inventory", icon: Package },
   { href: "/opportunities", label: "Opportunities", icon: Lightbulb },
   { href: "/delivery", label: "Delivery", icon: Truck },
+  { href: "/customers", label: "Customers", icon: Users },
 ];
 
 export default function Sidebar({

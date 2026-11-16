@@ -5,6 +5,8 @@ export type CustomerMatch = {
   id: string;
   first_name: string;
   last_name: string;
+  is_company: boolean;
+  company_name: string | null;
   phone: string | null;
   phone2: string | null;
   email: string | null;
@@ -21,10 +23,24 @@ export type CustomerMatch = {
 
 export type CustomerMatchInput = {
   first: string;
-  last: string;
+  last: string | null;
   phone: string;
   email: string;
 };
+
+// Display name for a match or customer row: the company name for company
+// customers (first_name mirrors it), otherwise first + last.
+export function customerDisplayName(c: {
+  is_company?: boolean | null;
+  company_name?: string | null;
+  first_name: string;
+  last_name: string | null;
+}): string {
+  if (c.is_company) {
+    return (c.company_name ?? c.first_name ?? "").trim();
+  }
+  return `${c.first_name ?? ""} ${c.last_name ?? ""}`.trim();
+}
 
 // Returns [] on any error (including the RPC not existing yet) so the
 // order form degrades silently before migration 142 is installed.

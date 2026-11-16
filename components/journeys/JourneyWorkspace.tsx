@@ -1511,9 +1511,8 @@ export default function JourneyWorkspace({
                 </p>
               )}
               {journey.customer?.phone2 && (
-                <p className="mt-0.5 text-base font-medium text-slate-800">
-                  <span className="sr-only">Second phone: </span>
-                  {formatPhone(journey.customer.phone2)}
+                <p className="mt-0.5 text-sm text-slate-500">
+                  Second: {formatPhone(journey.customer.phone2)}
                 </p>
               )}
               {journey.customer?.email && (

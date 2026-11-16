@@ -31,6 +31,7 @@ import { formatPhone, formatPhoneAsYouType } from "@/lib/format/phone";
 import { REFERRAL_SOURCES } from "@/lib/customers/referralSources";
 import {
   fetchMatchingCustomers,
+  customerDisplayName,
   type CustomerMatch,
 } from "@/lib/customers/lookup";
 
@@ -90,6 +91,8 @@ export default function NewJourneyPage() {
 
   const [mode, setMode] = useState<"quote" | "purchase" | null>(null);
   const [customer, setCustomer] = useState({
+    isCompany: false,
+    companyName: "",
     firstName: "",
     lastName: "",
     phone: "",
@@ -213,8 +216,10 @@ export default function NewJourneyPage() {
     lookupPhoneDigits.length === 10 ||
     (lookupPhoneDigits.length === 11 && lookupPhoneDigits.startsWith("1"));
   const lookupEmailValid = customer.email.includes("@");
-  const lookupNameValid =
-    customer.firstName.trim().length >= 2 && customer.lastName.trim().length >= 2;
+  const lookupNameValid = customer.isCompany
+    ? customer.companyName.trim().length >= 2
+    : customer.firstName.trim().length >= 2 &&
+      customer.lastName.trim().length >= 2;
   const lookupActive =
     !selectedCustomer &&
     (lookupPhoneValid || lookupEmailValid || lookupNameValid);
@@ -227,8 +232,8 @@ export default function NewJourneyPage() {
     let cancelled = false;
     const handle = setTimeout(() => {
       fetchMatchingCustomers({
-        first: customer.firstName,
-        last: customer.lastName,
+        first: customer.isCompany ? customer.companyName : customer.firstName,
+        last: customer.isCompany ? null : customer.lastName,
         phone: customer.phone,
         email: customer.email,
       }).then((rows) => {
@@ -242,6 +247,8 @@ export default function NewJourneyPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     lookupActive,
+    customer.isCompany,
+    customer.companyName,
     customer.firstName,
     customer.lastName,
     customer.phone,
@@ -254,6 +261,10 @@ export default function NewJourneyPage() {
 
   function useCustomerMatch(match: CustomerMatch) {
     setCustomer({
+      isCompany: match.is_company === true,
+      companyName: match.is_company
+        ? (match.company_name ?? match.first_name ?? "")
+        : "",
       firstName: match.first_name ?? "",
       lastName: match.last_name ?? "",
       phone: formatPhone(match.phone),
@@ -288,9 +299,11 @@ export default function NewJourneyPage() {
   })();
 
   const canSubmitQuote = useMemo(() => {
+    const nameOk = customer.isCompany
+      ? customer.companyName.trim().length > 0
+      : !!customer.firstName && !!customer.lastName;
     return (
-      customer.firstName &&
-      customer.lastName &&
+      nameOk &&
       customer.phone &&
       customer.email &&
       lineItems.length > 0 &&
@@ -775,8 +788,8 @@ export default function NewJourneyPage() {
             {selectedCustomer ? (
               <div className="flex items-center justify-between rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
                 <span>
-                  Using existing customer: {selectedCustomer.first_name}{" "}
-                  {selectedCustomer.last_name}.
+                  Using existing customer:{" "}
+                  {customerDisplayName(selectedCustomer)}.
                 </span>
                 <button
                   type="button"
@@ -821,7 +834,12 @@ export default function NewJourneyPage() {
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <p className="font-medium text-slate-900">
-                              {m.first_name} {m.last_name}
+                              {customerDisplayName(m)}
+                              {m.is_company && (
+                                <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-normal text-slate-500">
+                                  Company
+                                </span>
+                              )}
                             </p>
                             <p className="text-xs text-slate-600">
                               {[formatPhone(m.phone), m.phone2 ? formatPhone(m.phone2) : null]
@@ -874,26 +892,60 @@ export default function NewJourneyPage() {
               </div>
             ) : null}
 
-            <div className="grid grid-cols-2 gap-4">
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={customer.isCompany}
+                disabled={!!selectedCustomer}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setCustomer((c) => ({
+                    ...c,
+                    isCompany: checked,
+                    companyName:
+                      checked && !c.companyName.trim()
+                        ? `${c.firstName} ${c.lastName}`.trim()
+                        : c.companyName,
+                  }));
+                }}
+                className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+              />
+              This is a company
+            </label>
+            {customer.isCompany ? (
               <div>
-                <label className="block text-sm font-medium text-slate-700">First name</label>
+                <label className="block text-sm font-medium text-slate-700">Company name</label>
                 <input
-                  value={customer.firstName}
+                  value={customer.companyName}
                   disabled={!!selectedCustomer}
-                  onChange={(e) => setCustomer((c) => ({ ...c, firstName: e.target.value }))}
+                  onChange={(e) =>
+                    setCustomer((c) => ({ ...c, companyName: e.target.value }))
+                  }
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700">Last name</label>
-                <input
-                  value={customer.lastName}
-                  disabled={!!selectedCustomer}
-                  onChange={(e) => setCustomer((c) => ({ ...c, lastName: e.target.value }))}
-                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                />
+            ) : (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">First name</label>
+                  <input
+                    value={customer.firstName}
+                    disabled={!!selectedCustomer}
+                    onChange={(e) => setCustomer((c) => ({ ...c, firstName: e.target.value }))}
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">Last name</label>
+                  <input
+                    value={customer.lastName}
+                    disabled={!!selectedCustomer}
+                    onChange={(e) => setCustomer((c) => ({ ...c, lastName: e.target.value }))}
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  />
+                </div>
               </div>
-            </div>
+            )}
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700">Phone</label>
@@ -996,8 +1048,21 @@ export default function NewJourneyPage() {
                 Back
               </button>
               <button
-                onClick={() => customer.firstName && customer.lastName && customer.phone && customer.email && setStep(2)}
-                disabled={!customer.firstName || !customer.lastName || !customer.phone || !customer.email}
+                onClick={() =>
+                  (customer.isCompany
+                    ? customer.companyName.trim()
+                    : customer.firstName && customer.lastName) &&
+                  customer.phone &&
+                  customer.email &&
+                  setStep(2)
+                }
+                disabled={
+                  !(customer.isCompany
+                    ? customer.companyName.trim()
+                    : customer.firstName && customer.lastName) ||
+                  !customer.phone ||
+                  !customer.email
+                }
                 className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
               >
                 Continue
