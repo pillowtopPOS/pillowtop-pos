@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Plus, Trash2 } from "lucide-react";
@@ -38,7 +38,9 @@ import {
   getCustomer,
   addCustomerAddress,
   setJourneyShipTo,
+  searchCustomers,
   type CustomerAddress,
+  type CustomerListItem,
 } from "@/lib/customers/api";
 import { formatShipToLine } from "@/lib/customers/shipTo";
 
@@ -289,6 +291,75 @@ export default function NewJourneyPage() {
     customer.phone,
     customer.email,
   ]);
+
+  // "Find a customer" box: debounced search_customers suggestions.
+  // Picking one goes through the same useCustomerMatch path as the
+  // phone/name match panel below.
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [customerSearchItems, setCustomerSearchItems] = useState<
+    CustomerListItem[]
+  >([]);
+  const [customerSearchDone, setCustomerSearchDone] = useState(false);
+  const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
+  const [customerSearchIndex, setCustomerSearchIndex] = useState(-1);
+  const customerSearchRef = useRef<HTMLInputElement>(null);
+
+  const customerSearchActive = customerSearch.trim().length >= 2;
+
+  useEffect(() => {
+    if (!customerSearchActive || selectedCustomer) {
+      setCustomerSearchItems([]);
+      setCustomerSearchDone(false);
+      setCustomerSearchOpen(false);
+      setCustomerSearchIndex(-1);
+      return;
+    }
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      searchCustomers(customerSearch.trim(), 8)
+        .then((res) => {
+          if (cancelled) return;
+          setCustomerSearchItems(res.items);
+          setCustomerSearchDone(true);
+          setCustomerSearchIndex(-1);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setCustomerSearchItems([]);
+          setCustomerSearchDone(true);
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerSearch, customerSearchActive, selectedCustomer]);
+
+  function pickCustomerSearchResult(item: CustomerListItem) {
+    const match: CustomerMatch = {
+      id: item.id,
+      first_name: item.first_name,
+      last_name: item.last_name,
+      is_company: item.is_company,
+      company_name: item.company_name,
+      phone: item.phone,
+      phone2: item.phone2,
+      email: item.email,
+      street_address: item.street_address ?? null,
+      street_address_line_2: item.street_address_line_2 ?? null,
+      city: item.city,
+      state: item.state,
+      zip_code: item.zip_code ?? null,
+      referral_source: null,
+      journey_count: item.journey_count,
+      last_order_at: item.last_order_at,
+      reasons: [],
+    };
+    setCustomerSearchOpen(false);
+    setCustomerSearch("");
+    useCustomerMatch(match);
+  }
 
   const visibleMatches = customerMatches.filter(
     (m) => !dismissedMatchIds.has(m.id)
@@ -891,6 +962,86 @@ export default function NewJourneyPage() {
         {step === 1 && (
           <div className="space-y-4">
             <h2 className="text-sm font-semibold text-slate-700">Customer</h2>
+
+            {!selectedCustomer && (
+              <div className="relative">
+                <label className="block text-sm font-medium text-slate-700">
+                  Find a customer
+                </label>
+                <input
+                  ref={customerSearchRef}
+                  type="text"
+                  value={customerSearch}
+                  onChange={(e) => {
+                    setCustomerSearch(e.target.value);
+                    setCustomerSearchOpen(true);
+                  }}
+                  onFocus={() => setCustomerSearchOpen(true)}
+                  onBlur={() =>
+                    setTimeout(() => setCustomerSearchOpen(false), 150)
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setCustomerSearchOpen(false);
+                      setCustomerSearchIndex(-1);
+                      return;
+                    }
+                    if (!customerSearchOpen || customerSearchItems.length === 0) return;
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setCustomerSearchIndex((i) =>
+                        Math.min(i + 1, customerSearchItems.length - 1)
+                      );
+                    } else if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setCustomerSearchIndex((i) => Math.max(i - 1, -1));
+                    } else if (e.key === "Enter" && customerSearchIndex >= 0) {
+                      e.preventDefault();
+                      pickCustomerSearchResult(customerSearchItems[customerSearchIndex]);
+                    }
+                  }}
+                  placeholder="Search by name, phone or email"
+                  className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                />
+                {customerSearchOpen && customerSearchActive && (
+                  <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-md border border-slate-200 bg-white shadow-lg">
+                    {customerSearchDone && customerSearchItems.length === 0 ? (
+                      <p className="px-3 py-2 text-sm text-slate-500">
+                        No customer found. Fill in the fields below to add a new
+                        customer.
+                      </p>
+                    ) : (
+                      <ul>
+                        {customerSearchItems.map((item, i) => (
+                          <li key={item.id}>
+                            <button
+                              type="button"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => pickCustomerSearchResult(item)}
+                              onMouseEnter={() => setCustomerSearchIndex(i)}
+                              className={`flex w-full flex-col px-3 py-2 text-left text-sm ${
+                                i === customerSearchIndex
+                                  ? "bg-brand-50"
+                                  : "hover:bg-slate-50"
+                              }`}
+                            >
+                              <span className="font-medium text-slate-900">
+                                {item.display_name}
+                              </span>
+                              <span className="text-xs text-slate-500">
+                                {[formatPhone(item.phone), item.city]
+                                  .filter(Boolean)
+                                  .join(" - ")}
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {selectedCustomer ? (
               <div className="flex items-center justify-between rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
