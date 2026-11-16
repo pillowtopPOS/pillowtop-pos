@@ -844,6 +844,11 @@ export default function JourneyWorkspace({
       if (shipToMode === "new" && !customerHasPrimary) {
         // No primary on file: save this as the customer's primary
         // address. Delivery requires it; no ship-to row is written.
+        if (!shipToNew.street.trim()) {
+          setPanelError("Street address is required.");
+          setShipToSaving(false);
+          return;
+        }
         await updateCustomer(journey.customer.id, {
           street_address: shipToNew.street.trim(),
           street_address_line_2: shipToNew.line2.trim() || null,
