@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
@@ -63,6 +63,15 @@ export default function CustomerDetailPage() {
   const [saving, setSaving] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
+  const messageRef = useRef<HTMLDivElement | null>(null);
+
+  // Save/validation feedback renders next to the buttons at the bottom of
+  // a long form; bring it into view when it appears.
+  useEffect(() => {
+    if (saveError || notice) {
+      messageRef.current?.scrollIntoView({ block: "nearest" });
+    }
+  }, [saveError, notice]);
 
   const load = useCallback(async () => {
     const detail = await getCustomer(customerId);
@@ -253,17 +262,6 @@ export default function CustomerDetailPage() {
           )}
         </div>
 
-        {saveError && (
-          <p className="rounded-md bg-red-50 p-3 text-sm text-red-700">
-            {saveError}
-          </p>
-        )}
-        {notice && (
-          <p className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-700">
-            {notice}
-          </p>
-        )}
-
         <Section title="Customer">
           <label className="mb-3 flex items-center gap-2 text-sm text-slate-700">
             <input
@@ -444,6 +442,25 @@ export default function CustomerDetailPage() {
         </Section>
 
         <div className="flex justify-end gap-2 pb-8">
+          {(saveError || notice) && (
+            <div
+              ref={messageRef}
+              className="mr-auto flex items-center"
+            >
+              {saveError ? (
+                <p
+                  role="alert"
+                  className="rounded-md bg-red-50 p-3 text-sm text-red-700"
+                >
+                  {saveError}
+                </p>
+              ) : (
+                <p className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-700">
+                  {notice}
+                </p>
+              )}
+            </div>
+          )}
           <button
             type="button"
             onClick={handleCancel}
@@ -479,7 +496,7 @@ export default function CustomerDetailPage() {
       {confirmDiscard && (
         <ConfirmModal
           title="Discard changes?"
-          message="Discard changes?"
+          message="Your unsaved changes will be lost."
           actionLabel="Discard changes"
           onConfirm={revert}
           onCancel={() => setConfirmDiscard(false)}
