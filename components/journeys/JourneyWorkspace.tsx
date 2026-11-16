@@ -1854,26 +1854,43 @@ export default function JourneyWorkspace({
                             <option value="delivery" disabled={!hasDeliveryAddress}>Delivery</option>
                             <option value="pickup">Pickup</option>
                           </select>
-                          {(explicitLineChoices[item.id] ??
-                            item.fulfillment_type_override ??
-                            journey.fulfillment_type) === "pickup" && (
-                            <select
-                              value={item.pickup_location_id ?? journey.store_id}
-                              onChange={(e) => updateLineItem(item.id, {
-                                // m032: pickup_location_id requires the
-                                // line's own override to be 'pickup';
-                                // the location pick itself is not an
-                                // explicit fulfillment choice.
-                                fulfillment_type_override: "pickup",
-                                pickup_location_id: e.target.value,
-                              })}
-                              className="w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs"
-                            >
-                              {stores.filter((s) => s.location_type !== "WAREHOUSE_QUARANTINE").map((s) => (
-                                <option key={s.id} value={s.id}>{s.name}</option>
-                              ))}
-                            </select>
-                          )}
+                          {/* Always mounted for the same reason as the
+                              new-order form: conditional mount/unmount
+                              could orphan the node when the DOM guard
+                              skipped React's removeChild. Hidden and
+                              disabled unless effectively pickup. */}
+                          <select
+                            value={item.pickup_location_id ?? journey.store_id}
+                            disabled={
+                              (explicitLineChoices[item.id] ??
+                                item.fulfillment_type_override ??
+                                journey.fulfillment_type) !== "pickup"
+                            }
+                            onChange={(e) => updateLineItem(item.id, {
+                              // m032: pickup_location_id requires the
+                              // line's own override to be 'pickup';
+                              // the location pick itself is not an
+                              // explicit fulfillment choice.
+                              fulfillment_type_override: "pickup",
+                              pickup_location_id: e.target.value,
+                            })}
+                            className={`w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs${
+                              (explicitLineChoices[item.id] ??
+                                item.fulfillment_type_override ??
+                                journey.fulfillment_type) === "pickup"
+                                ? ""
+                                : " hidden"
+                            }`}
+                            aria-hidden={
+                              (explicitLineChoices[item.id] ??
+                                item.fulfillment_type_override ??
+                                journey.fulfillment_type) !== "pickup"
+                            }
+                          >
+                            {stores.filter((s) => s.location_type !== "WAREHOUSE_QUARANTINE").map((s) => (
+                              <option key={s.id} value={s.id}>{s.name}</option>
+                            ))}
+                          </select>
                         </div>
                       )}
                     </div>

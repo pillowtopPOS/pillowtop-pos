@@ -46,6 +46,11 @@ export function installDomGuard(): void {
             `parent=${this.nodeName} actualParent=${actual}`
         );
       }
+      // React believes this child is being removed. Leaving it under its
+      // real parent orphans a visible node (the stale select bug), so
+      // remove it from wherever it actually lives instead of skipping.
+      // Still never throws, which is why the guard exists.
+      child.parentNode?.removeChild(child);
       return child;
     }
     return original.call(this, child) as T;

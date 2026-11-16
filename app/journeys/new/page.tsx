@@ -1500,27 +1500,33 @@ export default function NewJourneyPage() {
                           </select>
                         </div>
                         <div className="col-span-3 min-w-0">
-                          {isPickupLine && (
-                            <select
-                              value={item.pickup_location_id ?? storeId}
-                              onChange={(e) =>
-                                updateLineItem(item.id, {
-                                  // Picking a location alone is not an
-                                  // explicit fulfillment choice; the
-                                  // submit payload adds the 'pickup'
-                                  // override the m032 trigger requires.
-                                  pickup_location_id: e.target.value,
-                                })
-                              }
-                              className="w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs"
-                            >
-                              {stores
-                                .filter((s) => s.location_type !== "WAREHOUSE_QUARANTINE")
-                                .map((s) => (
-                                  <option key={s.id} value={s.id}>{s.name}</option>
-                                ))}
-                            </select>
-                          )}
+                          {/* Always mounted: conditional mount/unmount of
+                              this select left stale nodes behind when
+                              React's removeChild was guarded. Hidden and
+                              disabled unless the line is effectively
+                              pickup, so it is never visible, focusable,
+                              or submitted. */}
+                          <select
+                            value={item.pickup_location_id ?? storeId}
+                            disabled={!isPickupLine}
+                            onChange={(e) =>
+                              updateLineItem(item.id, {
+                                // Picking a location alone is not an
+                                // explicit fulfillment choice; the
+                                // submit payload adds the 'pickup'
+                                // override the m032 trigger requires.
+                                pickup_location_id: e.target.value,
+                              })
+                            }
+                            className={`w-full rounded border border-slate-300 bg-white px-1 py-1 text-xs${isPickupLine ? "" : " hidden"}`}
+                            aria-hidden={!isPickupLine}
+                          >
+                            {stores
+                              .filter((s) => s.location_type !== "WAREHOUSE_QUARANTINE")
+                              .map((s) => (
+                                <option key={s.id} value={s.id}>{s.name}</option>
+                              ))}
+                          </select>
                         </div>
                         <div className="col-span-1">
                           <input
