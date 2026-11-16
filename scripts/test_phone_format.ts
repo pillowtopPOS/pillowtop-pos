@@ -37,5 +37,26 @@ eq("11 digits leading 1 drops it", formatPhoneAsYouType("13035550100"), "303-555
 eq("over 10 digits keeps raw", formatPhoneAsYouType("30355501001"), "30355501001");
 eq("empty", formatPhoneAsYouType(""), "");
 
+// Extension and over-length inputs must survive typing one character at
+// a time (the real input path), not just a single whole-string call.
+function typeCharByChar(text: string): string {
+  let v = "";
+  for (const ch of text) v = formatPhoneAsYouType(v + ch);
+  return v;
+}
+for (const [name, text] of [
+  ["extension spaced", "303-555-0100 x12"],
+  ["extension tight", "303-555-0100x12"],
+  ["ext word", "303-555-0100 ext 5"],
+  ["12 digits no letters", "303555010012"],
+] as const) {
+  eq(`as-you-type ${name}`, typeCharByChar(text), text);
+  eq(`as-you-type ${name} whole`, formatPhoneAsYouType(text), text);
+  eq(`formatPhone leaves ${name} as typed`, formatPhone(text), text);
+}
+eq("typing normal number still formats", typeCharByChar("3035550199"), "303-555-0199");
+eq("typing parens number still formats", typeCharByChar("(720) 555 0144"), "720-555-0144");
+eq("typing +1 number still formats", typeCharByChar("+1 303 555 0100"), "303-555-0100");
+
 console.log(failures === 0 ? "\nAll tests passed." : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

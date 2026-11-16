@@ -18,16 +18,23 @@ export function formatPhone(value: string | null | undefined): string {
 }
 
 // Input helper: formats a 10-digit US number as the rep types and leaves
-// anything unrecognized exactly as typed.
+// anything unrecognized exactly as typed. Any letter (x, ext, and so on)
+// or more than 10 digits means the rep is typing something formatPhone
+// cannot normalize, so the raw text is kept.
 export function formatPhoneAsYouType(value: string): string {
+  if (/[a-zA-Z]/.test(value)) return value;
   const digits = value.replace(/\D/g, "");
   const ten =
     digits.length === 11 && digits.startsWith("1")
       ? digits.slice(1)
       : digits;
+  // A trailing space after a complete number usually precedes an
+  // extension ("... x12"); keep the raw text so the space survives.
+  if (ten.length === 10 && /\s$/.test(value)) return value;
   if (ten.length <= 3) return ten;
   if (ten.length <= 6) return `${ten.slice(0, 3)}-${ten.slice(3)}`;
   if (ten.length <= 10) return `${ten.slice(0, 3)}-${ten.slice(3, 6)}-${ten.slice(6)}`;
-  // More than 10 digits (or an extension typed in): keep the raw text.
-  return value;
+  // More than 10 digits: strip any dashes an earlier keystroke added so
+  // the extra digits are not appended onto a formatted number.
+  return digits;
 }
