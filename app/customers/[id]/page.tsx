@@ -732,8 +732,9 @@ export default function CustomerDetailPage() {
               }) || "No address on file"}
             </p>
             <p className="mt-1 text-xs text-slate-500">
-              {customer.primary_open_orders ?? 0} open order
-              {(customer.primary_open_orders ?? 0) === 1 ? "" : "s"} ship here.
+              {(customer.primary_open_orders ?? 0) > 0
+                ? `${customer.primary_open_orders} open order${customer.primary_open_orders === 1 ? " ships" : "s ship"} here.`
+                : "No open orders ship here."}{" "}
               Edit it in the Address section above.
             </p>
           </div>
@@ -754,7 +755,7 @@ export default function CustomerDetailPage() {
                     </p>
                     <p className="text-xs text-slate-500">
                       {(a.open_orders ?? 0) > 0
-                        ? `${a.open_orders} open order${a.open_orders === 1 ? "" : "s"} ship here`
+                        ? `${a.open_orders} open order${a.open_orders === 1 ? " ships" : "s ship"} here`
                         : "No open orders"}
                     </p>
                   </div>

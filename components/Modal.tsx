@@ -33,6 +33,7 @@ export default function Modal({
   children,
   overlayClassName = "fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4",
   closeOnBackdrop = true,
+  closeRequestRef,
 }: {
   onClose: () => void;
   dirty?: boolean;
@@ -42,6 +43,10 @@ export default function Modal({
   // Backdrop click closes by default; pass false for pop-ups that
   // must only close via their own buttons or Escape.
   closeOnBackdrop?: boolean;
+  // Optional ref filled with the guarded close request, so an in-form
+  // Cancel button can ask "Discard changes?" exactly like backdrop
+  // click and Escape do instead of bypassing the confirm.
+  closeRequestRef?: { current: (() => void) | null };
 }) {
   const layer = useRef(Symbol("modal"));
   const downOnOverlay = useRef(false);
@@ -78,6 +83,14 @@ export default function Modal({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!closeRequestRef) return;
+    closeRequestRef.current = requestClose;
+    return () => {
+      closeRequestRef.current = null;
+    };
+  });
 
   return (
     <div

@@ -673,6 +673,9 @@ export default function JourneyWorkspace({
   });
   const [savedAddresses, setSavedAddresses] = useState<CustomerAddress[]>([]);
   const [primaryOpenOrders, setPrimaryOpenOrders] = useState(0);
+  // Lets the chooser's Cancel button run Modal's guarded close (asks
+  // "Discard changes?" when the new-address form has typed text).
+  const shipToCloseRef = useRef<(() => void) | null>(null);
   const [lineAvailability, setLineAvailability] = useState<Record<string, number>>({});
   const [orderEditing, setOrderEditing] = useState(false);
   const [customerContacts, setCustomerContacts] = useState<CustomerContact[]>([]);
@@ -808,12 +811,15 @@ export default function JourneyWorkspace({
   async function openShipToChooser(prefillNew = false) {
     if (!journey.customer) return;
     setPanelError(null);
+    const hasPrimary = !!journey.customer?.street_address?.trim();
     setShipToMode(
-      prefillNew
+      !hasPrimary
         ? "new"
-        : journey.ship_to_address_id
-          ? "saved"
-          : "primary"
+        : prefillNew
+          ? "new"
+          : journey.ship_to_address_id
+            ? "saved"
+            : "primary"
     );
     setShipToAddressId(journey.ship_to_address_id ?? null);
     setShipToNew({ label: "", street: "", line2: "", city: "", state: "", zip: "" });
@@ -2152,6 +2158,7 @@ export default function JourneyWorkspace({
             onClose={() => setShipToOpen(false)}
             dirty={shipToNewDirty}
             saving={shipToSaving}
+            closeRequestRef={shipToCloseRef}
           >
             <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
               <h2 className="mb-4 text-lg font-semibold text-slate-900">Ship to</h2>
@@ -2159,34 +2166,36 @@ export default function JourneyWorkspace({
                 <p className="text-sm text-slate-500">Loading…</p>
               ) : (
                 <div className="space-y-3">
-                  <label className="flex items-start gap-2 text-sm text-slate-700">
-                    <input
-                      type="radio"
-                      name="ship-to"
-                      checked={shipToMode === "primary"}
-                      onChange={() => setShipToMode("primary")}
-                      className="mt-1"
-                    />
-                    <span>
-                      <span className="font-medium">Primary address</span>
-                      <span className="block text-xs text-slate-500">
-                        {[journey.customer.street_address, journey.customer.street_address_line_2]
-                          .filter(Boolean)
-                          .join(" ")}
-                        {[
-                          [journey.customer.city, journey.customer.state, journey.customer.zip_code]
+                  {customerHasPrimary && (
+                    <label className="flex items-start gap-2 text-sm text-slate-700">
+                      <input
+                        type="radio"
+                        name="ship-to"
+                        checked={shipToMode === "primary"}
+                        onChange={() => setShipToMode("primary")}
+                        className="mt-1"
+                      />
+                      <span>
+                        <span className="font-medium">Primary address</span>
+                        <span className="block text-xs text-slate-500">
+                          {[journey.customer.street_address, journey.customer.street_address_line_2]
                             .filter(Boolean)
-                            .join(" "),
-                        ]
-                          .filter(Boolean)
-                          .map((s) => `, ${s}`)
-                          .join("") || "No address on file"}
-                        {primaryOpenOrders > 0 &&
-                          ` · ${primaryOpenOrders} open order${primaryOpenOrders === 1 ? "" : "s"} ship here`}
+                            .join(" ")}
+                          {[
+                            [journey.customer.city, journey.customer.state, journey.customer.zip_code]
+                              .filter(Boolean)
+                              .join(" "),
+                          ]
+                            .filter(Boolean)
+                            .map((s) => `, ${s}`)
+                            .join("")}
+                          {primaryOpenOrders > 0 &&
+                            ` · ${primaryOpenOrders} open order${primaryOpenOrders === 1 ? " ships" : "s ship"} here`}
+                        </span>
                       </span>
-                    </span>
-                  </label>
-                  {savedAddresses.map((a) => (
+                    </label>
+                  )}
+                  {customerHasPrimary && savedAddresses.map((a) => (
                     <label key={a.id} className="flex items-start gap-2 text-sm text-slate-700">
                       <input
                         type="radio"
@@ -2266,7 +2275,7 @@ export default function JourneyWorkspace({
                   )}
                   <div className="flex gap-2 pt-2">
                     <button onClick={saveShipTo} disabled={shipToSaving || shipToLoading} className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50">{shipToSaving ? "Saving…" : "Save"}</button>
-                    <button onClick={() => setShipToOpen(false)} className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700">Cancel</button>
+                    <button onClick={() => (shipToCloseRef.current ?? (() => setShipToOpen(false)))()} className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700">Cancel</button>
                   </div>
                 </div>
               )}
