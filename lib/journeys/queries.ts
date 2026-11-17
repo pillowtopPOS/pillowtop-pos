@@ -786,6 +786,16 @@ export async function recordJourneyEvent(
   eventType: JourneyEventType,
   eventData: Record<string, unknown> = {}
 ) {
+  // m147: delivery_completed is written only by the
+  // complete_journey_fulfillment RPC, which enforces permissions,
+  // state rules, and backdate reasons. A direct insert is refused by
+  // the database; fail loudly here so no caller can regress to it.
+  if (eventType === "delivery_completed") {
+    throw new Error(
+      "delivery_completed must go through completeJourneyFulfillment()."
+    );
+  }
+
   const supabase = createClient();
 
   const {
@@ -809,6 +819,32 @@ export async function recordJourneyEvent(
   if (error) {
     throw new Error(error.message);
   }
+}
+
+export type CompleteFulfillmentResult = {
+  journey_id: string;
+  delivered_at: string;
+  method: "pickup" | "delivery";
+  backdated: boolean;
+  state: string;
+};
+
+// The only supported way to mark an order delivered or picked up
+// (m147). completedOn null means "today in the store's time zone";
+// the RPC resolves it server-side. The database's plain-English
+// errors are thrown as-is for the caller to display.
+export async function completeJourneyFulfillment(
+  journeyId: string,
+  options: { completedOn?: string | null; reason?: string | null } = {}
+): Promise<CompleteFulfillmentResult> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("complete_journey_fulfillment", {
+    p_journey_id: journeyId,
+    p_completed_on: options.completedOn ?? null,
+    p_reason: options.reason ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return data as CompleteFulfillmentResult;
 }
 
 export async function cancelJourney(journeyId: string, reason: string) {

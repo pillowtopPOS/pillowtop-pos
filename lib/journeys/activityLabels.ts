@@ -97,8 +97,12 @@ export function activityEventTitle(e: JourneyEvent, pickupName?: string | null):
       return "Quote created";
     case "quote_sent":
       return "Quote sent";
-    case "delivery_completed":
-      return "Delivery completed";
+    case "delivery_completed": {
+      // m147 events carry method/recorded_by_name/backdated; older rows
+      // keep the plain "Delivery completed" title.
+      const completedText = deliveryCompletedActivityText(data);
+      return completedText ?? "Delivery completed";
+    }
     case "journey_cancelled":
       return `Journey cancelled${data.reason ? ` — ${data.reason}` : ""}`;
     case "trial_completed":
@@ -109,6 +113,30 @@ export function activityEventTitle(e: JourneyEvent, pickupName?: string | null):
       }
       return "Journey updated";
   }
+}
+
+// m147 completion events: "Picked up Nov 16 by Jane Doe" or
+// "Delivered Nov 16", plus "(entered late: <reason>)" when the date was
+// backdated. Returns undefined for legacy events so callers keep the
+// old wording.
+export function deliveryCompletedActivityText(
+  data: Record<string, unknown>
+): string | undefined {
+  if (data.method !== "pickup" && data.method !== "delivery") {
+    return undefined;
+  }
+  const verb = data.method === "pickup" ? "Picked up" : "Delivered";
+  const datePart = data.delivered_at
+    ? ` ${activityShortDate(String(data.delivered_at))}`
+    : "";
+  const by = data.recorded_by_name
+    ? ` by ${String(data.recorded_by_name)}`
+    : "";
+  const late =
+    data.backdated === true && data.backdate_reason
+      ? ` (entered late: ${String(data.backdate_reason)})`
+      : "";
+  return `${verb}${datePart}${by}${late}`;
 }
 
 // Detail lines stay whitelisted per event type — a type without an
@@ -125,6 +153,11 @@ export function activityEventDetail(e: JourneyEvent): string | undefined {
     case "payment_refunded":
       return data.reason ? String(data.reason) : undefined;
     case "delivery_completed":
+      // New-style events put date, actor, and backdate note in the
+      // title; legacy rows keep the "Delivered <date>" detail line.
+      if (data.method === "pickup" || data.method === "delivery") {
+        return undefined;
+      }
       return data.delivered_at
         ? `Delivered ${activityShortDate(String(data.delivered_at))}`
         : undefined;

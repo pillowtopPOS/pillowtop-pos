@@ -57,6 +57,7 @@ import {
 } from "@/lib/customers/api";
 import {
   STATE_TRANSITIONS,
+  transitionAppliesToFulfillment,
   type JourneyEventType,
 } from "@/lib/journeys/state";
 import { computeNetPaid } from "@/lib/journeys/paid";
@@ -583,7 +584,9 @@ export default function JourneyWorkspace({
   // cancelled_at is the truth — no transitions on a cancelled journey.
   const transitions = journey.cancelled_at
     ? []
-    : STATE_TRANSITIONS[journey.current_state];
+    : STATE_TRANSITIONS[journey.current_state].filter((t) =>
+        transitionAppliesToFulfillment(t, journey.fulfillment_type)
+      );
   const isExchangeChild = journey.sale_kind === "EXCHANGE";
 
   const paid = computeNetPaid(events);

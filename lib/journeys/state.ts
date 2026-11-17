@@ -25,7 +25,23 @@ export type StateTransition = {
   event: JourneyEventType;
   label: string;
   requiredFields?: RequiredField[];
+  // When set, the action only applies to journeys with this fulfillment
+  // type. Unset means it applies to both.
+  fulfillment?: "delivery" | "pickup";
 };
+
+// STATE_TRANSITIONS is keyed by state alone, so fulfillment-scoped
+// actions (Mark Delivered vs Mark Picked Up) carry the order's
+// fulfillment type and callers filter with this helper.
+export function transitionAppliesToFulfillment(
+  transition: StateTransition,
+  fulfillmentType: "delivery" | "pickup" | null | undefined
+): boolean {
+  return (
+    !transition.fulfillment ||
+    transition.fulfillment === (fulfillmentType ?? "delivery")
+  );
+}
 
 // Payment + refund method pickers share this list so a refund can be
 // recorded the same way the payment came in.
@@ -60,22 +76,31 @@ export const STATE_TRANSITIONS: Record<SleepJourneyState, StateTransition[]> = {
     },
   ],
   "Deposit Made": [],
-  Sold: [],
+  Sold: [
+    {
+      to: "Sleep Trial",
+      event: "delivery_completed",
+      label: "Mark Picked Up",
+      fulfillment: "pickup",
+    },
+  ],
   "Waiting for Inventory": [],
-  "Ready to Schedule": [],
+  // Pickup orders complete from Ready to Schedule too: there is no
+  // delivery stop to book, so the RPC accepts Sold or Ready to Schedule.
+  "Ready to Schedule": [
+    {
+      to: "Sleep Trial",
+      event: "delivery_completed",
+      label: "Mark Picked Up",
+      fulfillment: "pickup",
+    },
+  ],
   Scheduled: [
     {
       to: "Sleep Trial",
       event: "delivery_completed",
       label: "Mark Delivered",
-      requiredFields: [
-        {
-          name: "delivered_at",
-          label: "Delivery date",
-          type: "date",
-          defaultToday: true,
-        },
-      ],
+      fulfillment: "delivery",
     },
   ],
   "Sleep Trial": [

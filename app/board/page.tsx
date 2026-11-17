@@ -36,6 +36,7 @@ import {
   fetchLiveTrialItemStatuses,
   subscribeToJourneyChanges,
   recordJourneyEvent,
+  completeJourneyFulfillment,
   recordPayment,
   fetchTotalPaid,
   reconcilePayment,
@@ -59,7 +60,7 @@ import {
   TRIAL_STATUS_DOT,
   type SleepTrialEvaluation,
 } from "@/lib/journeys/sleepTrial";
-import { localDateISO, localTodayISO } from "@/lib/dates";
+import { localTodayISO } from "@/lib/dates";
 import { computeNetPaid } from "@/lib/journeys/paid";
 import Modal from "@/components/Modal";
 import FinancingCalculator from "@/components/FinancingCalculator";
@@ -67,9 +68,17 @@ import JourneyWorkspace from "@/components/journeys/JourneyWorkspace";
 import {
   getTransitionForTarget,
   getTransitionForEvent,
+  transitionAppliesToFulfillment,
   type JourneyEventType,
   type StateTransition,
 } from "@/lib/journeys/state";
+import {
+  buildCompletionRequest,
+  completionNeedsReason,
+  completionShowsDateField,
+  completionTransitionFor,
+} from "@/lib/journeys/completion";
+import { hasPermission } from "@/lib/inventory/queries";
 
 // A journey whose every live trial item is mid-exchange/return is parked
 // on its replacement — it leaves the board lists until the action closes
@@ -158,6 +167,10 @@ function BoardContent() {
   const [modalError, setModalError] = useState<string | null>(null);
   const [boardBusy, setBoardBusy] = useState(false);
   const [showCalculator, setShowCalculator] = useState(false);
+  // orders.backdate_fulfillment gates the earlier-date field in the
+  // completion dialog; fetched once per board mount.
+  const [canBackdateFulfillment, setCanBackdateFulfillment] = useState(false);
+  const completionInFlight = useRef(false);
 
   const calculatorCompanyId = useMemo(() => {
     if (!currentEmployee?.home_store_id) return null;
@@ -370,6 +383,10 @@ function BoardContent() {
   }
 
   useEffect(() => {
+    hasPermission("orders.backdate_fulfillment").then(setCanBackdateFulfillment);
+  }, []);
+
+  useEffect(() => {
     const journeyId = searchParams.get("journey");
     if (journeyId) {
       handleReassigned(journeyId);
@@ -412,16 +429,25 @@ function BoardContent() {
     if (journey.current_state === targetState) return;
 
     const transition = getTransitionForTarget(journey.current_state, targetState);
-    if (!transition) {
+    if (
+      !transition ||
+      !transitionAppliesToFulfillment(transition, journey.fulfillment_type)
+    ) {
       setBoardError(`Cannot move directly from ${journey.current_state} to ${targetState}`);
       return;
     }
 
-    if (transition.requiredFields && transition.requiredFields.length > 0) {
+    // Completion always opens the dialog (date + reason rules live
+    // there), even though the transition carries no requiredFields.
+    if (
+      transition.requiredFields &&
+      transition.requiredFields.length > 0 ||
+      transition.event === "delivery_completed"
+    ) {
       setPendingTransition({ journey, transition });
       setPendingFieldValues(
         Object.fromEntries(
-          transition.requiredFields.map((f) => [
+          (transition.requiredFields ?? []).map((f) => [
             f.name,
             f.defaultToday ? localTodayISO() : "",
           ])
@@ -458,18 +484,40 @@ function BoardContent() {
       }
     }
 
+    // Completion goes through complete_journey_fulfillment (m147): the
+    // RPC enforces permissions, state rules, and backdate reasons, and
+    // its plain-English errors are shown as returned. The date field
+    // only exists for users with orders.backdate_fulfillment; a date is
+    // sent only when it differs from today.
     if (transition.event === "delivery_completed") {
-      const d = String(eventData.delivered_at ?? "");
-      if (d > localTodayISO()) {
-        setModalError("Delivery date can't be in the future.");
+      if (completionInFlight.current) return;
+      const request = buildCompletionRequest({
+        canBackdate: canBackdateFulfillment,
+        completedOn: fieldValues.completed_on,
+        reason: fieldValues.backdate_reason,
+      });
+      if (request.error) {
+        setModalError(request.error);
         return;
       }
-      if (d < localDateISO(journey.created_at)) {
-        setModalError(
-          "Delivery date can't be before this journey was created."
-        );
-        return;
+      completionInFlight.current = true;
+      setModalError(null);
+      setBoardBusy(true);
+      try {
+        await completeJourneyFulfillment(journey.id, {
+          completedOn: request.completedOn,
+          reason: request.reason,
+        });
+        setPendingTransition(null);
+        setPendingFieldValues({});
+        await handleReassigned(journey.id);
+      } catch (e: any) {
+        setModalError(e.message ?? "Failed to mark the order fulfilled");
+      } finally {
+        completionInFlight.current = false;
+        setBoardBusy(false);
       }
+      return;
     }
 
     setModalError(null);
@@ -646,15 +694,33 @@ function BoardContent() {
     setPendingOverpayment(null);
   }
 
+  // Card-level "Mark picked up" for pickup orders in Sold or Ready to
+  // Schedule; opens the same completion dialog as the panel/drag path.
+  function openPickupCompletion(journey: JourneyWithDetails) {
+    const transition = completionTransitionFor(journey);
+    if (!transition) return;
+    setPendingTransition({ journey, transition });
+    setPendingFieldValues({});
+  }
+
   async function executeAction(journey: JourneyWithDetails, eventType: JourneyEventType) {
     const transition = getTransitionForEvent(journey.current_state, eventType);
-    if (!transition) return;
+    if (
+      !transition ||
+      !transitionAppliesToFulfillment(transition, journey.fulfillment_type)
+    ) {
+      return;
+    }
 
-    if (transition.requiredFields && transition.requiredFields.length > 0) {
+    if (
+      transition.requiredFields &&
+      transition.requiredFields.length > 0 ||
+      transition.event === "delivery_completed"
+    ) {
       setPendingTransition({ journey, transition });
       setPendingFieldValues(
         Object.fromEntries(
-          transition.requiredFields.map((f) => [
+          (transition.requiredFields ?? []).map((f) => [
             f.name,
             f.defaultToday ? localTodayISO() : "",
           ])
@@ -816,6 +882,7 @@ function BoardContent() {
                 unresolvedJourneyIds={unresolvedJourneyIds}
                 trialEvals={trialEvals}
                 onSelect={setSelectedJourney}
+                onMarkPickedUp={openPickupCompletion}
               />
             ))}
           </div>
@@ -950,7 +1017,56 @@ function BoardContent() {
               </p>
             )}
             <div className="space-y-3">
-              {pendingTransition.transition.requiredFields?.map((field) => (
+              {pendingTransition.transition.event === "delivery_completed" ? (
+                <>
+                  {completionShowsDateField(canBackdateFulfillment) && (
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700">
+                        Completed on
+                      </label>
+                      <input
+                        type="date"
+                        max={localTodayISO()}
+                        value={
+                          pendingFieldValues.completed_on ?? localTodayISO()
+                        }
+                        onChange={(e) =>
+                          setPendingFieldValues({
+                            ...pendingFieldValues,
+                            completed_on: e.target.value,
+                          })
+                        }
+                        className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                      />
+                      <p className="mt-1 text-xs text-slate-500">
+                        Leave as today unless this was completed earlier.
+                      </p>
+                    </div>
+                  )}
+                  {completionNeedsReason(
+                    pendingFieldValues.completed_on ?? "",
+                    localTodayISO()
+                  ) && (
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700">
+                        Reason for the earlier date
+                      </label>
+                      <input
+                        type="text"
+                        value={pendingFieldValues.backdate_reason ?? ""}
+                        onChange={(e) =>
+                          setPendingFieldValues({
+                            ...pendingFieldValues,
+                            backdate_reason: e.target.value,
+                          })
+                        }
+                        className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                      />
+                    </div>
+                  )}
+                </>
+              ) : (
+                pendingTransition.transition.requiredFields?.map((field) => (
                 <div key={field.name}>
                   <label className="block text-sm font-medium text-slate-700">
                     {field.label}
@@ -1011,7 +1127,8 @@ function BoardContent() {
                     />
                   )}
                 </div>
-              ))}
+              ))
+              )}
             </div>
             <div className="mt-4 flex gap-2">
               <button
@@ -1022,9 +1139,19 @@ function BoardContent() {
                     pendingFieldValues
                   )
                 }
-                className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
+                disabled={
+                  boardBusy ||
+                  (pendingTransition.transition.event ===
+                    "delivery_completed" &&
+                    completionNeedsReason(
+                      pendingFieldValues.completed_on ?? "",
+                      localTodayISO()
+                    ) &&
+                    !(pendingFieldValues.backdate_reason ?? "").trim())
+                }
+                className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
               >
-                Confirm
+                {boardBusy ? "Working…" : "Confirm"}
               </button>
               <button
                 onClick={() => {
@@ -1288,12 +1415,14 @@ function Column({
   unresolvedJourneyIds,
   trialEvals,
   onSelect,
+  onMarkPickedUp,
 }: {
   state: SleepJourneyState;
   journeys: JourneyWithDetails[];
   unresolvedJourneyIds: Set<string>;
   trialEvals: Map<string, SleepTrialEvaluation[]>;
   onSelect: (j: JourneyWithDetails) => void;
+  onMarkPickedUp: (j: JourneyWithDetails) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: state });
 
@@ -1320,6 +1449,7 @@ function Column({
             hasUnresolvedPayment={unresolvedJourneyIds.has(j.id)}
             trialEvals={trialEvals.get(j.id) ?? []}
             onSelect={onSelect}
+            onMarkPickedUp={onMarkPickedUp}
           />
         ))}
       </div>
@@ -1366,11 +1496,13 @@ function JourneyCard({
   hasUnresolvedPayment,
   trialEvals,
   onSelect,
+  onMarkPickedUp,
 }: {
   journey: JourneyWithDetails;
   hasUnresolvedPayment: boolean;
   trialEvals: SleepTrialEvaluation[];
   onSelect: (j: JourneyWithDetails) => void;
+  onMarkPickedUp: (j: JourneyWithDetails) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: journey.id,
@@ -1442,6 +1574,18 @@ function JourneyCard({
       )}
       {hasUnresolvedPayment && (
         <p className="text-[10px] font-medium text-amber-600">Unresolved payment</p>
+      )}
+      {completionTransitionFor(journey)?.label === "Mark Picked Up" && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onMarkPickedUp(journey);
+          }}
+          className="mt-1 w-full rounded border border-teal-300 bg-teal-50 px-1.5 py-0.5 text-[10px] font-medium text-teal-800 hover:bg-teal-100"
+        >
+          Mark picked up
+        </button>
       )}
     </div>
   );
