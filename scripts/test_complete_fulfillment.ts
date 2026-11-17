@@ -6,6 +6,7 @@
 import {
   buildCompletionRequest,
   completionNeedsReason,
+  completionReasonMet,
   completionShowsDateField,
   completionTransitionFor,
 } from "../lib/journeys/completion";
@@ -60,6 +61,27 @@ const shortReason = buildCompletionRequest({
 });
 check("reason under 3 chars is blocked",
   !!shortReason.error);
+
+// The Confirm button and buildCompletionRequest share completionReasonMet:
+// 0, 1 and 2 trimmed chars fail, 3 pass.
+check("reason helper rejects 0 chars",
+  completionReasonMet("") === false && completionReasonMet(null) === false);
+check("reason helper rejects 1 char",
+  completionReasonMet("a") === false);
+check("reason helper rejects 2 chars",
+  completionReasonMet("ab") === false);
+check("reason helper accepts 3 chars",
+  completionReasonMet("abc") === true);
+check("reason helper trims before counting",
+  completionReasonMet("  ab  ") === false &&
+  completionReasonMet("  abc  ") === true);
+for (const [len, reason] of [[0, ""], [1, "a"], [2, "ab"], [3, "abc"]] as const) {
+  const req = buildCompletionRequest({
+    canBackdate: true, today: TODAY, completedOn: "2025-11-19", reason,
+  });
+  check(`buildCompletionRequest reason length ${len}`,
+    len < 3 ? !!req.error : !req.error && req.reason === reason);
+}
 
 const backdated = buildCompletionRequest({
   canBackdate: true, today: TODAY,

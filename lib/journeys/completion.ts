@@ -25,6 +25,17 @@ export function completionNeedsReason(
   return !!completedOn && completedOn !== today && completedOn < today;
 }
 
+// complete_journey_fulfillment requires a backdate reason of at least
+// 3 trimmed characters. The Confirm button and buildCompletionRequest
+// share this one rule so they can never disagree.
+export const COMPLETION_REASON_MIN = 3;
+
+export function completionReasonMet(
+  reason: string | null | undefined
+): boolean {
+  return (reason ?? "").trim().length >= COMPLETION_REASON_MIN;
+}
+
 export type CompletionRequest = {
   // Null means "today in the store's time zone"; the RPC resolves it.
   completedOn: string | null;
@@ -58,7 +69,7 @@ export function buildCompletionRequest(opts: {
         "Only an owner, admin or manager can record an earlier date. Use today's date.",
     };
   }
-  if (chosen < today && reason.length < 3) {
+  if (chosen < today && !completionReasonMet(reason)) {
     return {
       completedOn: null,
       reason: null,

@@ -75,6 +75,7 @@ import {
 import {
   buildCompletionRequest,
   completionNeedsReason,
+  completionReasonMet,
   completionShowsDateField,
   completionTransitionFor,
 } from "@/lib/journeys/completion";
@@ -171,6 +172,13 @@ function BoardContent() {
   // completion dialog; fetched once per board mount.
   const [canBackdateFulfillment, setCanBackdateFulfillment] = useState(false);
   const completionInFlight = useRef(false);
+  // Paid total fetched fresh each time the completion dialog opens; the
+  // panel's events feed can be empty or belong to another journey, so
+  // it cannot be trusted for the balance line.
+  const [completionPaid, setCompletionPaid] = useState<{
+    journeyId: string;
+    paid: number;
+  } | null>(null);
 
   const calculatorCompanyId = useMemo(() => {
     if (!currentEmployee?.home_store_id) return null;
@@ -392,6 +400,29 @@ function BoardContent() {
       handleReassigned(journeyId);
     }
   }, [searchParams]);
+
+  // The completion dialog's balance must be fresh: it can open from a
+  // card drag or card button while the panel's events feed is empty or
+  // still showing a different journey.
+  useEffect(() => {
+    if (
+      !pendingTransition ||
+      pendingTransition.transition.event !== "delivery_completed"
+    ) {
+      setCompletionPaid(null);
+      return;
+    }
+    const journeyId = pendingTransition.journey.id;
+    let alive = true;
+    fetchTotalPaid(journeyId)
+      .then((paid) => {
+        if (alive) setCompletionPaid({ journeyId, paid });
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [pendingTransition]);
 
   const boardJourneys = useMemo(() => {
     return journeys.filter(
@@ -999,17 +1030,30 @@ function BoardContent() {
               → {pendingTransition.transition.to}
             </p>
             {pendingTransition.journey.price !== null && pendingTransition.journey.price !== undefined && (
-              <div className="mb-4 rounded-md bg-slate-50 p-3 text-sm">
-                {(() => {
-                  const paid = computeNetPaid(events);
-                  const balance = pendingTransition.journey.price - paid;
-                  return (
+              pendingTransition.transition.event === "delivery_completed" ? (
+                completionPaid?.journeyId === pendingTransition.journey.id && (
+                  <div className="mb-4 rounded-md bg-slate-50 p-3 text-sm">
                     <p className="font-medium text-slate-700">
-                      Current balance due: ${balance.toFixed(2)}
+                      Current balance due: $
+                      {(
+                        pendingTransition.journey.price - completionPaid.paid
+                      ).toFixed(2)}
                     </p>
-                  );
-                })()}
-              </div>
+                  </div>
+                )
+              ) : (
+                <div className="mb-4 rounded-md bg-slate-50 p-3 text-sm">
+                  {(() => {
+                    const paid = computeNetPaid(events);
+                    const balance = pendingTransition.journey.price - paid;
+                    return (
+                      <p className="font-medium text-slate-700">
+                        Current balance due: ${balance.toFixed(2)}
+                      </p>
+                    );
+                  })()}
+                </div>
+              )
             )}
             {modalError && (
               <p key="modal-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -1147,7 +1191,7 @@ function BoardContent() {
                       pendingFieldValues.completed_on ?? "",
                       localTodayISO()
                     ) &&
-                    !(pendingFieldValues.backdate_reason ?? "").trim())
+                    !completionReasonMet(pendingFieldValues.backdate_reason))
                 }
                 className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
               >
