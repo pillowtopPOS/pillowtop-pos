@@ -200,6 +200,21 @@ export function completionButtonDecision(opts: {
   return { kind: "button", fulfillment: "pickup" };
 }
 
+export type CompletionControl =
+  | { kind: "button"; fulfillment: "pickup" | "delivery" }
+  | { kind: "note"; text: string };
+
+// The panel renders exactly the controls this returns: one button or one
+// note for a permitted/blocked case, none for hidden or no decision. The
+// generic transition list must never also render delivery_completed, so
+// this is the single source of truth for "how many completion controls".
+export function completionControls(
+  decision: CompletionButtonDecision | null
+): CompletionControl[] {
+  if (!decision || decision.kind === "hidden") return [];
+  return [decision];
+}
+
 // Per-line stock tag in the completion dialog. Only the requirement's own
 // status counts; anything else means we cannot tell, so no tag.
 export function completionStockTag(

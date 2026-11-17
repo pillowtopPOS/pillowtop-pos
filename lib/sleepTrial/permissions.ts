@@ -168,9 +168,9 @@ export const ALL_PERMISSIONS: PermissionDef[] = [
   },
   {
     key: "orders.mark_fulfilled",
-    label: "Mark orders picked up or delivered",
+    label: "Mark orders picked up",
     group: "Orders",
-    description: "Lets this person complete a pickup or delivery from the order panel.",
+    description: "Lets this person finalize a pickup from the order panel, for the location they are logged in to. Deliveries need the separate Finalize deliveries permission.",
   },
   {
     key: "orders.pickup_any_location",

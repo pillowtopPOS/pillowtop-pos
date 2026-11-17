@@ -1641,6 +1641,7 @@ export default function JourneyWorkspace({
               )}
               <div className="flex flex-wrap gap-2">
                 {panelTransitions
+                  .filter((t) => t.event !== "delivery_completed")
                   .filter(
                     (t) => t.event !== "payment_completed" || paymentAllowed
                   )

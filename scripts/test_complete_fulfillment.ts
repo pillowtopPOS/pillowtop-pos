@@ -7,6 +7,7 @@ import {
   anyRequirementPending,
   buildCompletionRequest,
   completionButtonDecision,
+  completionControls,
   completionNeedsReason,
   completionReasonMet,
   completionShowsDateField,
@@ -235,7 +236,6 @@ const wrongLoc = completionButtonDecision({
 });
 check("pickup at other location shows login-here note",
   wrongLoc.kind === "note" &&
-  wrongLoc.kind === "note" &&
   wrongLoc.text === "Picked up at Westside. Log in to that location to mark it picked up.");
 check("pickup note uses location names not ids",
   wrongLoc.kind === "note" && !wrongLoc.text.includes("storeB"));
@@ -274,6 +274,27 @@ check("delivery ignores pickup location rules",
     activeStoreId: null,
     items: [{ pickup_location_id: "storeB" }],
   }).kind === "button");
+
+// Exactly one completion control per decision: the panel must never
+// render a second button from the generic transition list.
+const controlsFor = (d: ReturnType<typeof completionButtonDecision>) =>
+  completionControls(d);
+check("permitted pickup yields exactly one button control",
+  controlsFor(completionButtonDecision(basePickup)).length === 1 &&
+  controlsFor(completionButtonDecision(basePickup))[0].kind === "button");
+check("permitted delivery yields exactly one button control",
+  controlsFor(
+    completionButtonDecision({ ...baseDelivery, canFinalizeDelivery: true })
+  ).length === 1);
+check("note case yields exactly one note control",
+  controlsFor(wrongLoc).length === 1 &&
+  controlsFor(wrongLoc)[0].kind === "note");
+check("hidden case yields zero controls",
+  controlsFor(
+    completionButtonDecision({ ...basePickup, canMarkFulfilled: false })
+  ).length === 0);
+check("no decision yields zero controls",
+  completionControls(null).length === 0);
 
 // Line-level helpers.
 check("effective line fulfillment prefers override",
