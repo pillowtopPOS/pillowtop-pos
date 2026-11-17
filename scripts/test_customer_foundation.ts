@@ -80,8 +80,9 @@ async function main() {
   const coB = (await admin.from("companies").insert({ name: `__${tag}_B__`, business_timezone: "America/Denver" }).select("id").single()).data!.id;
   f.companies.push(coA, coB);
   const stA = (await admin.from("stores").insert({ company_id: coA, name: `__${tag}_stA__`, location_type: "STORE", is_active: true }).select("id").single()).data!.id;
+  f.stores.push(stA);
   const stB = (await admin.from("stores").insert({ company_id: coB, name: `__${tag}_stB__`, location_type: "STORE", is_active: true }).select("id").single()).data!.id;
-  f.stores.push(stA, stB);
+  f.stores.push(stB);
 
   // Auth users: A employee (manager, store A), B employee (manager, store B), C no employee
   const emailA = `${tag}a@test.invalid`;
@@ -92,24 +93,30 @@ async function main() {
   await mkUser(emailC);
   const empA = (await admin.from("employees").insert({ first_name: "Cf", last_name: "A", role: "manager", home_store_id: stA, auth_user_id: uidA, is_active: true }).select("id").single()).data!.id;
   const empB = (await admin.from("employees").insert({ first_name: "Cf", last_name: "B", role: "manager", home_store_id: stB, auth_user_id: uidB, is_active: true }).select("id").single()).data!.id;
-  f.employees.push(empA, empB);
+  f.employees.push(empA);
+  f.employees.push(empB);
 
   const custInsert = (row: object) =>
     admin.from("customers").insert(row).select("id").single();
 
   // Company A customers (service role: company_id stays null unless set)
   const c1 = (await custInsert({ company_id: coA, first_name: "Jane", last_name: "Doe", phone: "(303) 555-0100", email: "jane@x.com", street_address: "1 Main", city: "Denver", state: "CO", zip_code: "80000" })).data!.id;
+  f.customers.push(c1);
   const c2 = (await custInsert({ company_id: coA, first_name: "John", last_name: "Roe", phone: "555-000-1111", phone2: "3035550199", email: "john@x.com" })).data!.id;
+  f.customers.push(c2);
   const c3 = (await custInsert({ company_id: coA, first_name: "Jen", last_name: "Smith", phone: "555-222-3333", email: "JANE.SMITH@X.COM" })).data!.id;
+  f.customers.push(c3);
   const c4 = (await custInsert({ company_id: coA, first_name: "Al", last_name: "Match", phone: "555-444-5555", email: "al@x.com" })).data!.id;
+  f.customers.push(c4);
   const c5 = (await custInsert({ company_id: coB, first_name: "Jane", last_name: "Doe", phone: "303-555-0100", email: "jane@x.com" })).data!.id;
+  f.customers.push(c5);
   const c6 = (await custInsert({ company_id: coA, first_name: "Zed", last_name: "Nobody", phone: "555-999-0000", email: "zed@x.com" })).data!.id;
+  f.customers.push(c6);
   // six extra phone-twins of c1 to prove the limit of 5
   for (let i = 0; i < 6; i++) {
     const r = await custInsert({ company_id: coA, first_name: `Twin${i}`, last_name: "Phone", phone: "3035550100", email: `twin${i}@x.com` });
     f.customers.push(r.data!.id);
   }
-  f.customers.push(c1, c2, c3, c4, c5, c6);
 
   // journeys for c1 (2 orders, different created_at) - pickup avoids the address trigger
   for (const daysAgo of [10, 2]) {

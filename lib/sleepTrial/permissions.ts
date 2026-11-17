@@ -99,7 +99,12 @@ export async function setRolePermission(
   if (error) throw new Error(error.message);
 }
 
-export type PermissionGroup = "Sleep trial" | "Inventory" | "Unit ID" | "Delivery";
+export type PermissionGroup =
+  | "Sleep trial"
+  | "Inventory"
+  | "Unit ID"
+  | "Delivery"
+  | "Orders";
 
 export type PermissionDef = {
   key: string;
@@ -154,5 +159,29 @@ export const ALL_PERMISSIONS: PermissionDef[] = [
     label: "Log night-before delivery confirmation calls",
     group: "Delivery",
     description: "Lets this person record confirmation calls and see the delivery call list.",
+  },
+  {
+    key: "delivery.finalize",
+    label: "Finalize deliveries",
+    group: "Delivery",
+    description: "Lets this person mark a scheduled delivery as delivered. Owner, admin, and warehouse managers have this by default; store staff never do.",
+  },
+  {
+    key: "orders.mark_fulfilled",
+    label: "Mark orders picked up or delivered",
+    group: "Orders",
+    description: "Lets this person complete a pickup or delivery from the order panel.",
+  },
+  {
+    key: "orders.pickup_any_location",
+    label: "Pick up orders at any location",
+    group: "Orders",
+    description: "Lets this person mark a pickup complete even when it leaves a different store or warehouse. Without it, pickups can only be finalized while logged in to the location they leave from.",
+  },
+  {
+    key: "orders.backdate_fulfillment",
+    label: "Backdate pickups and deliveries",
+    group: "Orders",
+    description: "Lets this person record a pickup or delivery as completed on an earlier date, with a reason.",
   },
 ];

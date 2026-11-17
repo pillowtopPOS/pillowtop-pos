@@ -18,7 +18,7 @@ import {
   type ExchangeActionRead,
   type ExchangeParentLink,
 } from "@/lib/journeys/exchange";
-import { fetchProductStock } from "@/lib/inventory/queries";
+import { fetchProductStock, hasPermission } from "@/lib/inventory/queries";
 import {
   completeFollowUp,
   createJourneyLineItem,
@@ -29,6 +29,7 @@ import {
   reassignJourneyStore,
   updateJourneyFulfillment,
   updateJourneyLineItem,
+  canFinalizeDelivery,
   FOLLOW_UP_METHOD_LABELS,
   FOLLOW_UP_TYPE_LABELS,
   type Employee,
@@ -61,6 +62,10 @@ import {
   type JourneyEventType,
 } from "@/lib/journeys/state";
 import { computeNetPaid } from "@/lib/journeys/paid";
+import {
+  completionButtonDecision,
+  type CompletionButtonDecision,
+} from "@/lib/journeys/completion";
 import {
   mostUrgentEvaluation,
   type SleepTrialEvaluation,
@@ -554,6 +559,7 @@ export default function JourneyWorkspace({
   onRefresh,
   refreshPending,
   openBookingSignal,
+  completionDone,
 }: {
   journey: JourneyWithDetails;
   events: JourneyEvent[];
@@ -577,6 +583,9 @@ export default function JourneyWorkspace({
   // ?book=1 on the board URL (My Work handoff) — opens the delivery
   // picker once inside JourneyDelivery, which strips the param.
   openBookingSignal?: boolean;
+  // Green note shown after a completion that landed the order on
+  // Completed (no live sleep trial item) instead of Sleep Trial.
+  completionDone?: string | null;
 }) {
   const router = useRouter();
   // A3: journey_cancelled leaves current_state at its last value (020),
@@ -639,6 +648,15 @@ export default function JourneyWorkspace({
   // background refetches (every events change re-runs the fetch) must not
   // flash "Loading items…" or hide the empty state again.
   const [lineItemsLoaded, setLineItemsLoaded] = useState(false);
+  // Completion permissions, fetched once per panel open (m149). The RPC
+  // re-checks every rule on write; these only decide which control to
+  // show so the panel never offers a button that cannot succeed.
+  const [completionPerms, setCompletionPerms] = useState<{
+    activeStoreId: string | null;
+    canMarkFulfilled: boolean;
+    canPickupAnyLocation: boolean;
+    canFinalizeDelivery: boolean;
+  } | null>(null);
   const [journeyUnits, setJourneyUnits] = useState<
     {
       requirement_id: string | null;
@@ -713,6 +731,81 @@ export default function JourneyWorkspace({
       });
     }
   }, [reassignMode]);
+
+  // m149 completion permissions, once per panel open. Active location is
+  // user_metadata.active_store_id with the employee's home store as the
+  // fallback, the same resolution the RPC applies.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const supabase = createClient();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const activeStoreId =
+        (session?.user?.user_metadata?.active_store_id as
+          | string
+          | undefined) ?? currentEmployee?.home_store_id ?? null;
+      const [markFulfilled, pickupAny, canFinalize] = await Promise.all([
+        hasPermission("orders.mark_fulfilled"),
+        hasPermission("orders.pickup_any_location"),
+        canFinalizeDelivery(),
+      ]);
+      if (alive) {
+        setCompletionPerms({
+          activeStoreId,
+          canMarkFulfilled: markFulfilled,
+          canPickupAnyLocation: pickupAny,
+          canFinalizeDelivery: canFinalize,
+        });
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [currentEmployee?.home_store_id]);
+
+  // The completion transition for this order, if its state/fulfillment
+  // allows one at all. The button-or-note decision below layers the m149
+  // permission and location rules on top.
+  const completionTransition = transitions.find(
+    (t) => t.event === "delivery_completed"
+  );
+
+  const completionDecision: CompletionButtonDecision | null = useMemo(() => {
+    if (!completionTransition || !completionPerms || !lineItemsLoaded) {
+      return null;
+    }
+    const storeName = (id: string) =>
+      stores.find((s) => s.id === id)?.name ??
+      (id === journey.store_id ? journey.store?.name ?? null : null);
+    return completionButtonDecision({
+      fulfillment: journey.fulfillment_type,
+      canMarkFulfilled: completionPerms.canMarkFulfilled,
+      canPickupAnyLocation: completionPerms.canPickupAnyLocation,
+      canFinalizeDelivery: completionPerms.canFinalizeDelivery,
+      activeStoreId: completionPerms.activeStoreId,
+      items: lineItems,
+      journeyStoreId: journey.store_id,
+      storeName,
+    });
+  }, [
+    completionTransition,
+    completionPerms,
+    lineItemsLoaded,
+    lineItems,
+    journey,
+    stores,
+  ]);
+
+  const completionAllowed = completionDecision?.kind === "button";
+
+  // delivery_completed renders through the gated block below, never as a
+  // plain transition button. Hidden/note decisions must not leak into
+  // the generic action list or the Next Action bar.
+  const panelTransitions = transitions.filter(
+    (t) => t.event !== "delivery_completed" || completionAllowed
+  );
   // Bumped on every panel refresh so JourneyActivity refetches its
   // interactions — journey.id alone doesn't change on refresh.
   const [activityRefreshKey, setActivityRefreshKey] = useState(0);
@@ -1479,7 +1572,7 @@ export default function JourneyWorkspace({
             stateDetail={stateDetail}
             transferNote={transferNote}
             attentionItems={attentionItems}
-            transitions={transitions}
+            transitions={panelTransitions}
             exchangeAwaitingPayment={exchangeAwaitingPayment}
             paymentSettled={paymentSettled}
             refreshPending={refreshPending}
@@ -1499,6 +1592,12 @@ export default function JourneyWorkspace({
                 INVENTORY_READY_STATES.has(journey.current_state) && (
                 <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">
                   Inventory ready
+                </div>
+              )}
+
+              {completionDone && (
+                <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">
+                  {completionDone}
                 </div>
               )}
 
@@ -1541,7 +1640,7 @@ export default function JourneyWorkspace({
                 </p>
               )}
               <div className="flex flex-wrap gap-2">
-                {transitions
+                {panelTransitions
                   .filter(
                     (t) => t.event !== "payment_completed" || paymentAllowed
                   )
@@ -1558,6 +1657,21 @@ export default function JourneyWorkspace({
                     {t.label}
                   </button>
                 ))}
+                {completionTransition && completionDecision && (
+                  completionDecision.kind === "button" ? (
+                    <button
+                      disabled={refreshPending}
+                      onClick={() => onAction(journey, "delivery_completed")}
+                      className="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                    >
+                      {completionTransition.label}
+                    </button>
+                  ) : completionDecision.kind === "note" ? (
+                    <p className="w-full text-sm text-slate-600">
+                      {completionDecision.text}
+                    </p>
+                  ) : null
+                )}
                 {hasLiveExchange &&
                   transitions.some((t) => t.event === "trial_completed") && (
                     <p className="w-full text-sm text-slate-600">

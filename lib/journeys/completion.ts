@@ -79,6 +79,148 @@ export function buildCompletionRequest(opts: {
   return { completedOn: chosen, reason: reason || null };
 }
 
+// ---------------------------------------------------------------------------
+// Slice 1.5: completion lives inside the order panel. The board card button
+// and drag path are gone; these helpers decide which completion control the
+// panel may show and what the dialog lists. Pure so they unit test cleanly.
+// ---------------------------------------------------------------------------
+
+export const COMPLETION_DRAG_MESSAGE =
+  "Open the order and use its button to mark it picked up or delivered.";
+export const DELIVERY_FINALIZE_NOTE =
+  "Deliveries are finalized by the warehouse team";
+export const MIXED_ORDER_NOTE =
+  "This order has items going to different places. Per-item handover is coming. Ask an admin.";
+export const COMPLETION_COMPLETED_MESSAGE =
+  "Done. This order has no sleep trial, so it is complete and has left the board.";
+export const COMPLETION_NOT_IN_STOCK_LINE =
+  "Some items are not in stock yet. This cannot be completed until they are.";
+
+export type CompletionLineItem = {
+  fulfillment_type_override?: "delivery" | "pickup" | null;
+  pickup_location_id?: string | null;
+};
+
+export function effectiveLineFulfillment(
+  item: CompletionLineItem,
+  orderFulfillment: "delivery" | "pickup"
+): "delivery" | "pickup" {
+  return item.fulfillment_type_override ?? orderFulfillment;
+}
+
+// Pickup location of one line: its own pickup_location_id, else the
+// order's store (mirrors the RPC's coalesce(li.pickup_location_id, store_id)).
+export function linePickupLocationId(
+  item: CompletionLineItem,
+  journeyStoreId: string
+): string {
+  return item.pickup_location_id ?? journeyStoreId;
+}
+
+// Distinct pickup locations across the order's pickup-effective lines.
+// With no pickup-effective lines the order's own store is the place,
+// matching the RPC's union fallback for empty orders.
+export function pickupLocationIds(
+  items: CompletionLineItem[],
+  journey: { store_id: string; fulfillment_type: "delivery" | "pickup" }
+): string[] {
+  const ids = new Set<string>();
+  for (const item of items) {
+    if (
+      effectiveLineFulfillment(item, journey.fulfillment_type) === "pickup"
+    ) {
+      ids.add(linePickupLocationId(item, journey.store_id));
+    }
+  }
+  if (ids.size === 0) ids.add(journey.store_id);
+  return Array.from(ids);
+}
+
+// "A", "A and B", "A, B and C", same joining style as pickupCollectionLabel.
+export function joinLocationNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+export type CompletionButtonDecision =
+  | { kind: "button"; fulfillment: "pickup" | "delivery" }
+  | { kind: "note"; text: string }
+  | { kind: "hidden" };
+
+// Which completion control the order panel shows. Mirrors m149:
+//   delivery -> can_finalize_delivery() only (store staff never finalize);
+//   pickup   -> orders.mark_fulfilled, plus every pickup line leaving the
+//               active location unless orders.pickup_any_location, and only
+//               for pure single-location pickup orders for now.
+export function completionButtonDecision(opts: {
+  fulfillment: "delivery" | "pickup";
+  canMarkFulfilled: boolean;
+  canPickupAnyLocation: boolean;
+  canFinalizeDelivery: boolean;
+  // user_metadata.active_store_id falling back to the employee's home store,
+  // resolved by the caller exactly like the RPC does.
+  activeStoreId: string | null;
+  items: CompletionLineItem[];
+  journeyStoreId: string;
+  storeName: (id: string) => string | null;
+}): CompletionButtonDecision {
+  if (opts.fulfillment === "delivery") {
+    return opts.canFinalizeDelivery
+      ? { kind: "button", fulfillment: "delivery" }
+      : { kind: "note", text: DELIVERY_FINALIZE_NOTE };
+  }
+
+  if (!opts.canMarkFulfilled) return { kind: "hidden" };
+
+  const journey = {
+    store_id: opts.journeyStoreId,
+    fulfillment_type: opts.fulfillment,
+  };
+  const hasDeliveryLine = opts.items.some(
+    (i) => effectiveLineFulfillment(i, opts.fulfillment) === "delivery"
+  );
+  const locIds = pickupLocationIds(opts.items, journey);
+  if (hasDeliveryLine || locIds.length > 1) {
+    return { kind: "note", text: MIXED_ORDER_NOTE };
+  }
+
+  if (!opts.canPickupAnyLocation) {
+    const active = opts.activeStoreId;
+    if (!active || locIds.some((id) => id !== active)) {
+      const names = locIds
+        .map((id) => opts.storeName(id))
+        .filter((n): n is string => !!n);
+      return {
+        kind: "note",
+        text: `Picked up at ${joinLocationNames(names)}. Log in to that location to mark it picked up.`,
+      };
+    }
+  }
+
+  return { kind: "button", fulfillment: "pickup" };
+}
+
+// Per-line stock tag in the completion dialog. Only the requirement's own
+// status counts; anything else means we cannot tell, so no tag.
+export function completionStockTag(
+  status: string | null | undefined
+): "in_stock" | "not_in_stock" | null {
+  if (status === "ready") return "in_stock";
+  if (status === "pending") return "not_in_stock";
+  return null;
+}
+
+export const STOCK_TAG_LABEL: Record<"in_stock" | "not_in_stock", string> = {
+  in_stock: "In stock",
+  not_in_stock: "Not in stock yet",
+};
+
+export function anyRequirementPending(
+  statuses: (string | null | undefined)[]
+): boolean {
+  return statuses.some((s) => s === "pending");
+}
+
 // The completion transition that applies to this journey, or null when
 // the order cannot be completed from its current state (cancelled,
 // already delivered, wrong state for its fulfillment type).

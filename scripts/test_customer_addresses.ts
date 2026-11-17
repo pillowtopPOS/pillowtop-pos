@@ -87,7 +87,9 @@ async function main() {
     company_id: coB, first_name: "Cross", last_name: "Company",
     phone: "303-555-0103", email: `${tag}b@x.com`,
   }).select("id").single()).data!.id;
-  f.customers.push(custA, custA2, custB);
+  f.customers.push(custA);
+  f.customers.push(custA2);
+  f.customers.push(custB);
 
   const j1 = (await admin.from("sleep_journeys").insert({
     customer_id: custA, store_id: stA, current_state: "Active Opportunity",
@@ -97,7 +99,8 @@ async function main() {
     customer_id: custA, store_id: stA, current_state: "Active Opportunity",
     fulfillment_type: "delivery",
   }).select("id").single()).data!.id;
-  f.journeys.push(j1, j2);
+  f.journeys.push(j1);
+  f.journeys.push(j2);
 
   const asMgr = await signIn(emailMgr);
 

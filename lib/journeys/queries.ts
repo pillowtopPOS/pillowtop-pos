@@ -847,6 +847,41 @@ export async function completeJourneyFulfillment(
   return data as CompleteFulfillmentResult;
 }
 
+// m149: whether the current user may finalize a delivery
+// (owner/admin role grant, warehouse manager, or a per-employee grant).
+// Fetched once per panel open; the RPC re-checks on write.
+export async function canFinalizeDelivery(): Promise<boolean> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("can_finalize_delivery");
+  if (error) {
+    console.error("can_finalize_delivery error", error);
+    return false;
+  }
+  return data === true;
+}
+
+// Per-line stock readout for the completion dialog: requirement status
+// keyed by variant_id (the line item's product_id). Only 'ready' and
+// 'pending' drive the tag; 'cancelled' or a missing row means unknown.
+export async function fetchJourneyRequirementStatuses(
+  journeyId: string
+): Promise<Record<string, string>> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("journey_inventory_requirements")
+    .select("variant_id, status")
+    .eq("journey_id", journeyId);
+  if (error) {
+    console.error("fetchJourneyRequirementStatuses error", error);
+    return {};
+  }
+  const out: Record<string, string> = {};
+  for (const row of (data ?? []) as { variant_id: string; status: string }[]) {
+    out[row.variant_id] = row.status;
+  }
+  return out;
+}
+
 export async function cancelJourney(journeyId: string, reason: string) {
   const supabase = createClient();
 

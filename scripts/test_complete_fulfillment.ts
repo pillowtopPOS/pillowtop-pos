@@ -4,11 +4,23 @@
 // wording for delivery_completed events. No database needed.
 // Run: npx tsx scripts/test_complete_fulfillment.ts
 import {
+  anyRequirementPending,
   buildCompletionRequest,
+  completionButtonDecision,
   completionNeedsReason,
   completionReasonMet,
   completionShowsDateField,
+  completionStockTag,
   completionTransitionFor,
+  COMPLETION_COMPLETED_MESSAGE,
+  COMPLETION_DRAG_MESSAGE,
+  DELIVERY_FINALIZE_NOTE,
+  effectiveLineFulfillment,
+  joinLocationNames,
+  linePickupLocationId,
+  MIXED_ORDER_NOTE,
+  pickupLocationIds,
+  STOCK_TAG_LABEL,
 } from "../lib/journeys/completion";
 import { STATE_TRANSITIONS, transitionAppliesToFulfillment } from "../lib/journeys/state";
 import { deliveryCompletedActivityText } from "../lib/journeys/activityLabels";
@@ -188,6 +200,127 @@ check("legacy event without method returns undefined",
   deliveryCompletedActivityText({ delivered_at: "2025-11-16" }) === undefined);
 check("empty event returns undefined",
   deliveryCompletedActivityText({}) === undefined);
+
+// ---- Slice 1.5: panel completion gating (pure logic) ----
+const NAMES: Record<string, string> = {
+  storeA: "Main Street",
+  storeB: "Westside",
+  wh1: "Denver Warehouse",
+};
+const storeName = (id: string) => NAMES[id] ?? null;
+const basePickup = {
+  fulfillment: "pickup" as const,
+  canMarkFulfilled: true,
+  canPickupAnyLocation: false,
+  canFinalizeDelivery: false,
+  activeStoreId: "storeA",
+  items: [] as { fulfillment_type_override?: "delivery" | "pickup" | null; pickup_location_id?: string | null }[],
+  journeyStoreId: "storeA",
+  storeName,
+};
+
+// Pickup: permission + location rules.
+check("pickup button shows for permitted user at active location",
+  completionButtonDecision(basePickup).kind === "button");
+check("pickup hidden without orders.mark_fulfilled",
+  completionButtonDecision({ ...basePickup, canMarkFulfilled: false }).kind === "hidden");
+check("pickup button shows with pickup_any_location at other store",
+  completionButtonDecision({
+    ...basePickup, canPickupAnyLocation: true,
+    items: [{ pickup_location_id: "storeB" }],
+  }).kind === "button");
+const wrongLoc = completionButtonDecision({
+  ...basePickup,
+  items: [{ pickup_location_id: "storeB" }],
+});
+check("pickup at other location shows login-here note",
+  wrongLoc.kind === "note" &&
+  wrongLoc.kind === "note" &&
+  wrongLoc.text === "Picked up at Westside. Log in to that location to mark it picked up.");
+check("pickup note uses location names not ids",
+  wrongLoc.kind === "note" && !wrongLoc.text.includes("storeB"));
+check("pickup hidden when no active store resolves",
+  completionButtonDecision({ ...basePickup, activeStoreId: null }).kind === "note");
+
+// Pickup: mixed orders never get the whole-order button.
+check("pickup order with a delivery line shows mixed note",
+  completionButtonDecision({
+    ...basePickup,
+    items: [{ fulfillment_type_override: "delivery" }],
+  }).kind === "note" &&
+  (completionButtonDecision({
+    ...basePickup,
+    items: [{ fulfillment_type_override: "delivery" }],
+  }) as { text: string }).text === MIXED_ORDER_NOTE);
+check("pickup order leaving two locations shows mixed note",
+  (completionButtonDecision({
+    ...basePickup,
+    items: [
+      { pickup_location_id: "storeA" },
+      { pickup_location_id: "storeB" },
+    ],
+  }) as { text: string }).text === MIXED_ORDER_NOTE);
+
+// Delivery: gated purely on can_finalize_delivery.
+const baseDelivery = { ...basePickup, fulfillment: "delivery" as const };
+check("delivery button shows for delivery finalizer",
+  completionButtonDecision({ ...baseDelivery, canFinalizeDelivery: true }).kind === "button");
+check("delivery shows warehouse note for store staff",
+  (completionButtonDecision(baseDelivery) as { text: string }).text ===
+    DELIVERY_FINALIZE_NOTE);
+check("delivery ignores pickup location rules",
+  completionButtonDecision({
+    ...baseDelivery, canFinalizeDelivery: true,
+    activeStoreId: null,
+    items: [{ pickup_location_id: "storeB" }],
+  }).kind === "button");
+
+// Line-level helpers.
+check("effective line fulfillment prefers override",
+  effectiveLineFulfillment(
+    { fulfillment_type_override: "delivery" }, "pickup"
+  ) === "delivery" &&
+  effectiveLineFulfillment({}, "pickup") === "pickup");
+check("pickup location falls back to order store",
+  linePickupLocationId({}, "storeA") === "storeA" &&
+  linePickupLocationId({ pickup_location_id: "wh1" }, "storeA") === "wh1");
+check("pickupLocationIds unions pickup lines only",
+  pickupLocationIds(
+    [
+      { fulfillment_type_override: "delivery", pickup_location_id: "storeB" },
+      { pickup_location_id: "wh1" },
+    ],
+    { store_id: "storeA", fulfillment_type: "pickup" }
+  ).join(",") === "wh1");
+check("pickupLocationIds falls back to store for empty orders",
+  pickupLocationIds([], { store_id: "storeA", fulfillment_type: "pickup" })[0] === "storeA");
+check("joinLocationNames joins like pickupCollectionLabel",
+  joinLocationNames(["A"]) === "A" &&
+  joinLocationNames(["A", "B"]) === "A and B" &&
+  joinLocationNames(["A", "B", "C"]) === "A, B and C");
+
+// Stock tags.
+check("stock tag maps ready to In stock",
+  completionStockTag("ready") === "in_stock" &&
+  STOCK_TAG_LABEL.in_stock === "In stock");
+check("stock tag maps pending to Not in stock yet",
+  completionStockTag("pending") === "not_in_stock" &&
+  STOCK_TAG_LABEL.not_in_stock === "Not in stock yet");
+check("stock tag hides for cancelled/unknown",
+  completionStockTag("cancelled") === null &&
+  completionStockTag(null) === null &&
+  completionStockTag(undefined) === null);
+check("anyRequirementPending only fires on pending",
+  anyRequirementPending(["ready", "pending"]) === true &&
+  anyRequirementPending(["ready", "cancelled", null]) === false);
+
+// Copy constants.
+check("Completed success message exact",
+  COMPLETION_COMPLETED_MESSAGE ===
+    "Done. This order has no sleep trial, so it is complete and has left the board.");
+check("drag message exact",
+  COMPLETION_DRAG_MESSAGE ===
+    "Open the order and use its button to mark it picked up or delivered.");
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`);
 process.exit(failures === 0 ? 0 : 1);

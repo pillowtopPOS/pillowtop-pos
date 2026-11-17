@@ -37,6 +37,8 @@ import {
   subscribeToJourneyChanges,
   recordJourneyEvent,
   completeJourneyFulfillment,
+  fetchJourneyLineItems,
+  fetchJourneyRequirementStatuses,
   recordPayment,
   fetchTotalPaid,
   reconcilePayment,
@@ -77,8 +79,19 @@ import {
   completionNeedsReason,
   completionReasonMet,
   completionShowsDateField,
-  completionTransitionFor,
+  completionStockTag,
+  COMPLETION_COMPLETED_MESSAGE,
+  COMPLETION_DRAG_MESSAGE,
+  COMPLETION_NOT_IN_STOCK_LINE,
+  effectiveLineFulfillment,
+  linePickupLocationId,
+  anyRequirementPending,
+  joinLocationNames,
+  pickupLocationIds,
+  STOCK_TAG_LABEL,
 } from "@/lib/journeys/completion";
+import { effectiveShipTo, formatShipToLine } from "@/lib/customers/shipTo";
+import type { JourneyLineItem } from "@/lib/journeys/queries";
 import { hasPermission } from "@/lib/inventory/queries";
 
 // A journey whose every live trial item is mid-exchange/return is parked
@@ -179,6 +192,18 @@ function BoardContent() {
     journeyId: string;
     paid: number;
   } | null>(null);
+  // Everything the completion dialog lists under "What you are handing
+  // over": line items, per-variant requirement status, and the booked
+  // delivery date. Fetched fresh each time the dialog opens.
+  const [completionHandover, setCompletionHandover] = useState<{
+    journeyId: string;
+    items: JourneyLineItem[];
+    reqStatus: Record<string, string>;
+    bookedDate: string | null;
+  } | null>(null);
+  // Set when the RPC reports the order went straight to Completed (no
+  // live sleep trial item). The panel shows a short green note.
+  const [completionDoneFor, setCompletionDoneFor] = useState<string | null>(null);
 
   const calculatorCompanyId = useMemo(() => {
     if (!currentEmployee?.home_store_id) return null;
@@ -410,6 +435,7 @@ function BoardContent() {
       pendingTransition.transition.event !== "delivery_completed"
     ) {
       setCompletionPaid(null);
+      setCompletionHandover(null);
       return;
     }
     const journeyId = pendingTransition.journey.id;
@@ -417,6 +443,25 @@ function BoardContent() {
     fetchTotalPaid(journeyId)
       .then((paid) => {
         if (alive) setCompletionPaid({ journeyId, paid });
+      })
+      .catch(() => {});
+    Promise.all([
+      fetchJourneyLineItems(journeyId),
+      fetchJourneyRequirementStatuses(journeyId),
+      fetchJourneyEvents(journeyId),
+    ])
+      .then(([items, reqStatus, evs]) => {
+        if (!alive) return;
+        const bookedDate =
+          [...evs]
+            .filter(
+              (e) =>
+                e.event_type === "delivery_scheduled" &&
+                e.event_data?.delivery_date
+            )
+            .map((e) => String(e.event_data?.delivery_date))
+            .pop() ?? null;
+        setCompletionHandover({ journeyId, items, reqStatus, bookedDate });
       })
       .catch(() => {});
     return () => {
@@ -468,12 +513,19 @@ function BoardContent() {
       return;
     }
 
+    // Completion is panel-only now: a drop onto Sleep Trial (or any
+    // delivery_completed transition) never opens a dialog or writes
+    // anything. The order must be opened and its own button used.
+    if (transition.event === "delivery_completed") {
+      setBoardError(COMPLETION_DRAG_MESSAGE);
+      return;
+    }
+
     // Completion always opens the dialog (date + reason rules live
     // there), even though the transition carries no requiredFields.
     if (
       transition.requiredFields &&
-      transition.requiredFields.length > 0 ||
-      transition.event === "delivery_completed"
+      transition.requiredFields.length > 0
     ) {
       setPendingTransition({ journey, transition });
       setPendingFieldValues(
@@ -535,10 +587,15 @@ function BoardContent() {
       setModalError(null);
       setBoardBusy(true);
       try {
-        await completeJourneyFulfillment(journey.id, {
+        const result = await completeJourneyFulfillment(journey.id, {
           completedOn: request.completedOn,
           reason: request.reason,
         });
+        // m149: an order with no live sleep trial item lands on
+        // Completed, off the board. The panel shows a short green note.
+        setCompletionDoneFor(
+          result?.state === "Completed" ? journey.id : null
+        );
         setPendingTransition(null);
         setPendingFieldValues({});
         await handleReassigned(journey.id);
@@ -725,13 +782,11 @@ function BoardContent() {
     setPendingOverpayment(null);
   }
 
-  // Card-level "Mark picked up" for pickup orders in Sold or Ready to
-  // Schedule; opens the same completion dialog as the panel/drag path.
-  function openPickupCompletion(journey: JourneyWithDetails) {
-    const transition = completionTransitionFor(journey);
-    if (!transition) return;
-    setPendingTransition({ journey, transition });
-    setPendingFieldValues({});
+  // Selecting a different journey clears the Completed notice so it can
+  // never bleed onto another order's panel.
+  function selectJourney(j: JourneyWithDetails | null) {
+    if (j?.id !== selectedJourney?.id) setCompletionDoneFor(null);
+    setSelectedJourney(j);
   }
 
   async function executeAction(journey: JourneyWithDetails, eventType: JourneyEventType) {
@@ -810,6 +865,20 @@ function BoardContent() {
     setBoardBusy(false);
     cancelInFlight.current = false;
   }
+
+  // Confirm stays disabled while any handed-over line's requirement is
+  // still pending. The RPC refuses the write too, but the dialog should
+  // never offer a button that cannot succeed.
+  const completionBlocksConfirm =
+    pendingTransition?.transition.event === "delivery_completed" &&
+    completionHandover?.journeyId === pendingTransition.journey.id &&
+    anyRequirementPending(
+      completionHandover.items.map((item) =>
+        item.product_id
+          ? completionHandover.reqStatus[item.product_id]
+          : null
+      )
+    );
 
   return (
     <main className="min-h-screen bg-slate-50 p-6">
@@ -912,8 +981,7 @@ function BoardContent() {
                 journeys={column.journeys}
                 unresolvedJourneyIds={unresolvedJourneyIds}
                 trialEvals={trialEvals}
-                onSelect={setSelectedJourney}
-                onMarkPickedUp={openPickupCompletion}
+                onSelect={selectJourney}
               />
             ))}
           </div>
@@ -945,7 +1013,7 @@ function BoardContent() {
                 <tr
                   key={j.id}
                   className="border-b border-slate-100 hover:bg-slate-50"
-                  onClick={() => setSelectedJourney(j)}
+                  onClick={() => selectJourney(j)}
                 >
                   <td className="px-4 py-2">
                     {j.customer
@@ -997,7 +1065,16 @@ function BoardContent() {
           currentEmployee={currentEmployee}
           trialEvals={trialEvals.get(selectedJourney.id) ?? []}
           onReassigned={handleReassigned}
-          onClose={() => setSelectedJourney(null)}
+          onClose={() => {
+            setCompletionDoneFor(null);
+            setSelectedJourney(null);
+          }}
+          completionDone={
+            completionDoneFor !== null &&
+            completionDoneFor === selectedJourney.id
+              ? COMPLETION_COMPLETED_MESSAGE
+              : null
+          }
           onAction={executeAction}
           onCancel={setCancelJourneyState}
           refreshPending={journeyRefreshPending}
@@ -1023,6 +1100,30 @@ function BoardContent() {
             <h2 className="mb-2 text-lg font-semibold text-slate-900">
               {pendingTransition.transition.label}
             </h2>
+            {pendingTransition.transition.event === "delivery_completed" &&
+              pendingTransition.journey.fulfillment_type === "pickup" && (
+                <p className="-mt-1 mb-2 text-sm text-slate-500">
+                  {(() => {
+                    const locIds = completionHandover?.journeyId ===
+                    pendingTransition.journey.id
+                      ? pickupLocationIds(
+                          completionHandover.items,
+                          pendingTransition.journey
+                        )
+                      : [pendingTransition.journey.store_id];
+                    const names = locIds
+                      .map(
+                        (id) =>
+                          stores.find((s) => s.id === id)?.name ??
+                          (id === pendingTransition.journey.store_id
+                            ? pendingTransition.journey.store?.name
+                            : null)
+                      )
+                      .filter((n): n is string => !!n);
+                    return `from ${joinLocationNames(names)}`;
+                  })()}
+                </p>
+              )}
             <p className="mb-4 text-sm text-slate-600">
               {pendingTransition.journey.customer
                 ? `${pendingTransition.journey.customer.first_name} ${pendingTransition.journey.customer.last_name}`
@@ -1055,6 +1156,98 @@ function BoardContent() {
                 </div>
               )
             )}
+            {(() => {
+              if (
+                pendingTransition.transition.event !== "delivery_completed" ||
+                completionHandover?.journeyId !== pendingTransition.journey.id
+              ) {
+                return null;
+              }
+              const journey = pendingTransition.journey;
+              const shipTo = effectiveShipTo(journey, journey.customer);
+              const shipToLine = formatShipToLine(shipTo);
+              const stockByVariant = completionHandover.reqStatus;
+              const lineStock = completionHandover.items.map((item) =>
+                item.product_id
+                  ? completionStockTag(stockByVariant[item.product_id])
+                  : null
+              );
+              const anyNotInStock = anyRequirementPending(
+                completionHandover.items.map((item) =>
+                  item.product_id ? stockByVariant[item.product_id] : null
+                )
+              );
+              return (
+                <div className="mb-4 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    What you are handing over
+                  </p>
+                  <ul className="space-y-2">
+                    {completionHandover.items.map((item, idx) => {
+                      const kind = effectiveLineFulfillment(
+                        item,
+                        journey.fulfillment_type
+                      );
+                      const tag = lineStock[idx];
+                      return (
+                        <li key={item.id} className="text-slate-700">
+                          <div className="flex items-start justify-between gap-2">
+                            <span>
+                              {item.item_name}{" "}
+                              <span className="text-slate-500">
+                                · Qty {item.quantity}
+                              </span>
+                            </span>
+                            {tag && (
+                              <span
+                                className={`shrink-0 rounded-full px-1.5 py-px text-[10px] font-medium ${
+                                  tag === "in_stock"
+                                    ? "bg-emerald-100 text-emerald-700"
+                                    : "bg-amber-100 text-amber-700"
+                                }`}
+                              >
+                                {STOCK_TAG_LABEL[tag]}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-500">
+                            {kind === "pickup"
+                              ? `Leaving from ${
+                                  stores.find(
+                                    (s) =>
+                                      s.id ===
+                                      linePickupLocationId(
+                                        item,
+                                        journey.store_id
+                                      )
+                                  )?.name ?? "the order store"
+                                }`
+                              : [
+                                  shipToLine || "No delivery address on file",
+                                  completionHandover.bookedDate
+                                    ? `Booked ${new Date(
+                                        `${completionHandover.bookedDate}T00:00:00`
+                                      ).toLocaleDateString(undefined, {
+                                        month: "short",
+                                        day: "numeric",
+                                      })}`
+                                    : null,
+                                ]
+                                  .filter(Boolean)
+                                  .join(" · ")}
+                          </p>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {anyNotInStock && (
+                    <p className="mt-2 text-sm font-medium text-red-700">
+                      {COMPLETION_NOT_IN_STOCK_LINE}
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
             {modalError && (
               <p key="modal-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                 {modalError}
@@ -1185,6 +1378,7 @@ function BoardContent() {
                 }
                 disabled={
                   boardBusy ||
+                  completionBlocksConfirm ||
                   (pendingTransition.transition.event ===
                     "delivery_completed" &&
                     completionNeedsReason(
@@ -1459,14 +1653,12 @@ function Column({
   unresolvedJourneyIds,
   trialEvals,
   onSelect,
-  onMarkPickedUp,
 }: {
   state: SleepJourneyState;
   journeys: JourneyWithDetails[];
   unresolvedJourneyIds: Set<string>;
   trialEvals: Map<string, SleepTrialEvaluation[]>;
   onSelect: (j: JourneyWithDetails) => void;
-  onMarkPickedUp: (j: JourneyWithDetails) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: state });
 
@@ -1493,7 +1685,6 @@ function Column({
             hasUnresolvedPayment={unresolvedJourneyIds.has(j.id)}
             trialEvals={trialEvals.get(j.id) ?? []}
             onSelect={onSelect}
-            onMarkPickedUp={onMarkPickedUp}
           />
         ))}
       </div>
@@ -1540,13 +1731,11 @@ function JourneyCard({
   hasUnresolvedPayment,
   trialEvals,
   onSelect,
-  onMarkPickedUp,
 }: {
   journey: JourneyWithDetails;
   hasUnresolvedPayment: boolean;
   trialEvals: SleepTrialEvaluation[];
   onSelect: (j: JourneyWithDetails) => void;
-  onMarkPickedUp: (j: JourneyWithDetails) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: journey.id,
@@ -1618,18 +1807,6 @@ function JourneyCard({
       )}
       {hasUnresolvedPayment && (
         <p className="text-[10px] font-medium text-amber-600">Unresolved payment</p>
-      )}
-      {completionTransitionFor(journey)?.label === "Mark Picked Up" && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onMarkPickedUp(journey);
-          }}
-          className="mt-1 w-full rounded border border-teal-300 bg-teal-50 px-1.5 py-0.5 text-[10px] font-medium text-teal-800 hover:bg-teal-100"
-        >
-          Mark picked up
-        </button>
       )}
     </div>
   );

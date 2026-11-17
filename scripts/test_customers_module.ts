@@ -90,8 +90,9 @@ async function main() {
   const uidMgr = await mkUser(emailMgr);
   const uidSales = await mkUser(emailSales);
   const empMgr = (await admin.from("employees").insert({ first_name: "Cm", last_name: "Mgr", role: "manager", home_store_id: st, auth_user_id: uidMgr, is_active: true }).select("id").single()).data!.id;
+  f.employees.push(empMgr);
   const empSales = (await admin.from("employees").insert({ first_name: "Cm", last_name: "Sales", role: "sales", home_store_id: st, auth_user_id: uidSales, is_active: true }).select("id").single()).data!.id;
-  f.employees.push(empMgr, empSales);
+  f.employees.push(empSales);
 
   const custInsert = (row: object) =>
     admin.from("customers").insert(row).select("id").single();
@@ -99,10 +100,13 @@ async function main() {
   // A: person with a unique name + dashed phone; B: merge source with 2 orders;
   // C: company customer; D: sales-merge attempt target (kept).
   const cA = (await custInsert({ company_id: co, first_name: "Zara", last_name: "Quinn", phone: "(303) 555-0142", email: `${tag}a@x.com`, city: "Denver", state: "CO", customer_since: "2020-01-15" })).data!.id;
+  f.customers.push(cA);
   const cB = (await custInsert({ company_id: co, first_name: "Ben", last_name: "Wren", phone: "303-555-0177", email: `${tag}b@x.com` })).data!.id;
+  f.customers.push(cB);
   const cC = (await custInsert({ company_id: co, is_company: true, company_name: `Acme ${tag}`, first_name: `Acme ${tag}`, last_name: "", phone: "303-555-0188", email: `${tag}c@x.com` })).data!.id;
+  f.customers.push(cC);
   const cD = (await custInsert({ company_id: co, first_name: "Dee", last_name: "Lot", phone: "303-555-0199", email: `${tag}d@x.com` })).data!.id;
-  f.customers.push(cA, cB, cC, cD);
+  f.customers.push(cD);
 
   for (let i = 0; i < 2; i++) {
     const j = await admin.from("sleep_journeys").insert({

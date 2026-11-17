@@ -28,8 +28,9 @@ async function main() {
   const co = (await admin.from("companies").insert({ name: `__${tag}__`, business_timezone: "America/Denver" }).select("id").single()).data!.id;
   f.companies.push(co);
   const st = (await admin.from("stores").insert({ company_id: co, name: `__${tag}_st__`, location_type: "STORE", is_active: true }).select("id").single()).data!.id;
+  f.stores.push(st);
   const wh = (await admin.from("stores").insert({ company_id: co, name: `__${tag}_wh__`, location_type: "WAREHOUSE", is_active: true }).select("id").single()).data!.id;
-  f.stores.push(st, wh);
+  f.stores.push(wh);
   const cu = (await admin.from("customers").insert({
     company_id: co, first_name: "P", last_name: "T", phone: "3035550100",
     email: `${tag}@x.com`, street_address: "1 Main", city: "D", state: "CO", zip_code: "80201",
