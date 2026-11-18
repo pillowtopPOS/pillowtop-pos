@@ -90,6 +90,7 @@ import {
   effectiveLineFulfillment,
   linePickupLocationId,
   anyRequirementPending,
+  completionConfirmReady,
   joinLocationNames,
   pickupLocationIds,
   STOCK_TAG_LABEL,
@@ -194,13 +195,16 @@ function BoardContent() {
   // it cannot be trusted for the balance line.
   const [completionPaid, setCompletionPaid] = useState<{
     journeyId: string;
+    status: "loading" | "loaded" | "failed";
     paid: number;
   } | null>(null);
   // Everything the completion dialog lists under "What you are handing
   // over": line items, per-variant requirement status, and the booked
-  // delivery date. Fetched fresh each time the dialog opens.
+  // delivery date. Fetched fresh each time the dialog opens; status is
+  // loading until the reads land and failed when they cannot.
   const [completionHandover, setCompletionHandover] = useState<{
     journeyId: string;
+    status: "loading" | "loaded" | "failed";
     items: JourneyLineItem[];
     reqStatus: Record<string, string>;
     bookedDate: string | null;
@@ -472,9 +476,23 @@ function BoardContent() {
       });
     fetchTotalPaid(journeyId)
       .then((paid) => {
-        if (alive) setCompletionPaid({ journeyId, paid });
+        if (alive) {
+          setCompletionPaid({ journeyId, status: "loaded", paid });
+        }
       })
-      .catch(() => {});
+      .catch((e) => {
+        console.error("completion dialog balance read failed", e);
+        if (alive) {
+          setCompletionPaid({ journeyId, status: "failed", paid: 0 });
+        }
+      });
+    setCompletionHandover({
+      journeyId,
+      status: "loading",
+      items: [],
+      reqStatus: {},
+      bookedDate: null,
+    });
     Promise.all([
       fetchJourneyLineItems(journeyId),
       fetchJourneyRequirementStatuses(journeyId),
@@ -491,9 +509,26 @@ function BoardContent() {
             )
             .map((e) => String(e.event_data?.delivery_date))
             .pop() ?? null;
-        setCompletionHandover({ journeyId, items, reqStatus, bookedDate });
+        setCompletionHandover({
+          journeyId,
+          status: "loaded",
+          items,
+          reqStatus,
+          bookedDate,
+        });
       })
-      .catch(() => {});
+      .catch((e) => {
+        console.error("completion dialog handover read failed", e);
+        if (alive) {
+          setCompletionHandover({
+            journeyId,
+            status: "failed",
+            items: [],
+            reqStatus: {},
+            bookedDate: null,
+          });
+        }
+      });
     return () => {
       alive = false;
     };
@@ -899,12 +934,29 @@ function BoardContent() {
     cancelInFlight.current = false;
   }
 
+  const completionIsOpen =
+    pendingTransition?.transition.event === "delivery_completed";
+  const completionHandoverState =
+    completionIsOpen &&
+    completionHandover?.journeyId === pendingTransition.journey.id
+      ? completionHandover.status
+      : "loading";
+  const completionPaidLoaded =
+    completionIsOpen &&
+    completionPaid?.journeyId === pendingTransition.journey.id &&
+    completionPaid.status === "loaded";
+  const completionReadsReady = completionConfirmReady({
+    handoverState: completionHandoverState,
+    paidLoaded: completionPaidLoaded,
+  });
+
   // Confirm stays disabled while any handed-over line's requirement is
   // still pending. The RPC refuses the write too, but the dialog should
   // never offer a button that cannot succeed.
   const completionBlocksConfirm =
-    pendingTransition?.transition.event === "delivery_completed" &&
+    completionIsOpen &&
     completionHandover?.journeyId === pendingTransition.journey.id &&
+    completionHandover.status === "loaded" &&
     anyRequirementPending(
       completionHandover.items.map((item) =>
         item.product_id
@@ -1139,8 +1191,10 @@ function BoardContent() {
               pendingTransition.journey.fulfillment_type === "pickup" && (
                 <p className="-mt-1 mb-2 text-sm text-slate-500">
                   {(() => {
-                    const locIds = completionHandover?.journeyId ===
-                    pendingTransition.journey.id
+                    const locIds =
+                      completionHandover?.journeyId ===
+                        pendingTransition.journey.id &&
+                      completionHandover.status === "loaded"
                       ? pickupLocationIds(
                           completionHandover.items,
                           pendingTransition.journey
@@ -1205,7 +1259,8 @@ function BoardContent() {
             })()}
             {pendingTransition.journey.price !== null && pendingTransition.journey.price !== undefined && (
               pendingTransition.transition.event === "delivery_completed" ? (
-                completionPaid?.journeyId === pendingTransition.journey.id && (
+                completionPaid?.journeyId === pendingTransition.journey.id &&
+                completionPaid.status === "loaded" ? (
                   <div className="mb-4 rounded-md bg-slate-50 p-3 text-sm">
                     <p className="font-medium text-slate-700">
                       Current balance due: $
@@ -1214,7 +1269,13 @@ function BoardContent() {
                       ).toFixed(2)}
                     </p>
                   </div>
-                )
+                ) : completionPaid?.journeyId === pendingTransition.journey.id &&
+                  completionPaid.status === "failed" ? (
+                  <p className="mb-4 text-sm text-slate-600">
+                    Could not load the balance for this order. Close this
+                    window and open it again.
+                  </p>
+                ) : null
               ) : (
                 <div className="mb-4 rounded-md bg-slate-50 p-3 text-sm">
                   {(() => {
@@ -1230,23 +1291,39 @@ function BoardContent() {
               )
             )}
             {(() => {
-              if (
-                pendingTransition.transition.event !== "delivery_completed" ||
-                completionHandover?.journeyId !== pendingTransition.journey.id
-              ) {
+              if (pendingTransition.transition.event !== "delivery_completed") {
                 return null;
+              }
+              const handover =
+                completionHandover?.journeyId === pendingTransition.journey.id
+                  ? completionHandover
+                  : null;
+              if (!handover || handover.status === "loading") {
+                return (
+                  <p className="mb-4 text-sm text-slate-600">
+                    Loading what you are handing over...
+                  </p>
+                );
+              }
+              if (handover.status === "failed") {
+                return (
+                  <p className="mb-4 text-sm text-slate-600">
+                    Could not load the items for this order. Close this
+                    window and open it again.
+                  </p>
+                );
               }
               const journey = pendingTransition.journey;
               const shipTo = effectiveShipTo(journey, journey.customer);
               const shipToLine = formatShipToLine(shipTo);
-              const stockByVariant = completionHandover.reqStatus;
-              const lineStock = completionHandover.items.map((item) =>
+              const stockByVariant = handover.reqStatus;
+              const lineStock = handover.items.map((item) =>
                 item.product_id
                   ? completionStockTag(stockByVariant[item.product_id])
                   : null
               );
               const anyNotInStock = anyRequirementPending(
-                completionHandover.items.map((item) =>
+                handover.items.map((item) =>
                   item.product_id ? stockByVariant[item.product_id] : null
                 )
               );
@@ -1256,7 +1333,7 @@ function BoardContent() {
                     What you are handing over
                   </p>
                   <ul className="space-y-2">
-                    {completionHandover.items.map((item, idx) => {
+                    {handover.items.map((item, idx) => {
                       const kind = effectiveLineFulfillment(
                         item,
                         journey.fulfillment_type
@@ -1297,9 +1374,9 @@ function BoardContent() {
                                 }`
                               : [
                                   shipToLine || "No delivery address on file",
-                                  completionHandover.bookedDate
+                                  handover.bookedDate
                                     ? `Booked ${new Date(
-                                        `${completionHandover.bookedDate}T00:00:00`
+                                        `${handover.bookedDate}T00:00:00`
                                       ).toLocaleDateString(undefined, {
                                         month: "short",
                                         day: "numeric",
@@ -1452,6 +1529,7 @@ function BoardContent() {
                 disabled={
                   boardBusy ||
                   completionBlocksConfirm ||
+                  (completionIsOpen && !completionReadsReady) ||
                   (pendingTransition.transition.event ===
                     "delivery_completed" &&
                     completionNeedsReason(

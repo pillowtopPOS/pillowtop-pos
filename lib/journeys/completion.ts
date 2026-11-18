@@ -278,6 +278,18 @@ export function anyRequirementPending(
   return statuses.some((s) => s === "pending");
 }
 
+// The completion dialog reads line items, requirement statuses and the
+// paid total fresh each time it opens. Confirm stays disabled until both
+// reads have landed; a failed read never enables it.
+export type CompletionReadState = "loading" | "loaded" | "failed";
+
+export function completionConfirmReady(opts: {
+  handoverState: CompletionReadState;
+  paidLoaded: boolean;
+}): boolean {
+  return opts.handoverState === "loaded" && opts.paidLoaded;
+}
+
 // The completion transition that applies to this journey, or null when
 // the order cannot be completed from its current state (cancelled,
 // already delivered, wrong state for its fulfillment type).

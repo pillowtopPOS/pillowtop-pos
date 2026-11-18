@@ -7,6 +7,7 @@ import {
   anyRequirementPending,
   buildCompletionRequest,
   completionButtonDecision,
+  completionConfirmReady,
   completionControls,
   completionDestination,
   completionNeedsReason,
@@ -318,6 +319,18 @@ check("destination falls back to Sleep Trial when sale kind is unknown",
 check("no-trial line text exact",
   COMPLETION_NO_TRIAL_LINE ===
     "No sleep trial on this order. It will be complete and leave the board.");
+
+// Confirm stays disabled until both dialog reads have landed; a failed
+// or in-flight read never enables it.
+check("confirm not ready while handover is loading",
+  completionConfirmReady({ handoverState: "loading", paidLoaded: true }) === false);
+check("confirm not ready when handover read failed",
+  completionConfirmReady({ handoverState: "failed", paidLoaded: true }) === false);
+check("confirm not ready while balance is not loaded",
+  completionConfirmReady({ handoverState: "loaded", paidLoaded: false }) === false &&
+  completionConfirmReady({ handoverState: "loading", paidLoaded: false }) === false);
+check("confirm ready only when both reads are loaded",
+  completionConfirmReady({ handoverState: "loaded", paidLoaded: true }) === true);
 
 // Exactly one completion control per decision: the panel must never
 // render a second button from the generic transition list.
