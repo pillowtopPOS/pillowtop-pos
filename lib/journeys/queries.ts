@@ -847,6 +847,115 @@ export async function completeJourneyFulfillment(
   return data as CompleteFulfillmentResult;
 }
 
+export type RecordFulfillmentResult = {
+  fulfillment_id: string;
+  units: number;
+  is_closing: boolean;
+  method: "pickup" | "delivery";
+  completed_on: string;
+  state: string;
+};
+
+// m156: per-unit handover. Caller passes the lines and quantities leaving
+// now; the RPC allocates unit indexes, checks permissions per method,
+// decrements stock, starts trial items, and emits either
+// journey_fulfillment_recorded (partial) or delivery_completed (closing).
+// The database's plain-English errors are thrown as-is for display.
+export async function recordJourneyFulfillment(
+  journeyId: string,
+  lines: { lineItemId: string; quantity: number }[],
+  opts: { completedOn?: string | null; reason?: string | null } = {}
+): Promise<RecordFulfillmentResult> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("record_journey_fulfillment", {
+    p_journey_id: journeyId,
+    p_lines: lines.map((l) => ({
+      line_item_id: l.lineItemId,
+      quantity: l.quantity,
+    })),
+    p_completed_on: opts.completedOn ?? null,
+    p_reason: opts.reason ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return data as RecordFulfillmentResult;
+}
+
+export type JourneyFulfillment = {
+  id: string;
+  method: "pickup" | "delivery";
+  completed_on: string;
+  recorded_by_name: string | null;
+  backdated: boolean;
+  is_closing: boolean;
+  location_id: string | null;
+};
+
+export type JourneyFulfillmentSummary = {
+  byLine: Record<string, number>;
+  fulfillments: JourneyFulfillment[];
+};
+
+// Slice 2a: what has been handed over on this order. byLine maps each
+// line_item_id to its handed-over unit count; fulfillments lists the
+// handover records newest first. Throws on read failure so callers do not
+// mistake an error for "nothing handed over".
+export async function fetchJourneyFulfillmentSummary(
+  journeyId: string
+): Promise<JourneyFulfillmentSummary> {
+  const supabase = createClient();
+  const [{ data: units, error: unitsError }, { data: fulfillments, error: fulfillmentsError }] =
+    await Promise.all([
+      supabase
+        .from("journey_fulfillment_units")
+        .select("line_item_id, unit_index, fulfillment_id")
+        .eq("journey_id", journeyId),
+      supabase
+        .from("journey_fulfillments")
+        .select("id, method, completed_on, recorded_by_name, backdated, is_closing, location_id")
+        .eq("journey_id", journeyId)
+        .order("recorded_at", { ascending: false }),
+    ]);
+  if (unitsError) throw new Error(unitsError.message);
+  if (fulfillmentsError) throw new Error(fulfillmentsError.message);
+
+  const byLine: Record<string, number> = {};
+  for (const row of (units ?? []) as { line_item_id: string }[]) {
+    byLine[row.line_item_id] = (byLine[row.line_item_id] ?? 0) + 1;
+  }
+  return {
+    byLine,
+    fulfillments: (fulfillments ?? []) as JourneyFulfillment[],
+  };
+}
+
+// Board badge helper: handed-over unit counts for many journeys in one
+// read. Missing journeys simply have no key.
+export async function fetchJourneysFulfillmentCounts(
+  journeyIds: string[]
+): Promise<Record<string, number>> {
+  if (journeyIds.length === 0) return {};
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("journey_fulfillment_units")
+    .select("journey_id")
+    .in("journey_id", journeyIds);
+  if (error) {
+    console.error("fetchJourneysFulfillmentCounts error", error);
+    return {};
+  }
+  const out: Record<string, number> = {};
+  for (const row of (data ?? []) as { journey_id: string }[]) {
+    out[row.journey_id] = (out[row.journey_id] ?? 0) + 1;
+  }
+  return out;
+}
+
+// Total units on a line-item set; pairs with byLine counts for
+// "N of M items out" displays.
+export function totalUnits(lineItems: { quantity: number }[]): number {
+  return (lineItems ?? []).reduce((sum, item) => sum + (item.quantity ?? 0), 0);
+}
+
 // m149: whether the current user may finalize a delivery
 // (owner/admin role grant, warehouse manager, or a per-employee grant).
 // Fetched once per panel open; the RPC re-checks on write.
