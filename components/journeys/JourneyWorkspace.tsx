@@ -653,8 +653,8 @@ export default function JourneyWorkspace({
   const pastQuoted =
     getStateIndex(journey.current_state) >= getStateIndex("Sold");
   useEffect(() => {
+    setFulfillmentSummary(null);
     if (!pastQuoted) {
-      setFulfillmentSummary(null);
       setFulfillmentReadFailed(false);
       return;
     }
@@ -910,6 +910,8 @@ export default function JourneyWorkspace({
       journey.current_state
     ) &&
     (completionPerms?.canMarkFulfilled ?? false) &&
+    fulfillmentSummary !== null &&
+    !fulfillmentReadFailed &&
     lineItems.some(
       (li) =>
         effectiveLineFulfillment(li, journey.fulfillment_type) === "pickup" &&

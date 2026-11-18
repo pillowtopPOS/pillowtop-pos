@@ -89,7 +89,28 @@ export default function HandoverDialog({
     };
   }, [journey.id]);
 
-  const totalChosen = Object.values(quantities).reduce((a, b) => a + b, 0);
+  const lineInfo = (li: JourneyLineItem) => {
+    const remaining = li.quantity - (handed[li.id] ?? 0);
+    const locId = linePickupLocationId(li, journey.store_id);
+    const locationLocked =
+      !canPickupAnyLocation && locId !== activeStoreId;
+    const tag = li.product_id
+      ? completionStockTag(reqStatus[li.product_id])
+      : null;
+    const outOfStock = tag === "not_in_stock";
+    const editable = !locationLocked && !outOfStock;
+    return { remaining, locId, locationLocked, outOfStock, editable };
+  };
+
+  // Locked and out-of-stock lines count as 0 everywhere: the stepper,
+  // the total, and the payload sent to the RPC.
+  const effectiveQty = (li: JourneyLineItem) =>
+    lineInfo(li).editable ? quantities[li.id] ?? 0 : 0;
+
+  const totalChosen = pickupLines.reduce(
+    (sum, li) => sum + effectiveQty(li),
+    0
+  );
 
   const request = buildCompletionRequest({
     canBackdate: canBackdate === true,
@@ -118,8 +139,8 @@ export default function HandoverDialog({
       await recordJourneyFulfillment(
         journey.id,
         pickupLines
-          .filter((li) => (quantities[li.id] ?? 0) > 0)
-          .map((li) => ({ lineItemId: li.id, quantity: quantities[li.id] })),
+          .filter((li) => effectiveQty(li) > 0)
+          .map((li) => ({ lineItemId: li.id, quantity: effectiveQty(li) })),
         { completedOn: request.completedOn, reason: request.reason }
       );
       onSuccess();
@@ -151,17 +172,10 @@ export default function HandoverDialog({
 
         <div className="space-y-3">
           {pickupLines.map((li) => {
-            const remaining = li.quantity - (handed[li.id] ?? 0);
-            const locId = linePickupLocationId(li, journey.store_id);
+            const { remaining, locId, locationLocked, outOfStock, editable } =
+              lineInfo(li);
             const locName = storeName(locId);
-            const locationLocked =
-              !canPickupAnyLocation && locId !== activeStoreId;
-            const tag = li.product_id
-              ? completionStockTag(reqStatus[li.product_id])
-              : null;
-            const outOfStock = tag === "not_in_stock";
-            const editable = !locationLocked && !outOfStock;
-            const qty = editable ? quantities[li.id] ?? 0 : 0;
+            const qty = effectiveQty(li);
             return (
               <div
                 key={li.id}
