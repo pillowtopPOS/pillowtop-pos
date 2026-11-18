@@ -37,6 +37,9 @@ import {
   updateJourneyLineItem,
   canFinalizeDelivery,
   fetchJourneyLiveTrialStatuses,
+  fetchJourneyFulfillmentSummary,
+  totalUnits,
+  type JourneyFulfillmentSummary,
   FOLLOW_UP_METHOD_LABELS,
   FOLLOW_UP_TYPE_LABELS,
   type Employee,
@@ -65,6 +68,7 @@ import {
 } from "@/lib/customers/api";
 import {
   STATE_TRANSITIONS,
+  getStateIndex,
   transitionAppliesToFulfillment,
   type JourneyEventType,
 } from "@/lib/journeys/state";
@@ -636,6 +640,44 @@ export default function JourneyWorkspace({
       alive = false;
     };
   }, [journey.id, journey.current_state, trialReadSeq]);
+
+  // Slice 2a: per-unit handover status, same refresh discipline as
+  // liveTrialStatuses (journey/state change and every panel refresh).
+  // Quote-stage orders skip the read entirely. A failed read is flagged
+  // and rendered as an error line, never as "nothing handed over".
+  const [fulfillmentSummary, setFulfillmentSummary] =
+    useState<JourneyFulfillmentSummary | null>(null);
+  const [fulfillmentReadFailed, setFulfillmentReadFailed] = useState(false);
+  const pastQuoted =
+    getStateIndex(journey.current_state) >= getStateIndex("Sold");
+  useEffect(() => {
+    if (!pastQuoted) {
+      setFulfillmentSummary(null);
+      setFulfillmentReadFailed(false);
+      return;
+    }
+    let alive = true;
+    setFulfillmentReadFailed(false);
+    fetchJourneyFulfillmentSummary(journey.id)
+      .then((s) => {
+        if (alive) setFulfillmentSummary(s);
+      })
+      .catch(() => {
+        if (alive) setFulfillmentReadFailed(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [journey.id, journey.current_state, trialReadSeq, pastQuoted]);
+
+  const totalHanded = useMemo(
+    () =>
+      Object.values(fulfillmentSummary?.byLine ?? {}).reduce(
+        (sum, n) => sum + n,
+        0
+      ),
+    [fulfillmentSummary]
+  );
 
   const completionGoesTo = useMemo(
     () =>
@@ -2011,6 +2053,18 @@ export default function JourneyWorkspace({
                       <div className="mt-0.5 text-xs text-slate-500">
                         Qty {item.quantity} · ${item.unit_price.toFixed(2)}
                       </div>
+                      {(() => {
+                        const handed =
+                          fulfillmentSummary?.byLine[item.id] ?? 0;
+                        if (handed === 0) return null;
+                        return (
+                          <span className="mt-0.5 inline-block rounded border border-slate-300 bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
+                            {handed < item.quantity
+                              ? `Out ${handed} of ${item.quantity}`
+                              : "Out"}
+                          </span>
+                        );
+                      })()}
                       {/* Two lines with the same product share one
                           requirement, so both lines show that product's
                           chips here. */}
@@ -2053,6 +2107,19 @@ export default function JourneyWorkspace({
                   ))}
                 </div>
               )}
+
+              {fulfillmentReadFailed && (
+                <div className="mt-2 text-xs text-slate-500">
+                  Handover status could not be loaded.
+                </div>
+              )}
+              {!fulfillmentReadFailed &&
+                totalHanded > 0 &&
+                !journey.delivered_at && (
+                  <div className="mt-2 text-xs text-slate-500">
+                    {totalHanded} of {totalUnits(lineItems)} items out.
+                  </div>
+                )}
 
               {journeyUnits.some((u) => u.requirement_id === null) && (
                 <div className="mt-2 text-xs text-slate-500">
