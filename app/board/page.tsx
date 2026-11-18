@@ -38,6 +38,7 @@ import {
   recordJourneyEvent,
   completeJourneyFulfillment,
   fetchJourneyLineItems,
+  fetchJourneyFulfillmentSummary,
   fetchJourneyRequirementStatuses,
   fetchJourneyLiveTrialStatuses,
   recordPayment,
@@ -90,9 +91,13 @@ import {
   effectiveLineFulfillment,
   linePickupLocationId,
   anyRequirementPending,
+  completionClosesOrder,
   completionConfirmReady,
+  completionHandoverLines,
   joinLocationNames,
+  OTHER_ITEMS_STAY_OPEN_NOTE,
   pickupLocationIds,
+  remainingUnits,
   STOCK_TAG_LABEL,
 } from "@/lib/journeys/completion";
 import { effectiveShipTo, formatShipToLine } from "@/lib/customers/shipTo";
@@ -206,6 +211,7 @@ function BoardContent() {
     journeyId: string;
     status: "loading" | "loaded" | "failed";
     items: JourneyLineItem[];
+    byLine: Record<string, number>;
     reqStatus: Record<string, string>;
     bookedDate: string | null;
   } | null>(null);
@@ -219,6 +225,7 @@ function BoardContent() {
     journeyId: string;
     decision: CompletionButtonDecision | null;
     goesTo: "Sleep Trial" | "Completed";
+    closing: boolean;
   } | null>(null);
   // Live trial item statuses for the dialog's journey, read fresh every
   // time the completion dialog opens. null while loading or on error:
@@ -490,6 +497,7 @@ function BoardContent() {
       journeyId,
       status: "loading",
       items: [],
+      byLine: {},
       reqStatus: {},
       bookedDate: null,
     });
@@ -497,8 +505,9 @@ function BoardContent() {
       fetchJourneyLineItems(journeyId),
       fetchJourneyRequirementStatuses(journeyId),
       fetchJourneyEvents(journeyId),
+      fetchJourneyFulfillmentSummary(journeyId),
     ])
-      .then(([items, reqStatus, evs]) => {
+      .then(([items, reqStatus, evs, summary]) => {
         if (!alive) return;
         const bookedDate =
           [...evs]
@@ -513,6 +522,7 @@ function BoardContent() {
           journeyId,
           status: "loaded",
           items,
+          byLine: summary.byLine,
           reqStatus,
           bookedDate,
         });
@@ -524,6 +534,7 @@ function BoardContent() {
             journeyId,
             status: "failed",
             items: [],
+            byLine: {},
             reqStatus: {},
             bookedDate: null,
           });
@@ -952,13 +963,24 @@ function BoardContent() {
 
   // Confirm stays disabled while any handed-over line's requirement is
   // still pending. The RPC refuses the write too, but the dialog should
-  // never offer a button that cannot succeed.
+  // never offer a button that cannot succeed. Only the lines the action
+  // actually hands over count.
+  const completionDialogLines =
+    completionIsOpen &&
+    completionHandover?.journeyId === pendingTransition.journey.id &&
+    completionHandover.status === "loaded"
+      ? completionHandoverLines({
+          fulfillment: pendingTransition.journey.fulfillment_type,
+          items: completionHandover.items,
+          handed: completionHandover.byLine,
+        })
+      : [];
   const completionBlocksConfirm =
     completionIsOpen &&
     completionHandover?.journeyId === pendingTransition.journey.id &&
     completionHandover.status === "loaded" &&
     anyRequirementPending(
-      completionHandover.items.map((item) =>
+      completionDialogLines.map((item) =>
         item.product_id
           ? completionHandover.reqStatus[item.product_id]
           : null
@@ -1196,7 +1218,12 @@ function BoardContent() {
                         pendingTransition.journey.id &&
                       completionHandover.status === "loaded"
                       ? pickupLocationIds(
-                          completionHandover.items,
+                          completionHandoverLines({
+                            fulfillment:
+                              pendingTransition.journey.fulfillment_type,
+                            items: completionHandover.items,
+                            handed: completionHandover.byLine,
+                          }),
                           pendingTransition.journey
                         )
                       : [pendingTransition.journey.store_id];
@@ -1234,15 +1261,30 @@ function BoardContent() {
                   })
                 : pendingTransition.transition.to;
               const trialReadKnown = dialogRead != null;
+              // Non-closing handovers leave units behind, so the order
+              // keeps its current state; the destination labels only
+              // apply when every remaining unit leaves now.
+              const handoverLoaded =
+                completionHandover?.journeyId ===
+                  pendingTransition.journey.id &&
+                completionHandover.status === "loaded";
+              const closes =
+                isCompletion && handoverLoaded
+                  ? completionClosesOrder({
+                      fulfillment: pendingTransition.journey.fulfillment_type,
+                      items: completionHandover.items,
+                      handed: completionHandover.byLine,
+                    })
+                  : info?.closing ?? true;
               return (
                 <>
                   <p className="mb-4 text-sm text-slate-600">
                     {pendingTransition.journey.customer
                       ? `${pendingTransition.journey.customer.first_name} ${pendingTransition.journey.customer.last_name}`
                       : "Journey"}{" "}
-                    → {goesTo}
+                    → {closes ? goesTo : "stays open"}
                   </p>
-                  {isCompletion && goesTo === "Completed" && trialReadKnown && (
+                  {isCompletion && closes && goesTo === "Completed" && trialReadKnown && (
                     <p className="-mt-2 mb-4 text-sm text-slate-600">
                       {COMPLETION_NO_TRIAL_LINE}
                     </p>
@@ -1317,13 +1359,25 @@ function BoardContent() {
               const shipTo = effectiveShipTo(journey, journey.customer);
               const shipToLine = formatShipToLine(shipTo);
               const stockByVariant = handover.reqStatus;
-              const lineStock = handover.items.map((item) =>
+              // Only lines of the order's own method with units left are
+              // handed over now; other-method lines stay on the order.
+              const handoverLines = completionHandoverLines({
+                fulfillment: journey.fulfillment_type,
+                items: handover.items,
+                handed: handover.byLine,
+              });
+              const othersStayOpen = !completionClosesOrder({
+                fulfillment: journey.fulfillment_type,
+                items: handover.items,
+                handed: handover.byLine,
+              });
+              const lineStock = handoverLines.map((item) =>
                 item.product_id
                   ? completionStockTag(stockByVariant[item.product_id])
                   : null
               );
               const anyNotInStock = anyRequirementPending(
-                handover.items.map((item) =>
+                handoverLines.map((item) =>
                   item.product_id ? stockByVariant[item.product_id] : null
                 )
               );
@@ -1335,7 +1389,7 @@ function BoardContent() {
                       : "Items being delivered"}
                   </p>
                   <ul className="space-y-2">
-                    {handover.items.map((item, idx) => {
+                    {handoverLines.map((item, idx) => {
                       const kind = effectiveLineFulfillment(
                         item,
                         journey.fulfillment_type
@@ -1347,7 +1401,7 @@ function BoardContent() {
                             <span>
                               {item.item_name}{" "}
                               <span className="text-slate-500">
-                                · Qty {item.quantity}
+                                · Qty {remainingUnits(item, handover.byLine)}
                               </span>
                             </span>
                             {tag && (
@@ -1392,6 +1446,11 @@ function BoardContent() {
                       );
                     })}
                   </ul>
+                  {othersStayOpen && (
+                    <p className="mt-2 text-sm text-slate-600">
+                      {OTHER_ITEMS_STAY_OPEN_NOTE}
+                    </p>
+                  )}
                   {anyNotInStock && (
                     <p className="mt-2 text-sm font-medium text-red-700">
                       {COMPLETION_NOT_IN_STOCK_LINE}

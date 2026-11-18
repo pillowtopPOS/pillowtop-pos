@@ -19,11 +19,15 @@ import {
   COMPLETION_DRAG_MESSAGE,
   COMPLETION_NO_TRIAL_LINE,
   DELIVERY_FINALIZE_NOTE,
+  completionClosesOrder,
+  completionHandoverLines,
   effectiveLineFulfillment,
   joinLocationNames,
   linePickupLocationId,
-  MIXED_ORDER_NOTE,
+  OTHER_ITEMS_STAY_OPEN_NOTE,
   pickupLocationIds,
+  pickupLocationNote,
+  remainingUnits,
   STOCK_TAG_LABEL,
 } from "../lib/journeys/completion";
 import { STATE_TRANSITIONS, transitionAppliesToFulfillment } from "../lib/journeys/state";
@@ -245,24 +249,30 @@ check("pickup note uses location names not ids",
 check("pickup hidden when no active store resolves",
   completionButtonDecision({ ...basePickup, activeStoreId: null }).kind === "note");
 
-// Pickup: mixed orders never get the whole-order button.
-check("pickup order with a delivery line shows mixed note",
+// Pickup: other-method lines never block the button. A pickup order with
+// only delivery lines left shows no control at all.
+check("pickup order with only delivery lines shows no control",
   completionButtonDecision({
     ...basePickup,
     items: [{ fulfillment_type_override: "delivery" }],
-  }).kind === "note" &&
-  (completionButtonDecision({
+  }).kind === "hidden");
+check("pickup order with a delivery line keeps the button",
+  completionButtonDecision({
     ...basePickup,
-    items: [{ fulfillment_type_override: "delivery" }],
-  }) as { text: string }).text === MIXED_ORDER_NOTE);
-check("pickup order leaving two locations shows mixed note",
+    items: [
+      { pickup_location_id: "storeA" },
+      { fulfillment_type_override: "delivery" },
+    ],
+  }).kind === "button");
+check("pickup order leaving two locations shows the location note",
   (completionButtonDecision({
     ...basePickup,
     items: [
       { pickup_location_id: "storeA" },
       { pickup_location_id: "storeB" },
     ],
-  }) as { text: string }).text === MIXED_ORDER_NOTE);
+  }) as { text: string }).text ===
+    pickupLocationNote(["Main Street", "Westside"]));
 
 // Delivery: gated purely on can_finalize_delivery.
 const baseDelivery = { ...basePickup, fulfillment: "delivery" as const };
@@ -280,26 +290,110 @@ check("delivery ignores pickup location rules",
     items: [{ pickup_location_id: "storeB" }],
   }).kind === "button");
 
-// Delivery-typed order with a pickup line: mixed note for everyone,
-// including owner, admin (pickup_any_location) and warehouse manager.
+// Delivery-typed order with a pickup line: the pickup line stays open
+// and the delivery button keeps its normal rules.
 const mixedDeliveryLine = { fulfillment_type_override: "pickup" as const, pickup_location_id: "wh1" };
-for (const [who, opts] of [
-  ["owner/admin", ownerLike],
-  ["warehouse manager", warehouseManagerLike],
-  ["store staff", baseDelivery],
-] as const) {
-  const d = completionButtonDecision({ ...opts, items: [mixedDeliveryLine] });
-  check(`delivery order with a pickup line shows mixed note (${who})`,
-    d.kind === "note" && d.text === MIXED_ORDER_NOTE);
-}
-check("delivery order with pickup override and no location still mixed",
-  (completionButtonDecision({ ...ownerLike, items: [{ fulfillment_type_override: "pickup" }] }) as { text: string }).text === MIXED_ORDER_NOTE);
+check("delivery order with a pickup line keeps the button (owner/admin)",
+  completionButtonDecision({ ...ownerLike, items: [{}, mixedDeliveryLine] }).kind === "button");
+check("delivery order with a pickup line keeps the button (warehouse manager)",
+  completionButtonDecision({ ...warehouseManagerLike, items: [{}, mixedDeliveryLine] }).kind === "button");
+check("delivery order with a pickup line keeps the staff note",
+  (completionButtonDecision({ ...baseDelivery, items: [{}, mixedDeliveryLine] }) as { text: string }).text ===
+    DELIVERY_FINALIZE_NOTE);
+check("delivery order with only pickup lines shows no control",
+  completionButtonDecision({ ...ownerLike, items: [mixedDeliveryLine] }).kind === "hidden");
+check("delivery order with pickup override and no location still hidden",
+  completionButtonDecision({ ...ownerLike, items: [{ fulfillment_type_override: "pickup" }] }).kind === "hidden");
 check("delivery order with only delivery lines keeps the button",
   completionButtonDecision({ ...ownerLike, items: [{ fulfillment_type_override: "delivery" }, {}] }).kind === "button");
 check("delivery order with only delivery lines keeps the staff note",
   (completionButtonDecision({ ...baseDelivery, items: [{}, {}] }) as { text: string }).text === DELIVERY_FINALIZE_NOTE);
 check("pickup order with only pickup lines at one location keeps the button",
   completionButtonDecision({ ...basePickup, items: [{ pickup_location_id: "storeA" }, {}] }).kind === "button");
+
+// Slice 2a: the button hands over every REMAINING same-method unit.
+// handed = the fulfillment summary's byLine map.
+check("no button when same-method units are all out",
+  completionButtonDecision({
+    ...basePickup,
+    items: [{ id: "l1", quantity: 2 }],
+    handed: { l1: 2 },
+  }).kind === "hidden");
+check("button stays when same-method units remain",
+  completionButtonDecision({
+    ...basePickup,
+    items: [{ id: "l1", quantity: 2 }],
+    handed: { l1: 1 },
+  }).kind === "button");
+check("empty handed map behaves like nothing handed over",
+  completionButtonDecision({
+    ...basePickup,
+    items: [{ id: "l1", quantity: 2 }],
+    handed: {},
+  }).kind === "button");
+check("fully handed other-method lines do not hide the button",
+  completionButtonDecision({
+    ...basePickup,
+    items: [
+      { id: "p1", quantity: 1 },
+      { id: "d1", quantity: 1, fulfillment_type_override: "delivery" },
+    ],
+    handed: { d1: 1 },
+  }).kind === "button");
+check("no control when only other-method units remain",
+  completionButtonDecision({
+    ...ownerLike,
+    items: [
+      { id: "d1", quantity: 1 },
+      { id: "p1", quantity: 1, fulfillment_type_override: "pickup" },
+    ],
+    handed: { d1: 1 },
+  }).kind === "hidden");
+
+// remainingUnits and the shared line-selection helpers.
+check("remainingUnits subtracts handed and floors at zero",
+  remainingUnits({ id: "l1", quantity: 3 }, { l1: 1 }) === 2 &&
+  remainingUnits({ id: "l1", quantity: 3 }, { l1: 5 }) === 0 &&
+  remainingUnits({ id: "l1", quantity: 3 }) === 3);
+check("handover lines are same-method with units left",
+  completionHandoverLines({
+    fulfillment: "pickup",
+    items: [
+      { id: "p1", quantity: 2 },
+      { id: "p2", quantity: 1 },
+      { id: "d1", quantity: 1, fulfillment_type_override: "delivery" },
+    ],
+    handed: { p2: 1 },
+  }).map((i) => i.id).join(",") === "p1");
+check("closing is true when every remaining unit leaves now",
+  completionClosesOrder({
+    fulfillment: "pickup",
+    items: [
+      { id: "p1", quantity: 2 },
+      { id: "d1", quantity: 1, fulfillment_type_override: "delivery" },
+    ],
+    handed: { p1: 1, d1: 1 },
+  }) === true);
+check("closing is false while other-method units remain",
+  completionClosesOrder({
+    fulfillment: "pickup",
+    items: [
+      { id: "p1", quantity: 1 },
+      { id: "d1", quantity: 1, fulfillment_type_override: "delivery" },
+    ],
+    handed: {},
+  }) === false);
+check("closing stays true while same-method units remain",
+  completionClosesOrder({
+    fulfillment: "pickup",
+    items: [
+      { id: "p1", quantity: 2 },
+      { id: "d1", quantity: 1, fulfillment_type_override: "delivery" },
+    ],
+    handed: { d1: 1 },
+  }) === true);
+check("other-items note exact",
+  OTHER_ITEMS_STAY_OPEN_NOTE === "The other items on this order stay open.");
 
 // Destination shown in the dialog must match complete_order_without_trial().
 check("destination is Sleep Trial when a live trial item exists",

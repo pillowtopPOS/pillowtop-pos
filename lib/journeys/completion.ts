@@ -89,17 +89,31 @@ export const COMPLETION_DRAG_MESSAGE =
   "Open the order and use its button to mark it picked up or delivered.";
 export const DELIVERY_FINALIZE_NOTE =
   "Deliveries are finalized by the warehouse team";
-export const MIXED_ORDER_NOTE =
-  "This order has items going to different places. Per-item handover is coming. Ask an admin.";
+export const OTHER_ITEMS_STAY_OPEN_NOTE =
+  "The other items on this order stay open.";
 export const COMPLETION_COMPLETED_MESSAGE =
   "Done. This order has no sleep trial, so it is complete and has left the board.";
 export const COMPLETION_NOT_IN_STOCK_LINE =
   "Some items are not in stock yet. This cannot be completed until they are.";
 
 export type CompletionLineItem = {
+  id?: string;
+  quantity?: number;
   fulfillment_type_override?: "delivery" | "pickup" | null;
   pickup_location_id?: string | null;
 };
+
+// Units left to hand over on a line. Callers pass the fulfillment
+// summary's byLine map; an absent map means nothing is known handed
+// over yet (pre-slice-2a callers).
+export function remainingUnits(
+  item: CompletionLineItem,
+  handed?: Record<string, number>
+): number {
+  const qty = item.quantity ?? 1;
+  const out = item.id ? handed?.[item.id] ?? 0 : 0;
+  return Math.max(qty - out, 0);
+}
 
 export function effectiveLineFulfillment(
   item: CompletionLineItem,
@@ -157,10 +171,11 @@ export type CompletionButtonDecision =
 // Which completion control the order panel shows. Mirrors m149:
 //   delivery -> can_finalize_delivery() only (store staff never finalize);
 //   pickup   -> orders.mark_fulfilled, plus every pickup line leaving the
-//               active location unless orders.pickup_any_location, and only
-//               for pure single-location pickup orders for now.
-// A mixed order (any line whose effective fulfillment differs from the
-// order's type) never gets a whole-order button on either type.
+//               active location unless orders.pickup_any_location.
+// Slice 2a: the button hands over every REMAINING unit on the lines whose
+// effective method equals the order's type (the wrapper RPC's selection).
+// Lines of the other method never block the button, and an order with no
+// same-method units left shows no control at all.
 export function completionButtonDecision(opts: {
   fulfillment: "delivery" | "pickup";
   canMarkFulfilled: boolean;
@@ -172,13 +187,24 @@ export function completionButtonDecision(opts: {
   items: CompletionLineItem[];
   journeyStoreId: string;
   storeName: (id: string) => string | null;
+  // Units already handed over, keyed by line_item_id
+  // (fetchJourneyFulfillmentSummary's byLine). Omitted means "none handed
+  // over yet".
+  handed?: Record<string, number>;
 }): CompletionButtonDecision {
-  // Mixed lines are checked before any permission: a delivery order with
-  // a pickup line (or the reverse) cannot be handed over as one action.
-  const hasOppositeLine = opts.items.some(
-    (i) => effectiveLineFulfillment(i, opts.fulfillment) !== opts.fulfillment
+  const openLines = opts.items.filter(
+    (i) => remainingUnits(i, opts.handed) > 0
   );
-  if (hasOppositeLine) return { kind: "note", text: MIXED_ORDER_NOTE };
+  const sameMethodOpen = openLines.filter(
+    (i) => effectiveLineFulfillment(i, opts.fulfillment) === opts.fulfillment
+  );
+  // Nothing left to hand over on the order's own method: no button, no
+  // note. Other-method remnants belong to the handover dialog. An order
+  // with no lines at all keeps its control: the wrapper delegates to the
+  // legacy whole-order function for those.
+  if (opts.items.length > 0 && sameMethodOpen.length === 0) {
+    return { kind: "hidden" };
+  }
 
   if (opts.fulfillment === "delivery") {
     return opts.canFinalizeDelivery
@@ -192,12 +218,7 @@ export function completionButtonDecision(opts: {
     store_id: opts.journeyStoreId,
     fulfillment_type: opts.fulfillment,
   };
-  // Pure pickup orders only for now: lines leaving from more than one
-  // location cannot be handed over at once.
-  const locIds = pickupLocationIds(opts.items, journey);
-  if (locIds.length > 1) {
-    return { kind: "note", text: MIXED_ORDER_NOTE };
-  }
+  const locIds = pickupLocationIds(openLines, journey);
 
   if (!opts.canPickupAnyLocation) {
     const active = opts.activeStoreId;
@@ -213,6 +234,36 @@ export function completionButtonDecision(opts: {
   }
 
   return { kind: "button", fulfillment: "pickup" };
+}
+
+// Lines whose units the completion button hands over now: order's own
+// method with at least one unit left. Mirrors the m157 wrapper's line
+// selection.
+export function completionHandoverLines<T extends CompletionLineItem>(opts: {
+  fulfillment: "delivery" | "pickup";
+  items: T[];
+  handed?: Record<string, number>;
+}): T[] {
+  return opts.items.filter(
+    (i) =>
+      effectiveLineFulfillment(i, opts.fulfillment) === opts.fulfillment &&
+      remainingUnits(i, opts.handed) > 0
+  );
+}
+
+// Whether this completion closes the order: every remaining unit on the
+// order is in the same-method set being handed over now. False means
+// other-method units stay open and the journey keeps its current state.
+export function completionClosesOrder(opts: {
+  fulfillment: "delivery" | "pickup";
+  items: CompletionLineItem[];
+  handed?: Record<string, number>;
+}): boolean {
+  return opts.items.every(
+    (i) =>
+      effectiveLineFulfillment(i, opts.fulfillment) === opts.fulfillment ||
+      remainingUnits(i, opts.handed) === 0
+  );
 }
 
 export type CompletionControl =

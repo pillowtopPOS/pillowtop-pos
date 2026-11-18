@@ -75,6 +75,7 @@ import {
 import { computeNetPaid } from "@/lib/journeys/paid";
 import {
   completionButtonDecision,
+  completionClosesOrder,
   completionDestination as completionDestinationFor,
   effectiveLineFulfillment,
   type CompletionButtonDecision,
@@ -609,6 +610,7 @@ export default function JourneyWorkspace({
       journeyId: string;
       decision: CompletionButtonDecision | null;
       goesTo: "Sleep Trial" | "Completed";
+      closing: boolean;
     } | null
   ) => void;
 }) {
@@ -888,6 +890,7 @@ export default function JourneyWorkspace({
       items: lineItems,
       journeyStoreId: journey.store_id,
       storeName,
+      handed: fulfillmentSummary?.byLine,
     });
   }, [
     completionTransition,
@@ -896,9 +899,23 @@ export default function JourneyWorkspace({
     lineItems,
     journey,
     stores,
+    fulfillmentSummary,
   ]);
 
   const completionAllowed = completionDecision?.kind === "button";
+
+  // Whether the completion button's handover closes the order: false
+  // while other-method units remain, so the board's dialog can say the
+  // order stays open instead of promising Sleep Trial or Completed.
+  const completionClosing = useMemo(
+    () =>
+      completionClosesOrder({
+        fulfillment: journey.fulfillment_type,
+        items: lineItems,
+        handed: fulfillmentSummary?.byLine,
+      }),
+    [journey.fulfillment_type, lineItems, fulfillmentSummary]
+  );
 
   // Slice 2a: the pickup handover button shows only while pickup units
   // remain on an open order the user may mark fulfilled. Delivery-only
@@ -926,13 +943,15 @@ export default function JourneyWorkspace({
   );
 
   // Hand the board the same decision and destination the panel shows, so
-  // the dialog it opens cannot disagree (mixed-order note, Sleep Trial vs
-  // Completed). Cleared on unmount so a stale note never leaks.
+  // the dialog it opens cannot disagree (permission note, Sleep Trial vs
+  // Completed, or stays open). Cleared on unmount so a stale note never
+  // leaks.
   useEffect(() => {
     onCompletionInfo?.({
       journeyId: journey.id,
       decision: completionDecision,
       goesTo: completionGoesTo,
+      closing: completionClosing,
     });
     return () => onCompletionInfo?.(null);
   }, [
@@ -940,6 +959,7 @@ export default function JourneyWorkspace({
     journey.id,
     completionDecision,
     completionGoesTo,
+    completionClosing,
   ]);
   // Bumped on every panel refresh so JourneyActivity refetches its
   // interactions — journey.id alone doesn't change on refresh.
