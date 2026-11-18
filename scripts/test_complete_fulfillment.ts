@@ -8,6 +8,7 @@ import {
   buildCompletionRequest,
   completionButtonDecision,
   completionControls,
+  completionDestination,
   completionNeedsReason,
   completionReasonMet,
   completionShowsDateField,
@@ -15,6 +16,7 @@ import {
   completionTransitionFor,
   COMPLETION_COMPLETED_MESSAGE,
   COMPLETION_DRAG_MESSAGE,
+  COMPLETION_NO_TRIAL_LINE,
   DELIVERY_FINALIZE_NOTE,
   effectiveLineFulfillment,
   joinLocationNames,
@@ -263,6 +265,8 @@ check("pickup order leaving two locations shows mixed note",
 
 // Delivery: gated purely on can_finalize_delivery.
 const baseDelivery = { ...basePickup, fulfillment: "delivery" as const };
+const ownerLike = { ...baseDelivery, canFinalizeDelivery: true, canMarkFulfilled: true, canPickupAnyLocation: true };
+const warehouseManagerLike = { ...baseDelivery, canFinalizeDelivery: true, canMarkFulfilled: true, canPickupAnyLocation: false };
 check("delivery button shows for delivery finalizer",
   completionButtonDecision({ ...baseDelivery, canFinalizeDelivery: true }).kind === "button");
 check("delivery shows warehouse note for store staff",
@@ -274,6 +278,46 @@ check("delivery ignores pickup location rules",
     activeStoreId: null,
     items: [{ pickup_location_id: "storeB" }],
   }).kind === "button");
+
+// Delivery-typed order with a pickup line: mixed note for everyone,
+// including owner, admin (pickup_any_location) and warehouse manager.
+const mixedDeliveryLine = { fulfillment_type_override: "pickup" as const, pickup_location_id: "wh1" };
+for (const [who, opts] of [
+  ["owner/admin", ownerLike],
+  ["warehouse manager", warehouseManagerLike],
+  ["store staff", baseDelivery],
+] as const) {
+  const d = completionButtonDecision({ ...opts, items: [mixedDeliveryLine] });
+  check(`delivery order with a pickup line shows mixed note (${who})`,
+    d.kind === "note" && d.text === MIXED_ORDER_NOTE);
+}
+check("delivery order with pickup override and no location still mixed",
+  (completionButtonDecision({ ...ownerLike, items: [{ fulfillment_type_override: "pickup" }] }) as { text: string }).text === MIXED_ORDER_NOTE);
+check("delivery order with only delivery lines keeps the button",
+  completionButtonDecision({ ...ownerLike, items: [{ fulfillment_type_override: "delivery" }, {}] }).kind === "button");
+check("delivery order with only delivery lines keeps the staff note",
+  (completionButtonDecision({ ...baseDelivery, items: [{}, {}] }) as { text: string }).text === DELIVERY_FINALIZE_NOTE);
+check("pickup order with only pickup lines at one location keeps the button",
+  completionButtonDecision({ ...basePickup, items: [{ pickup_location_id: "storeA" }, {}] }).kind === "button");
+
+// Destination shown in the dialog must match complete_order_without_trial().
+check("destination is Sleep Trial when a live trial item exists",
+  completionDestination({ saleKind: "STANDARD", liveTrialStatuses: ["ACTIVE"] }) === "Sleep Trial" &&
+  completionDestination({ saleKind: "STANDARD", liveTrialStatuses: ["PENDING_FULFILLMENT", "CLOSED"] }) === "Sleep Trial");
+check("destination is Completed for a standard order with no live trial item",
+  completionDestination({ saleKind: "STANDARD", liveTrialStatuses: [] }) === "Completed" &&
+  completionDestination({ saleKind: "STANDARD", liveTrialStatuses: ["CLOSED", "VOIDED"] }) === "Completed");
+check("destination is Sleep Trial when trial status cannot be read",
+  completionDestination({ saleKind: "STANDARD", liveTrialStatuses: null }) === "Sleep Trial" &&
+  completionDestination({ saleKind: "STANDARD", liveTrialStatuses: undefined }) === "Sleep Trial");
+check("destination stays Sleep Trial for exchanges without a trial item",
+  completionDestination({ saleKind: "EXCHANGE", liveTrialStatuses: [] }) === "Sleep Trial" &&
+  completionDestination({ saleKind: "EXCHANGE", liveTrialStatuses: null }) === "Sleep Trial");
+check("destination falls back to Sleep Trial when sale kind is unknown",
+  completionDestination({ saleKind: null, liveTrialStatuses: [] }) === "Sleep Trial");
+check("no-trial line text exact",
+  COMPLETION_NO_TRIAL_LINE ===
+    "No sleep trial on this order. It will be complete and leave the board.");
 
 // Exactly one completion control per decision: the panel must never
 // render a second button from the generic transition list.

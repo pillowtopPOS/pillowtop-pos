@@ -882,6 +882,27 @@ export async function fetchJourneyRequirementStatuses(
   return out;
 }
 
+// Live (PENDING_FULFILLMENT / ACTIVE) sleep trial item statuses for one
+// journey. Feeds the completion dialog's destination line so it matches
+// complete_order_without_trial() (m149): no live item on a STANDARD order
+// means the order lands on Completed, not Sleep Trial. Errors read as
+// "unknown" (empty list is ambiguous, so callers pass null on failure).
+export async function fetchJourneyLiveTrialStatuses(
+  journeyId: string
+): Promise<string[] | null> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("sleep_trial_items")
+    .select("status")
+    .eq("journey_id", journeyId)
+    .in("status", ["PENDING_FULFILLMENT", "ACTIVE"]);
+  if (error) {
+    console.error("fetchJourneyLiveTrialStatuses error", error);
+    return null;
+  }
+  return ((data ?? []) as { status: string }[]).map((r) => r.status);
+}
+
 export async function cancelJourney(journeyId: string, reason: string) {
   const supabase = createClient();
 

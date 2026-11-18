@@ -152,6 +152,8 @@ export type CompletionButtonDecision =
 //   pickup   -> orders.mark_fulfilled, plus every pickup line leaving the
 //               active location unless orders.pickup_any_location, and only
 //               for pure single-location pickup orders for now.
+// A mixed order (any line whose effective fulfillment differs from the
+// order's type) never gets a whole-order button on either type.
 export function completionButtonDecision(opts: {
   fulfillment: "delivery" | "pickup";
   canMarkFulfilled: boolean;
@@ -164,6 +166,13 @@ export function completionButtonDecision(opts: {
   journeyStoreId: string;
   storeName: (id: string) => string | null;
 }): CompletionButtonDecision {
+  // Mixed lines are checked before any permission: a delivery order with
+  // a pickup line (or the reverse) cannot be handed over as one action.
+  const hasOppositeLine = opts.items.some(
+    (i) => effectiveLineFulfillment(i, opts.fulfillment) !== opts.fulfillment
+  );
+  if (hasOppositeLine) return { kind: "note", text: MIXED_ORDER_NOTE };
+
   if (opts.fulfillment === "delivery") {
     return opts.canFinalizeDelivery
       ? { kind: "button", fulfillment: "delivery" }
@@ -176,11 +185,10 @@ export function completionButtonDecision(opts: {
     store_id: opts.journeyStoreId,
     fulfillment_type: opts.fulfillment,
   };
-  const hasDeliveryLine = opts.items.some(
-    (i) => effectiveLineFulfillment(i, opts.fulfillment) === "delivery"
-  );
+  // Pure pickup orders only for now: lines leaving from more than one
+  // location cannot be handed over at once.
   const locIds = pickupLocationIds(opts.items, journey);
-  if (hasDeliveryLine || locIds.length > 1) {
+  if (locIds.length > 1) {
     return { kind: "note", text: MIXED_ORDER_NOTE };
   }
 
@@ -213,6 +221,40 @@ export function completionControls(
 ): CompletionControl[] {
   if (!decision || decision.kind === "hidden") return [];
   return [decision];
+}
+
+export const COMPLETION_NO_TRIAL_LINE =
+  "No sleep trial on this order. It will be complete and leave the board.";
+
+// Live trial item statuses that complete_order_without_trial() counts
+// (m149): PENDING_FULFILLMENT or ACTIVE. Anything else is not a live trial.
+export const LIVE_TRIAL_STATUSES = ["PENDING_FULFILLMENT", "ACTIVE"] as const;
+
+export type CompletionDestination = "Sleep Trial" | "Completed";
+
+// What the order's state will be right after completion, which is what
+// the dialog must say instead of the transition's static "Sleep Trial"
+// label. complete_order_without_trial() moves a STANDARD order that the
+// state trigger put into Sleep Trial to Completed when no sleep_trial_items
+// row for the journey is PENDING_FULFILLMENT or ACTIVE. Exchange journeys
+// are not touched by that trigger, and stv_on_journey_delivered only
+// starts or corrects items in those two statuses, so the same set is the
+// right client-side read. Unknown (null) stays Sleep Trial: the trigger
+// only ever moves an order away from Sleep Trial, never into it, so a
+// wrong guess here can only be too cautious.
+export function completionDestination(opts: {
+  saleKind: "STANDARD" | "EXCHANGE" | null | undefined;
+  // null means the read failed; undefined means it has not resolved yet.
+  // Both are "unknown", and unknown must never promise Completed.
+  liveTrialStatuses: readonly string[] | null | undefined;
+}): CompletionDestination {
+  if (opts.liveTrialStatuses == null) return "Sleep Trial";
+  const hasLiveTrial = opts.liveTrialStatuses.some((s) =>
+    (LIVE_TRIAL_STATUSES as readonly string[]).includes(s)
+  );
+  if (hasLiveTrial) return "Sleep Trial";
+  if (opts.saleKind !== "STANDARD") return "Sleep Trial";
+  return "Completed";
 }
 
 // Per-line stock tag in the completion dialog. Only the requirement's own

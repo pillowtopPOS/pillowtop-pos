@@ -39,6 +39,7 @@ import {
   completeJourneyFulfillment,
   fetchJourneyLineItems,
   fetchJourneyRequirementStatuses,
+  fetchJourneyLiveTrialStatuses,
   recordPayment,
   fetchTotalPaid,
   reconcilePayment,
@@ -79,8 +80,11 @@ import {
   completionNeedsReason,
   completionReasonMet,
   completionShowsDateField,
+  completionDestination as completionDestinationFor,
   completionStockTag,
   COMPLETION_COMPLETED_MESSAGE,
+  COMPLETION_NO_TRIAL_LINE,
+  type CompletionButtonDecision,
   COMPLETION_DRAG_MESSAGE,
   COMPLETION_NOT_IN_STOCK_LINE,
   effectiveLineFulfillment,
@@ -204,7 +208,21 @@ function BoardContent() {
   // Set when the RPC reports the order went straight to Completed (no
   // live sleep trial item). The panel shows a short green note.
   const [completionDoneFor, setCompletionDoneFor] = useState<string | null>(null);
-
+  // What the open panel reports about completion: the gated decision
+  // (button/note/hidden) and the state the order will land in. The
+  // dialog reads this so its note and destination match the panel.
+  const [panelCompletionInfo, setPanelCompletionInfo] = useState<{
+    journeyId: string;
+    decision: CompletionButtonDecision | null;
+    goesTo: "Sleep Trial" | "Completed";
+  } | null>(null);
+  // Live trial item statuses for the dialog's journey, read fresh every
+  // time the completion dialog opens. null while loading or on error:
+  // the destination then stays "unknown" (Sleep Trial, no no-trial line).
+  const [dialogTrialStatuses, setDialogTrialStatuses] = useState<{
+    journeyId: string;
+    statuses: string[] | null;
+  } | null>(null);
   const calculatorCompanyId = useMemo(() => {
     if (!currentEmployee?.home_store_id) return null;
     return stores.find((s) => s.id === currentEmployee.home_store_id)?.company_id ?? null;
@@ -436,10 +454,22 @@ function BoardContent() {
     ) {
       setCompletionPaid(null);
       setCompletionHandover(null);
+      setDialogTrialStatuses(null);
       return;
     }
     const journeyId = pendingTransition.journey.id;
     let alive = true;
+    // Trial items bind when the order reaches Sold and when lines change,
+    // so the panel's earlier read can be stale. Read again at the moment
+    // the dialog opens; until it lands the destination is unknown.
+    setDialogTrialStatuses({ journeyId, statuses: null });
+    fetchJourneyLiveTrialStatuses(journeyId)
+      .then((statuses) => {
+        if (alive) setDialogTrialStatuses({ journeyId, statuses });
+      })
+      .catch(() => {
+        if (alive) setDialogTrialStatuses({ journeyId, statuses: null });
+      });
     fetchTotalPaid(journeyId)
       .then((paid) => {
         if (alive) setCompletionPaid({ journeyId, paid });
@@ -785,7 +815,10 @@ function BoardContent() {
   // Selecting a different journey clears the Completed notice so it can
   // never bleed onto another order's panel.
   function selectJourney(j: JourneyWithDetails | null) {
-    if (j?.id !== selectedJourney?.id) setCompletionDoneFor(null);
+    if (j?.id !== selectedJourney?.id) {
+      setCompletionDoneFor(null);
+      setPanelCompletionInfo(null);
+    }
     setSelectedJourney(j);
   }
 
@@ -1067,8 +1100,10 @@ function BoardContent() {
           onReassigned={handleReassigned}
           onClose={() => {
             setCompletionDoneFor(null);
+            setPanelCompletionInfo(null);
             setSelectedJourney(null);
           }}
+          onCompletionInfo={setPanelCompletionInfo}
           completionDone={
             completionDoneFor !== null &&
             completionDoneFor === selectedJourney.id
@@ -1124,12 +1159,50 @@ function BoardContent() {
                   })()}
                 </p>
               )}
-            <p className="mb-4 text-sm text-slate-600">
-              {pendingTransition.journey.customer
-                ? `${pendingTransition.journey.customer.first_name} ${pendingTransition.journey.customer.last_name}`
-                : "Journey"}{" "}
-              → {pendingTransition.transition.to}
-            </p>
+            {(() => {
+              const isCompletion =
+                pendingTransition.transition.event === "delivery_completed";
+              const info =
+                panelCompletionInfo?.journeyId === pendingTransition.journey.id
+                  ? panelCompletionInfo
+                  : null;
+              // Destination comes from the dialog's own fresh read of
+              // trial items, never the panel's earlier value. While that
+              // read is in flight (statuses null) it stays unknown.
+              const dialogRead =
+                dialogTrialStatuses?.journeyId === pendingTransition.journey.id
+                  ? dialogTrialStatuses.statuses
+                  : undefined;
+              const goesTo = isCompletion
+                ? completionDestinationFor({
+                    saleKind: pendingTransition.journey.sale_kind,
+                    liveTrialStatuses: dialogRead,
+                  })
+                : pendingTransition.transition.to;
+              const trialReadKnown = dialogRead != null;
+              return (
+                <>
+                  <p className="mb-4 text-sm text-slate-600">
+                    {pendingTransition.journey.customer
+                      ? `${pendingTransition.journey.customer.first_name} ${pendingTransition.journey.customer.last_name}`
+                      : "Journey"}{" "}
+                    → {goesTo}
+                  </p>
+                  {isCompletion && goesTo === "Completed" && trialReadKnown && (
+                    <p className="-mt-2 mb-4 text-sm text-slate-600">
+                      {COMPLETION_NO_TRIAL_LINE}
+                    </p>
+                  )}
+                  {isCompletion &&
+                    info?.decision?.kind === "note" &&
+                    pendingTransition.journey.fulfillment_type === "delivery" && (
+                      <p className="-mt-2 mb-4 text-sm text-slate-600">
+                        {info.decision.text}
+                      </p>
+                    )}
+                </>
+              );
+            })()}
             {pendingTransition.journey.price !== null && pendingTransition.journey.price !== undefined && (
               pendingTransition.transition.event === "delivery_completed" ? (
                 completionPaid?.journeyId === pendingTransition.journey.id && (

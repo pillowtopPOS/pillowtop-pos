@@ -30,6 +30,7 @@ import {
   updateJourneyFulfillment,
   updateJourneyLineItem,
   canFinalizeDelivery,
+  fetchJourneyLiveTrialStatuses,
   FOLLOW_UP_METHOD_LABELS,
   FOLLOW_UP_TYPE_LABELS,
   type Employee,
@@ -64,6 +65,7 @@ import {
 import { computeNetPaid } from "@/lib/journeys/paid";
 import {
   completionButtonDecision,
+  completionDestination as completionDestinationFor,
   type CompletionButtonDecision,
 } from "@/lib/journeys/completion";
 import {
@@ -560,6 +562,7 @@ export default function JourneyWorkspace({
   refreshPending,
   openBookingSignal,
   completionDone,
+  onCompletionInfo,
 }: {
   journey: JourneyWithDetails;
   events: JourneyEvent[];
@@ -586,6 +589,16 @@ export default function JourneyWorkspace({
   // Green note shown after a completion that landed the order on
   // Completed (no live sleep trial item) instead of Sleep Trial.
   completionDone?: string | null;
+  // Reports the gated completion decision and the state the order will
+  // land in, so the board's completion dialog (opened via onAction) can
+  // show the same note and destination. Null while unknown.
+  onCompletionInfo?: (
+    info: {
+      journeyId: string;
+      decision: CompletionButtonDecision | null;
+      goesTo: "Sleep Trial" | "Completed";
+    } | null
+  ) => void;
 }) {
   const router = useRouter();
   // A3: journey_cancelled leaves current_state at its last value (020),
@@ -597,6 +610,35 @@ export default function JourneyWorkspace({
         transitionAppliesToFulfillment(t, journey.fulfillment_type)
       );
   const isExchangeChild = journey.sale_kind === "EXCHANGE";
+
+  // Live trial items decide whether completion lands on Sleep Trial or
+  // Completed (m149 complete_order_without_trial). null means "unknown"
+  // (not read yet, read failed, or a refetch is in flight) and never
+  // promises Completed. Refetched on journey/state change and on every
+  // panel refresh; the dialog reads again when it opens.
+  const [liveTrialStatuses, setLiveTrialStatuses] = useState<
+    string[] | null
+  >(null);
+  const [trialReadSeq, setTrialReadSeq] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    setLiveTrialStatuses(null);
+    fetchJourneyLiveTrialStatuses(journey.id).then((s) => {
+      if (alive) setLiveTrialStatuses(s);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [journey.id, journey.current_state, trialReadSeq]);
+
+  const completionGoesTo = useMemo(
+    () =>
+      completionDestinationFor({
+        saleKind: journey.sale_kind,
+        liveTrialStatuses,
+      }),
+    [journey.sale_kind, liveTrialStatuses]
+  );
 
   const paid = computeNetPaid(events);
 
@@ -806,6 +848,23 @@ export default function JourneyWorkspace({
   const panelTransitions = transitions.filter(
     (t) => t.event !== "delivery_completed" || completionAllowed
   );
+
+  // Hand the board the same decision and destination the panel shows, so
+  // the dialog it opens cannot disagree (mixed-order note, Sleep Trial vs
+  // Completed). Cleared on unmount so a stale note never leaks.
+  useEffect(() => {
+    onCompletionInfo?.({
+      journeyId: journey.id,
+      decision: completionDecision,
+      goesTo: completionGoesTo,
+    });
+    return () => onCompletionInfo?.(null);
+  }, [
+    onCompletionInfo,
+    journey.id,
+    completionDecision,
+    completionGoesTo,
+  ]);
   // Bumped on every panel refresh so JourneyActivity refetches its
   // interactions — journey.id alone doesn't change on refresh.
   const [activityRefreshKey, setActivityRefreshKey] = useState(0);
@@ -823,6 +882,10 @@ export default function JourneyWorkspace({
     // header line and overpaid banner go stale until reload.
     await refreshExchangeRead();
     setActivityRefreshKey((k) => k + 1);
+    // Trial items bind at Sold and on line edits, both of which land
+    // through this refresh; re-read so the completion destination cannot
+    // be stale. The read above resets to null (unknown) while in flight.
+    setTrialReadSeq((k) => k + 1);
   }
 
   async function refreshExchangeRead() {
