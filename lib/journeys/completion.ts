@@ -200,7 +200,7 @@ export function completionButtonDecision(opts: {
         .filter((n): n is string => !!n);
       return {
         kind: "note",
-        text: `Picked up at ${joinLocationNames(names)}. Log in to that location to mark it picked up.`,
+        text: `Set for pickup at ${joinLocationNames(names)}. Only employees at that location can mark it picked up.`,
       };
     }
   }

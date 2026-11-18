@@ -1330,7 +1330,9 @@ function BoardContent() {
               return (
                 <div className="mb-4 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    What you are handing over
+                    {journey.fulfillment_type === "pickup"
+                      ? "Items being picked up"
+                      : "Items being delivered"}
                   </p>
                   <ul className="space-y-2">
                     {handover.items.map((item, idx) => {

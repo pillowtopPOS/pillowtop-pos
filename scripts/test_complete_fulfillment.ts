@@ -239,7 +239,7 @@ const wrongLoc = completionButtonDecision({
 });
 check("pickup at other location shows login-here note",
   wrongLoc.kind === "note" &&
-  wrongLoc.text === "Picked up at Westside. Log in to that location to mark it picked up.");
+  wrongLoc.text === "Set for pickup at Westside. Only employees at that location can mark it picked up.");
 check("pickup note uses location names not ids",
   wrongLoc.kind === "note" && !wrongLoc.text.includes("storeB"));
 check("pickup hidden when no active store resolves",

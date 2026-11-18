@@ -18,7 +18,13 @@ import {
   type ExchangeActionRead,
   type ExchangeParentLink,
 } from "@/lib/journeys/exchange";
-import { fetchProductStock, hasPermission } from "@/lib/inventory/queries";
+import {
+  fetchProductAvailabilityByLocation,
+  fetchProductStock,
+  hasPermission,
+  type LocationAvailability,
+} from "@/lib/inventory/queries";
+import { fetchInTransitArrivals } from "@/lib/transfers/queries";
 import {
   completeFollowUp,
   createJourneyLineItem,
@@ -751,6 +757,11 @@ export default function JourneyWorkspace({
   // "Discard changes?" when the new-address form has typed text).
   const shipToCloseRef = useRef<(() => void) | null>(null);
   const [lineAvailability, setLineAvailability] = useState<Record<string, number>>({});
+  const [lineLocationStock, setLineLocationStock] = useState<Record<string, LocationAvailability[]>>({});
+  const [lineStockArrivals, setLineStockArrivals] = useState<Record<string, Record<string, number>>>({});
+  const [lineStockLoaded, setLineStockLoaded] = useState(false);
+  const [otherStoresItemId, setOtherStoresItemId] = useState<string | null>(null);
+  const [otherStoresQuery, setOtherStoresQuery] = useState("");
   const [orderEditing, setOrderEditing] = useState(false);
   const [customerContacts, setCustomerContacts] = useState<CustomerContact[]>([]);
   // Inline error for every action on this panel — replaces window.alert.
@@ -1265,6 +1276,103 @@ export default function JourneyWorkspace({
     });
     return () => { ignore = true; };
   }, [lineItems, journey.store_id, journey.fulfillment_type, inventoryStoreId, availabilityContext]);
+
+  // Per-location stock for the edit-order rows, batched once per product
+  // set while editing (same data the new-order screen uses).
+  const stockProductKey = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          lineItems
+            .map((i) => i.product_id)
+            .filter((x): x is string => !!x)
+        )
+      )
+        .sort()
+        .join(","),
+    [lineItems]
+  );
+
+  useEffect(() => {
+    if (!orderEditing) return;
+    if (!stockProductKey) {
+      setLineLocationStock({});
+      setLineStockArrivals({});
+      setLineStockLoaded(true);
+      return;
+    }
+    setLineStockLoaded(false);
+    const ids = stockProductKey.split(",");
+    let cancelled = false;
+    Promise.all([
+      fetchProductAvailabilityByLocation(ids),
+      fetchInTransitArrivals(ids),
+    ]).then(([stock, arrivals]) => {
+      if (cancelled) return;
+      setLineLocationStock(stock);
+      setLineStockArrivals(arrivals);
+      setLineStockLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [orderEditing, stockProductKey]);
+
+  type LineStockRow = {
+    id: string;
+    name: string;
+    available: number;
+    arriving: number;
+  };
+
+  function lineStockCountText(r: LineStockRow): string {
+    return `${r.available}${r.arriving > 0 ? `, ${r.arriving} arriving` : ""}`;
+  }
+
+  function lineStockBreakdown(item: JourneyLineItem): {
+    primary: LineStockRow | null;
+    primaryLabel: "Pickup store" | "Warehouse" | null;
+    others: LineStockRow[];
+  } | null {
+    if (!item.product_id || !lineStockLoaded) return null;
+
+    const stock = lineLocationStock[item.product_id] ?? [];
+    const arrivals = lineStockArrivals[item.product_id] ?? {};
+    const byLocation = new Map<string, number>();
+    for (const row of stock) {
+      byLocation.set(
+        row.location_id,
+        (byLocation.get(row.location_id) ?? 0) + row.available
+      );
+    }
+    const visible = stores.filter(
+      (s) => s.location_type !== "WAREHOUSE_QUARANTINE"
+    );
+    const toRow = (s: Store): LineStockRow => ({
+      id: s.id,
+      name: s.name,
+      available: byLocation.get(s.id) ?? 0,
+      arriving: arrivals[s.id] ?? 0,
+    });
+
+    const isPickup =
+      (item.fulfillment_type_override ?? journey.fulfillment_type) ===
+      "pickup";
+    const primaryId = resolveLineItemLocation(item, journey, stores);
+    const all = visible.map(toRow);
+    const primary = all.find((r) => r.id === primaryId) ?? null;
+    const others = all
+      .filter((r) => r.id !== primaryId)
+      .sort(
+        (a, b) => b.available - a.available || a.name.localeCompare(b.name)
+      );
+
+    return {
+      primary,
+      primaryLabel: isPickup ? "Pickup store" : "Warehouse",
+      others,
+    };
+  }
 
   async function addLineItem(selection: ProductSelection) {
     setPanelError(null);
@@ -1968,7 +2076,36 @@ export default function JourneyWorkspace({
                           Part of the exchange — change or cancel the exchange instead.
                         </div>
                       )}
-                      {!(item.exchange_line_role || item.exchange_action_id) && item.product_id && <div className="mt-0.5 text-slate-500">Availability: {lineAvailability[item.id] ?? "Loading…"}</div>}
+                      {!(item.exchange_line_role || item.exchange_action_id) && item.product_id && (() => {
+                        const bd = lineStockBreakdown(item);
+                        if (!bd) {
+                          return (
+                            <div className="mt-0.5 text-slate-500">Loading…</div>
+                          );
+                        }
+                        return (
+                          <div className="mt-0.5 space-y-0.5 text-slate-500">
+                            {bd.primary && bd.primaryLabel && (
+                              <div>
+                                {bd.primaryLabel}: {bd.primary.name}{" "}
+                                {lineStockCountText(bd.primary)}
+                              </div>
+                            )}
+                            {bd.others.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOtherStoresQuery("");
+                                  setOtherStoresItemId(item.id);
+                                }}
+                                className="text-brand-700 hover:underline"
+                              >
+                                Check other stores ({bd.others.length})
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()}
                       {!(item.exchange_line_role || item.exchange_action_id) && (
                       <div className="mt-1.5 flex items-center gap-2">
                         <input
@@ -2667,6 +2804,63 @@ export default function JourneyWorkspace({
             </div>
           </Modal>
         )}
+
+        {otherStoresItemId && (() => {
+          const item = lineItems.find((i) => i.id === otherStoresItemId);
+          if (!item) return null;
+          const bd = lineStockBreakdown(item);
+          const q = otherStoresQuery.trim().toLowerCase();
+          const rows = (bd?.others ?? []).filter((r) =>
+            r.name.toLowerCase().includes(q)
+          );
+          return (
+            <Modal onClose={() => {
+              setOtherStoresItemId(null);
+              setOtherStoresQuery("");
+            }}>
+              <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+                <h2 className="mb-4 text-lg font-semibold text-slate-900">
+                  {item.item_name}
+                </h2>
+                {(bd?.others.length ?? 0) > 8 && (
+                  <input
+                    value={otherStoresQuery}
+                    onChange={(e) => setOtherStoresQuery(e.target.value)}
+                    placeholder="Filter stores"
+                    className="mb-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  />
+                )}
+                <div className="max-h-80 space-y-1 overflow-y-auto">
+                  {rows.map((r) => (
+                    <div
+                      key={r.id}
+                      className="flex items-center justify-between text-sm"
+                    >
+                      <span className="text-slate-700">{r.name}</span>
+                      <span className="text-slate-500">
+                        {lineStockCountText(r)}
+                      </span>
+                    </div>
+                  ))}
+                  {rows.length === 0 && (
+                    <p className="text-sm text-slate-500">No matching stores.</p>
+                  )}
+                </div>
+                <div className="mt-4 flex justify-end">
+                  <button
+                    onClick={() => {
+                      setOtherStoresItemId(null);
+                      setOtherStoresQuery("");
+                    }}
+                    className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </Modal>
+          );
+        })()}
       </div>
     </Modal>
   );

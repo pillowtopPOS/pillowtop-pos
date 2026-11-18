@@ -791,11 +791,12 @@ export default function NewJourneyPage() {
     arriving: number;
   };
 
-  // Stock breakdown for one line: warehouses always, the pickup store for
-  // pickup lines, and every other stocked location sorted for the modal.
+  // Stock breakdown for one line: one primary row (the pickup store for
+  // pickup lines, the delivery warehouse for delivery lines) plus every
+  // other visible location, zeros included, for the modal.
   function stockBreakdown(item: LineItem): {
-    warehouses: StockRow[];
-    pickup: StockRow | null;
+    primary: StockRow | null;
+    primaryLabel: "Pickup store" | "Warehouse" | null;
     others: StockRow[];
   } | null {
     if (!item.product_id || !stockLoaded) return null;
@@ -819,27 +820,26 @@ export default function NewJourneyPage() {
       arriving: arrivals[s.id] ?? 0,
     });
 
-    const warehouses = visible
-      .filter((s) => s.location_type === "WAREHOUSE")
-      .map(toRow);
     const isPickup =
       (item.fulfillment_type_override ?? fulfillmentType) === "pickup";
-    const pickupId = linePickupLocationId(item);
-    const pickup = isPickup
-      ? visible.map(toRow).find((r) => r.id === pickupId) ?? null
-      : null;
-
-    const shownIds = new Set<string>(warehouses.map((w) => w.id));
-    if (pickup) shownIds.add(pickup.id);
-    const others = visible
-      .filter((s) => !shownIds.has(s.id))
-      .map(toRow)
-      .filter((r) => r.available > 0 || r.arriving > 0)
+    const primaryId = resolveLineItemLocation(
+      item,
+      { store_id: storeId, fulfillment_type: fulfillmentType },
+      stores
+    );
+    const all = visible.map(toRow);
+    const primary = all.find((r) => r.id === primaryId) ?? null;
+    const others = all
+      .filter((r) => r.id !== primaryId)
       .sort(
         (a, b) => b.available - a.available || a.name.localeCompare(b.name)
       );
 
-    return { warehouses, pickup, others };
+    return {
+      primary,
+      primaryLabel: isPickup ? "Pickup store" : "Warehouse",
+      others,
+    };
   }
 
   function stockCountText(r: StockRow): string {
@@ -851,19 +851,12 @@ export default function NewJourneyPage() {
     if (!bd) {
       return <div className="mt-2 text-xs text-slate-500">Loading…</div>;
     }
-    const isPickup =
-      (item.fulfillment_type_override ?? fulfillmentType) === "pickup";
     return (
       <div className="mt-2 space-y-0.5 text-xs text-slate-500">
-        {bd.warehouses.length > 0 && (
+        {bd.primary && bd.primaryLabel && (
           <div>
-            Warehouse:{" "}
-            {bd.warehouses.map((w) => `${w.name} ${stockCountText(w)}`).join(" · ")}
-          </div>
-        )}
-        {isPickup && bd.pickup && (
-          <div>
-            Pickup store: {bd.pickup.name} {stockCountText(bd.pickup)}
+            {bd.primaryLabel}: {bd.primary.name}{" "}
+            {stockCountText(bd.primary)}
           </div>
         )}
         {bd.others.length > 0 && (
