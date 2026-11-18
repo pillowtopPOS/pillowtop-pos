@@ -760,6 +760,7 @@ export default function JourneyWorkspace({
   const [lineLocationStock, setLineLocationStock] = useState<Record<string, LocationAvailability[]>>({});
   const [lineStockArrivals, setLineStockArrivals] = useState<Record<string, Record<string, number>>>({});
   const [lineStockLoaded, setLineStockLoaded] = useState(false);
+  const [lineStockFailed, setLineStockFailed] = useState(false);
   const [otherStoresItemId, setOtherStoresItemId] = useState<string | null>(null);
   const [otherStoresQuery, setOtherStoresQuery] = useState("");
   const [orderEditing, setOrderEditing] = useState(false);
@@ -1299,20 +1300,29 @@ export default function JourneyWorkspace({
       setLineLocationStock({});
       setLineStockArrivals({});
       setLineStockLoaded(true);
+      setLineStockFailed(false);
       return;
     }
     setLineStockLoaded(false);
+    setLineStockFailed(false);
     const ids = stockProductKey.split(",");
     let cancelled = false;
     Promise.all([
       fetchProductAvailabilityByLocation(ids),
       fetchInTransitArrivals(ids),
-    ]).then(([stock, arrivals]) => {
-      if (cancelled) return;
-      setLineLocationStock(stock);
-      setLineStockArrivals(arrivals);
-      setLineStockLoaded(true);
-    });
+    ])
+      .then(([stock, arrivals]) => {
+        if (cancelled) return;
+        setLineLocationStock(stock);
+        setLineStockArrivals(arrivals);
+        setLineStockLoaded(true);
+      })
+      .catch((error) => {
+        console.error("line stock load failed", error);
+        if (cancelled) return;
+        setLineStockFailed(true);
+        setLineStockLoaded(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -1334,7 +1344,7 @@ export default function JourneyWorkspace({
     primaryLabel: "Pickup store" | "Warehouse" | null;
     others: LineStockRow[];
   } | null {
-    if (!item.product_id || !lineStockLoaded) return null;
+    if (!item.product_id || !lineStockLoaded || lineStockFailed) return null;
 
     const stock = lineLocationStock[item.product_id] ?? [];
     const arrivals = lineStockArrivals[item.product_id] ?? {};
@@ -2080,7 +2090,11 @@ export default function JourneyWorkspace({
                         const bd = lineStockBreakdown(item);
                         if (!bd) {
                           return (
-                            <div className="mt-0.5 text-slate-500">Loading…</div>
+                            <div className="mt-0.5 text-slate-500">
+                              {lineStockFailed
+                                ? "Stock could not be loaded."
+                                : "Loading…"}
+                            </div>
                           );
                         }
                         return (
