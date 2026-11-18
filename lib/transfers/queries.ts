@@ -110,6 +110,38 @@ export async function fetchTransferRequests(
   }
   const rows = (data as unknown as TransferRequestWithDetails[]) ?? [];
 
+  // The products embed is null for roles that cannot read products directly
+  // (sales). Backfill names through products_public, the read path those
+  // roles already use, without granting new access.
+  const missingVariantIds = Array.from(
+    new Set(
+      rows
+        .filter((r) => r.variant_id && !r.variant)
+        .map((r) => r.variant_id as string)
+    )
+  );
+  if (missingVariantIds.length > 0) {
+    const { data: publicProducts, error: publicError } = await (
+      supabase as any
+    )
+      .from("products_public")
+      .select("id, item_name")
+      .in("id", missingVariantIds);
+    if (publicError) {
+      console.error("fetchTransferRequests product names error", publicError);
+    } else {
+      const nameById = new Map<string, string>(
+        ((publicProducts as any[]) ?? []).map((p) => [p.id, p.item_name])
+      );
+      for (const r of rows) {
+        if (r.variant_id && !r.variant) {
+          const itemName = nameById.get(r.variant_id);
+          if (itemName) r.variant = { id: r.variant_id, item_name: itemName };
+        }
+      }
+    }
+  }
+
   // journey_mismatch requests point at a sleep_journeys row via
   // source_reference_id (no FK — the column is polymorphic), so pull the
   // order numbers in a second batched read.
