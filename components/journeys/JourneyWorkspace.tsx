@@ -1866,7 +1866,11 @@ export default function JourneyWorkspace({
                 </div>
               )}
 
-              {(journey.delivered_at || journey.current_state === "Sleep Trial") && (
+              {(journey.delivered_at ||
+                journey.current_state === "Sleep Trial" ||
+                (liveTrialStatuses ?? []).some((s) =>
+                  ["ACTIVE", "EXCHANGE_IN_PROGRESS", "RETURN_IN_PROGRESS"].includes(s)
+                )) && (
                 <SleepTrialSection
                   journey={journey}
                   currentEmployee={currentEmployee}

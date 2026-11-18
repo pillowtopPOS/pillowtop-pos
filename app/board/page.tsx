@@ -39,6 +39,8 @@ import {
   completeJourneyFulfillment,
   fetchJourneyLineItems,
   fetchJourneyFulfillmentSummary,
+  fetchJourneysFulfillmentCounts,
+  fetchJourneysLineItemQuantities,
   fetchJourneyRequirementStatuses,
   fetchJourneyLiveTrialStatuses,
   recordPayment,
@@ -140,6 +142,11 @@ function BoardContent() {
     Map<string, SleepTrialEvaluation[]>
   >(new Map());
   const [unresolvedJourneyIds, setUnresolvedJourneyIds] = useState<Set<string>>(new Set());
+  // Units already handed over and total units per board journey, from
+  // the two batched reads in loadData. Empty maps mean the read failed:
+  // the badge renders nothing rather than wrong numbers.
+  const [fulfillmentCounts, setFulfillmentCounts] = useState<Record<string, number>>({});
+  const [journeyUnitTotals, setJourneyUnitTotals] = useState<Record<string, number>>({});
   // Journeys whose every live trial item is parked in an exchange/return
   // stay off the board lists — they still open by id everywhere else.
   const [hiddenJourneyIds, setHiddenJourneyIds] = useState<Set<string>>(new Set());
@@ -275,11 +282,27 @@ function BoardContent() {
     );
     setJourneys(data);
 
+    // Slice 2a: one batched read each for handed-over units and total
+    // units on every journey on the board. Both feed the "N of M items
+    // out" badge and the trial-chip filter below. A failed read returns
+    // an empty map, which shows no badges rather than wrong numbers.
+    const ids = data.map((j) => j.id);
+    const [fulfillCounts, unitTotals] = await Promise.all([
+      fetchJourneysFulfillmentCounts(ids),
+      fetchJourneysLineItemQuantities(ids),
+    ]);
+    setFulfillmentCounts(fulfillCounts);
+    setJourneyUnitTotals(unitTotals);
+
     // Trial status comes from the evaluator (ST-4) — one batch call for
-    // every journey sitting in the Sleep Trial column.
+    // every journey sitting in the Sleep Trial column, plus any journey
+    // with handed-over units whose trial may already be running.
     evaluateSleepTrialItems(
       data
-        .filter((j) => j.current_state === "Sleep Trial")
+        .filter(
+          (j) =>
+            j.current_state === "Sleep Trial" || (fulfillCounts[j.id] ?? 0) > 0
+        )
         .map((j) => j.id)
     ).then(setTrialEvals);
 
@@ -1088,6 +1111,8 @@ function BoardContent() {
                 journeys={column.journeys}
                 unresolvedJourneyIds={unresolvedJourneyIds}
                 trialEvals={trialEvals}
+                fulfillmentCounts={fulfillmentCounts}
+                journeyUnitTotals={journeyUnitTotals}
                 onSelect={selectJourney}
               />
             ))}
@@ -1864,12 +1889,16 @@ function Column({
   journeys,
   unresolvedJourneyIds,
   trialEvals,
+  fulfillmentCounts,
+  journeyUnitTotals,
   onSelect,
 }: {
   state: SleepJourneyState;
   journeys: JourneyWithDetails[];
   unresolvedJourneyIds: Set<string>;
   trialEvals: Map<string, SleepTrialEvaluation[]>;
+  fulfillmentCounts: Record<string, number>;
+  journeyUnitTotals: Record<string, number>;
   onSelect: (j: JourneyWithDetails) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: state });
@@ -1896,6 +1925,8 @@ function Column({
             journey={j}
             hasUnresolvedPayment={unresolvedJourneyIds.has(j.id)}
             trialEvals={trialEvals.get(j.id) ?? []}
+            unitsOut={fulfillmentCounts[j.id] ?? 0}
+            unitsTotal={journeyUnitTotals[j.id] ?? 0}
             onSelect={onSelect}
           />
         ))}
@@ -1942,11 +1973,15 @@ function JourneyCard({
   journey,
   hasUnresolvedPayment,
   trialEvals,
+  unitsOut,
+  unitsTotal,
   onSelect,
 }: {
   journey: JourneyWithDetails;
   hasUnresolvedPayment: boolean;
   trialEvals: SleepTrialEvaluation[];
+  unitsOut: number;
+  unitsTotal: number;
   onSelect: (j: JourneyWithDetails) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
@@ -2019,6 +2054,13 @@ function JourneyCard({
       )}
       {hasUnresolvedPayment && (
         <p className="text-[10px] font-medium text-amber-600">Unresolved payment</p>
+      )}
+      {unitsOut > 0 && unitsTotal > 0 && unitsOut < unitsTotal && (
+        <p>
+          <span className="inline-block rounded-full bg-sky-100 px-1.5 py-px text-[10px] font-medium text-sky-700">
+            {unitsOut} of {unitsTotal} items out
+          </span>
+        </p>
       )}
     </div>
   );

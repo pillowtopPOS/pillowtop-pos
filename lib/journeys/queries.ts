@@ -950,6 +950,32 @@ export async function fetchJourneysFulfillmentCounts(
   return out;
 }
 
+// Board badge helper: total line quantities for many journeys in one
+// read. Missing journeys simply have no key; a failed read returns {} so
+// callers show no badge rather than wrong numbers.
+export async function fetchJourneysLineItemQuantities(
+  journeyIds: string[]
+): Promise<Record<string, number>> {
+  if (journeyIds.length === 0) return {};
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("journey_line_items")
+    .select("journey_id, quantity")
+    .in("journey_id", journeyIds);
+  if (error) {
+    console.error("fetchJourneysLineItemQuantities error", error);
+    return {};
+  }
+  const out: Record<string, number> = {};
+  for (const row of (data ?? []) as {
+    journey_id: string;
+    quantity: number;
+  }[]) {
+    out[row.journey_id] = (out[row.journey_id] ?? 0) + (row.quantity ?? 0);
+  }
+  return out;
+}
+
 // Total units on a line-item set; pairs with byLine counts for
 // "N of M items out" displays.
 export function totalUnits(lineItems: { quantity: number }[]): number {
@@ -1004,7 +1030,12 @@ export async function fetchJourneyLiveTrialStatuses(
     .from("sleep_trial_items")
     .select("status")
     .eq("journey_id", journeyId)
-    .in("status", ["PENDING_FULFILLMENT", "ACTIVE"]);
+    .in("status", [
+      "PENDING_FULFILLMENT",
+      "ACTIVE",
+      "EXCHANGE_IN_PROGRESS",
+      "RETURN_IN_PROGRESS",
+    ]);
   if (error) {
     console.error("fetchJourneyLiveTrialStatuses error", error);
     return null;
