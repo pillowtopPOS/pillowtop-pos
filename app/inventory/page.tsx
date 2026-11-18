@@ -184,13 +184,13 @@ export default function InventoryPage() {
     // In-stock first (positive qty on the selected basis), alphabetical within
     // each group; zero/null quantities sort after.
     const qty = (p: ProductWithStock) =>
-      (sortBy === "physical" ? p.physical : p.ats) ?? 0;
+      (sortBy === "physical" && canViewPhysical ? p.physical : p.ats) ?? 0;
     return list.sort(
       (a, b) =>
         Number(qty(b) > 0) - Number(qty(a) > 0) ||
         a.item_name.localeCompare(b.item_name)
     );
-  }, [products, search, sortBy]);
+  }, [products, search, sortBy, canViewPhysical]);
 
   useEffect(() => {
     if (canEditProducts && companyId) {
@@ -532,7 +532,9 @@ export default function InventoryPage() {
 
         <div className="flex items-center gap-1 text-sm text-slate-600">
           <span className="mr-1">Sort by:</span>
-          {(["ats", "physical"] as const).map((opt) => (
+          {(["ats", "physical"] as const)
+            .filter((opt) => opt === "ats" || canViewPhysical)
+            .map((opt) => (
             <button
               key={opt}
               type="button"
@@ -548,22 +550,20 @@ export default function InventoryPage() {
           ))}
         </div>
 
-        {canViewAll && (
-          <select
-            value={currentStoreId}
-            onChange={(e) => {
-              setCurrentStoreId(e.target.value);
-              loadProducts(e.target.value);
-            }}
-            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-          >
-            {stores.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        )}
+        <select
+          value={currentStoreId}
+          onChange={(e) => {
+            setCurrentStoreId(e.target.value);
+            loadProducts(e.target.value);
+          }}
+          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+        >
+          {stores.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
 
         {canEditProducts && (
           <>
