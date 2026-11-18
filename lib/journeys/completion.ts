@@ -142,6 +142,13 @@ export function joinLocationNames(names: string[]): string {
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
+// Shown whenever a pickup line belongs to a location the signed-in user
+// is not working in today. completionButtonDecision and the per-item
+// handover dialog share this exact wording.
+export function pickupLocationNote(names: string[]): string {
+  return `Set for pickup at ${joinLocationNames(names)}. Only employees at that location can mark it picked up.`;
+}
+
 export type CompletionButtonDecision =
   | { kind: "button"; fulfillment: "pickup" | "delivery" }
   | { kind: "note"; text: string }
@@ -200,7 +207,7 @@ export function completionButtonDecision(opts: {
         .filter((n): n is string => !!n);
       return {
         kind: "note",
-        text: `Set for pickup at ${joinLocationNames(names)}. Only employees at that location can mark it picked up.`,
+        text: pickupLocationNote(names),
       };
     }
   }

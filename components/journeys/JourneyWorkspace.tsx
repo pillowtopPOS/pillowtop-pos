@@ -76,6 +76,7 @@ import { computeNetPaid } from "@/lib/journeys/paid";
 import {
   completionButtonDecision,
   completionDestination as completionDestinationFor,
+  effectiveLineFulfillment,
   type CompletionButtonDecision,
 } from "@/lib/journeys/completion";
 import {
@@ -91,6 +92,7 @@ import {
   activityEventTitle,
 } from "@/lib/journeys/activityLabels";
 import SleepTrialSection from "@/components/SleepTrialSection";
+import HandoverDialog from "@/components/journeys/HandoverDialog";
 import JourneyDelivery from "@/components/delivery/JourneyDelivery";
 
 // The inventory-ready flag is a one-time notification marker, not a live
@@ -679,6 +681,8 @@ export default function JourneyWorkspace({
     [fulfillmentSummary]
   );
 
+  const [handoverOpen, setHandoverOpen] = useState(false);
+
   const completionGoesTo = useMemo(
     () =>
       completionDestinationFor({
@@ -895,6 +899,22 @@ export default function JourneyWorkspace({
   ]);
 
   const completionAllowed = completionDecision?.kind === "button";
+
+  // Slice 2a: the pickup handover button shows only while pickup units
+  // remain on an open order the user may mark fulfilled. Delivery-only
+  // orders and orders with no pickup lines left never see it.
+  const showHandoverButton =
+    !journey.cancelled_at &&
+    !journey.delivered_at &&
+    ["Sold", "Ready to Schedule", "Waiting for Inventory", "Scheduled"].includes(
+      journey.current_state
+    ) &&
+    (completionPerms?.canMarkFulfilled ?? false) &&
+    lineItems.some(
+      (li) =>
+        effectiveLineFulfillment(li, journey.fulfillment_type) === "pickup" &&
+        li.quantity - (fulfillmentSummary?.byLine[li.id] ?? 0) > 0
+    );
 
   // delivery_completed renders through the gated block below, never as a
   // plain transition button. Hidden/note decisions must not leak into
@@ -2121,6 +2141,16 @@ export default function JourneyWorkspace({
                   </div>
                 )}
 
+              {showHandoverButton && (
+                <button
+                  type="button"
+                  onClick={() => setHandoverOpen(true)}
+                  className="mt-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Hand over items today
+                </button>
+              )}
+
               {journeyUnits.some((u) => u.requirement_id === null) && (
                 <div className="mt-2 text-xs text-slate-500">
                   <span className="font-medium text-slate-700">
@@ -2826,6 +2856,24 @@ export default function JourneyWorkspace({
               </div>
             </div>
           </Modal>
+        )}
+
+        {handoverOpen && (
+          <HandoverDialog
+            journey={journey}
+            lineItems={lineItems}
+            handed={fulfillmentSummary?.byLine ?? {}}
+            stores={stores}
+            activeStoreId={completionPerms?.activeStoreId ?? null}
+            canPickupAnyLocation={
+              completionPerms?.canPickupAnyLocation ?? false
+            }
+            onClose={() => setHandoverOpen(false)}
+            onSuccess={() => {
+              setHandoverOpen(false);
+              handlePanelRefresh();
+            }}
+          />
         )}
 
         {confirmFulfillment && (
