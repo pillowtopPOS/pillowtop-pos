@@ -179,7 +179,7 @@ export type CompletionButtonDecision =
 export function completionButtonDecision(opts: {
   // The method this control would act on.
   fulfillment: "delivery" | "pickup";
-  // The order's own fulfillment type — supplies the default effective
+  // The order's own fulfillment type, which supplies the default effective
   // method for lines without an override. Defaults to `fulfillment`,
   // which covers orders evaluated for their own method.
   orderFulfillment?: "delivery" | "pickup";
@@ -377,7 +377,7 @@ export function lineStatusText(opts: {
   // Pre-formatted short date like "Nov 19", from the line's latest
   // fulfillment record.
   dateLabel?: string | null;
-  // Whether any unit on the order has left — gates "Still here".
+  // Whether any unit on the order has left. Gates "Still here".
   anyOutOnOrder: boolean;
 }): { text: string; tone: "done" | "part" | "open" } | null {
   if (opts.handed >= opts.quantity && opts.handed > 0) {
