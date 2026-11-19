@@ -634,6 +634,10 @@ export default function JourneyWorkspace({
     string[] | null
   >(null);
   const [trialReadSeq, setTrialReadSeq] = useState(0);
+  // Any new event on the order (handover, payment, cancellation, ...) must
+  // re-run both reads below: events.length plus the newest event's id
+  // changes on every insert.
+  const eventSignal = `${events.length}:${events[events.length - 1]?.id ?? ""}`;
   useEffect(() => {
     let alive = true;
     setLiveTrialStatuses(null);
@@ -643,19 +647,26 @@ export default function JourneyWorkspace({
     return () => {
       alive = false;
     };
-  }, [journey.id, journey.current_state, trialReadSeq]);
+  }, [journey.id, journey.current_state, trialReadSeq, eventSignal]);
 
   // Slice 2a: per-unit handover status, same refresh discipline as
-  // liveTrialStatuses (journey/state change and every panel refresh).
-  // Quote-stage orders skip the read entirely. A failed read is flagged
-  // and rendered as an error line, never as "nothing handed over".
+  // liveTrialStatuses (journey/state change, every panel refresh, and any
+  // new event). Quote-stage orders skip the read entirely. A failed read
+  // is flagged and rendered as an error line, never as "nothing handed
+  // over". The summary clears only when the order itself changes; a
+  // same-order refetch keeps the old values until the new ones land, so
+  // the chips never blink.
   const [fulfillmentSummary, setFulfillmentSummary] =
     useState<JourneyFulfillmentSummary | null>(null);
   const [fulfillmentReadFailed, setFulfillmentReadFailed] = useState(false);
   const pastQuoted =
     getStateIndex(journey.current_state) >= getStateIndex("Sold");
+  const fulfillmentJourneyRef = useRef(journey.id);
   useEffect(() => {
-    setFulfillmentSummary(null);
+    if (fulfillmentJourneyRef.current !== journey.id) {
+      fulfillmentJourneyRef.current = journey.id;
+      setFulfillmentSummary(null);
+    }
     if (!pastQuoted) {
       setFulfillmentReadFailed(false);
       return;
@@ -672,7 +683,7 @@ export default function JourneyWorkspace({
     return () => {
       alive = false;
     };
-  }, [journey.id, journey.current_state, trialReadSeq, pastQuoted]);
+  }, [journey.id, journey.current_state, trialReadSeq, pastQuoted, eventSignal]);
 
   const totalHanded = useMemo(
     () =>
