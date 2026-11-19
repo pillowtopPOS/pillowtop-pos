@@ -45,3 +45,31 @@ export function returnedPillText(
   if (returned <= 0 || total <= 0) return null;
   return returned >= total ? "Fully returned" : `${returned} of ${total} returned`;
 }
+
+export type PendingReturnAction = ReturnActionLike & {
+  action_id: string;
+  trial_item_id: string;
+  refund_recorded_at: string | null;
+  committed_at: string | null;
+};
+
+// The return still waiting on its refund: COMMITTED, owed money, and not
+// yet stamped. Any refund recorded while one is pending must link to it
+// (p_action_id) or the return's complete step can never pass and the
+// money gets recorded twice. Oldest commit wins when two are pending.
+export function pendingReturnRefund(
+  actions: PendingReturnAction[] | null | undefined
+): PendingReturnAction | null {
+  const pending = (actions ?? []).filter(
+    (a) =>
+      a.action === "RETURN" &&
+      a.status === "COMMITTED" &&
+      a.refund_recorded_at == null &&
+      (a.refund_owed_cents ?? 0) > 0
+  );
+  if (pending.length === 0) return null;
+  pending.sort((a, b) =>
+    (a.committed_at ?? "").localeCompare(b.committed_at ?? "")
+  );
+  return pending[0];
+}

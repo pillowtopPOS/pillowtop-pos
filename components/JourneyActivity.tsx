@@ -47,6 +47,7 @@ import {
   voidPaymentRefund,
 } from "@/lib/journeys/queries";
 import { refundableCentsOnPayment } from "@/lib/journeys/paid";
+import type { PendingReturnAction } from "@/lib/journeys/returns";
 import Modal from "@/components/Modal";
 import RecordRefundModal from "@/components/RecordRefundModal";
 import type {
@@ -183,6 +184,8 @@ export default function JourneyActivity({
   refreshKey = 0,
   onDirtyChange,
   stores = [],
+  pendingReturnRefund,
+  pendingReturnProductName,
 }: {
   journey: JourneyWithDetails;
   stores?: { id: string; name: string }[];
@@ -194,6 +197,10 @@ export default function JourneyActivity({
   onChanged: () => void;
   refreshKey?: number;
   onDirtyChange?: (state: { dirty: boolean; saving: boolean }) => void;
+  // A committed return still waiting on its refund: the payment-row
+  // refund must link to it (p_action_id) or the return never completes.
+  pendingReturnRefund?: PendingReturnAction | null;
+  pendingReturnProductName?: string;
 }) {
   const [interactions, setInteractions] = useState<JourneyInteraction[]>([]);
   const [extraLines, setExtraLines] = useState<
@@ -931,7 +938,15 @@ export default function JourneyActivity({
         <RecordRefundModal
           payments={[refundTarget]}
           events={events}
-          defaultAmountCents={refundableCentsOnPayment(refundTarget, events)}
+          // A pending return refund must link to its action; the amount
+          // defaults to what the return owes, capped by what this
+          // payment can still refund.
+          defaultAmountCents={
+            pendingReturnRefund?.refund_owed_cents ??
+            refundableCentsOnPayment(refundTarget, events)
+          }
+          actionId={pendingReturnRefund?.action_id}
+          returnProductName={pendingReturnProductName}
           onClose={() => setRefundTarget(null)}
           onRecorded={refresh}
         />

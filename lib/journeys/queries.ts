@@ -1086,10 +1086,12 @@ export async function fetchJourneyLiveTrialStatuses(
 }
 
 export type TrialItemStatusRow = {
+  id: string;
   line_item_id: string | null;
   status: string;
   close_reason: string | null;
   closed_at: string | null;
+  product_name_snapshot: string | null;
 };
 
 /** Slice 2b: every non-VOIDED trial item on one journey. Powers the
@@ -1100,7 +1102,7 @@ export async function fetchJourneyTrialItemRows(
   const supabase = createClient();
   const { data, error } = await supabase
     .from("sleep_trial_items")
-    .select("line_item_id,status,close_reason,closed_at")
+    .select("id,line_item_id,status,close_reason,closed_at,product_name_snapshot")
     .eq("journey_id", journeyId)
     .neq("status", "VOIDED");
   if (error) {

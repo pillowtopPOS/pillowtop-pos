@@ -21,6 +21,7 @@ import {
 } from "@/lib/journeys/exchange";
 import {
   effectivePrice,
+  pendingReturnRefund,
   returnedCreditCents,
   returnedPillText,
 } from "@/lib/journeys/returns";
@@ -44,6 +45,7 @@ import {
   canFinalizeDelivery,
   fetchJourneyLiveTrialStatuses,
   fetchJourneyTrialItemRows,
+  type TrialItemStatusRow,
   fetchJourneyFulfillmentSummary,
   totalUnits,
   type JourneyFulfillmentSummary,
@@ -734,9 +736,9 @@ export default function JourneyWorkspace({
   );
   // Closed-RETURNED trial items drive the per-line "Returned" status and
   // the summary's returned pill; the same rows give the pill's total.
-  const [trialItemRows, setTrialItemRows] = useState<
-    { line_item_id: string | null; status: string; close_reason: string | null; closed_at: string | null }[]
-  >([]);
+  const [trialItemRows, setTrialItemRows] = useState<TrialItemStatusRow[]>(
+    []
+  );
   useEffect(() => {
     let alive = true;
     fetchJourneyReturnActions(journey.id, events)
@@ -787,6 +789,15 @@ export default function JourneyWorkspace({
     };
   }, [trialItemRows]);
 
+  // The return still waiting on its refund. While one is pending every
+  // refund entry point (rail button, payment row) must link to it via
+  // actionId or the return can never complete and the money counts twice.
+  const pendingReturn = pendingReturnRefund(returnActions);
+  const pendingReturnProductName = pendingReturn
+    ? trialItemRows.find((r) => r.id === pendingReturn.trial_item_id)
+        ?.product_name_snapshot ?? undefined
+    : undefined;
+
   // Slice 2b: committed/completed returns lower what the customer
   // effectively owes. journey.price stays the agreed total; every
   // balance/credit read below uses the effective total instead.
@@ -807,8 +818,13 @@ export default function JourneyWorkspace({
     [events]
   );
   const creditRefundPick = useMemo(
-    () => pickRefundPayment(refundablePayments, events, creditCents),
-    [refundablePayments, events, creditCents]
+    () =>
+      pickRefundPayment(
+        refundablePayments,
+        events,
+        pendingReturn?.refund_owed_cents ?? creditCents
+      ),
+    [refundablePayments, events, creditCents, pendingReturn]
   );
 
   // cancelled_at nulls the balance — a cancelled journey shows what was
@@ -2189,6 +2205,8 @@ export default function JourneyWorkspace({
               onChanged={handlePanelRefresh}
               refreshKey={activityRefreshKey}
               onDirtyChange={setActivityState}
+              pendingReturnRefund={pendingReturn}
+              pendingReturnProductName={pendingReturnProductName}
             />
 
             {events.some((e) => e.outcome === "UNKNOWN") && canReconcile && (
@@ -3336,8 +3354,15 @@ export default function JourneyWorkspace({
           <RecordRefundModal
             payments={refundablePayments}
             events={events}
-            defaultAmountCents={creditCents}
+            // A pending return refund must link to its action so the
+            // return can complete; the amount defaults to what the
+            // return owes rather than the whole credit.
+            defaultAmountCents={
+              pendingReturn?.refund_owed_cents ?? creditCents
+            }
             initialPaymentId={creditRefundPick.payment?.id}
+            actionId={pendingReturn?.action_id}
+            returnProductName={pendingReturnProductName}
             onClose={() => setCreditRefundOpen(false)}
             onRecorded={handlePanelRefresh}
           />

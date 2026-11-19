@@ -43,6 +43,7 @@ export default function RecordRefundModal({
   defaultAmountCents,
   initialPaymentId,
   actionId,
+  returnProductName,
   onClose,
   onRecorded,
 }: {
@@ -59,6 +60,9 @@ export default function RecordRefundModal({
   // 161: when set the refund is linked to this return action and the
   // server stamps its refund fields in the same transaction.
   actionId?: string;
+  // Product name for the "recorded for the return of ..." line shown
+  // when actionId is set.
+  returnProductName?: string;
   onClose: () => void;
   onRecorded: () => void;
 }) {
@@ -143,6 +147,15 @@ export default function RecordRefundModal({
           This records a refund you already made in your payment system.
           PillowTop does not move money.
         </p>
+        {actionId && (
+          <p className="mb-3 rounded-md border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-xs text-violet-800">
+            This refund is recorded as the refund for{" "}
+            {returnProductName
+              ? `the return of ${returnProductName}`
+              : "this return"}
+            .
+          </p>
+        )}
         {payments.length > 1 && (
           <label className="mb-3 block text-sm font-medium text-slate-700">
             Refund from

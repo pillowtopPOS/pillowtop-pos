@@ -48,6 +48,7 @@ import {
 } from "../lib/journeys/exchange";
 import {
   effectivePrice,
+  pendingReturnRefund,
   returnedCreditCents,
   returnedPillText,
 } from "../lib/journeys/returns";
@@ -913,6 +914,36 @@ check("returned pill wording",
   returnedPillText(0, 2) === null &&
     returnedPillText(1, 2) === "1 of 2 returned" &&
     returnedPillText(2, 2) === "Fully returned");
+
+// A committed return awaiting its refund must capture every refund entry
+// point; the helper finds it so callers can pass p_action_id.
+const retA = {
+  action_id: "ra1",
+  trial_item_id: "ti1",
+  action: "RETURN",
+  status: "COMMITTED",
+  refund_owed_cents: 90000,
+  refund_recorded_at: null,
+  committed_at: "2025-11-10T10:00:00Z",
+};
+check("pending return refund finds the un-refunded committed return",
+  pendingReturnRefund([retA])?.action_id === "ra1");
+check("completed, cancelled, draft, exchange, and refunded actions are ignored",
+  pendingReturnRefund([
+    { ...retA, action_id: "x1", status: "COMPLETED" },
+    { ...retA, action_id: "x2", status: "CANCELLED" },
+    { ...retA, action_id: "x3", status: "DRAFT" },
+    { ...retA, action_id: "x4", action: "EXCHANGE" },
+    { ...retA, action_id: "x5", refund_recorded_at: "2025-11-11T00:00:00Z" },
+    { ...retA, action_id: "x6", refund_owed_cents: 0 },
+  ]) === null &&
+    pendingReturnRefund([]) === null &&
+    pendingReturnRefund(null) === null);
+check("oldest pending return wins",
+  pendingReturnRefund([
+    { ...retA, action_id: "new", committed_at: "2025-11-20T10:00:00Z" },
+    { ...retA, action_id: "old", committed_at: "2025-11-10T10:00:00Z" },
+  ])?.action_id === "old");
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`);
 process.exit(failures === 0 ? 0 : 1);
