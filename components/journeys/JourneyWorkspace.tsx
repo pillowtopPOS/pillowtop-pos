@@ -816,6 +816,7 @@ export default function JourneyWorkspace({
   // "Discard changes?" when the new-address form has typed text).
   const shipToCloseRef = useRef<(() => void) | null>(null);
   const [lineAvailability, setLineAvailability] = useState<Record<string, number>>({});
+  const [lineAvailabilityFailed, setLineAvailabilityFailed] = useState<Record<string, boolean>>({});
   const [lineLocationStock, setLineLocationStock] = useState<Record<string, LocationAvailability[]>>({});
   const [lineStockArrivals, setLineStockArrivals] = useState<Record<string, Record<string, number>>>({});
   const [lineStockLoaded, setLineStockLoaded] = useState(false);
@@ -1354,21 +1355,42 @@ export default function JourneyWorkspace({
         for (const item of lineItems) delete next[item.id];
         return next;
       });
+      setLineAvailabilityFailed((previous) => {
+        const next = { ...previous };
+        for (const item of lineItems) delete next[item.id];
+        return next;
+      });
     }
 
     Promise.all(
       lineItems.map(async (item) => {
         if (!item.product_id) return null;
         const locationId = resolveLineItemLocation(item, journey, stores);
-        const map = await fetchProductStock([item.product_id], locationId);
-        return [item.id, map[item.product_id]?.ats ?? 0] as const;
+        try {
+          const map = await fetchProductStock([item.product_id], locationId);
+          return [item.id, map[item.product_id]?.ats ?? 0] as const;
+        } catch {
+          return [item.id, { error: true }] as const;
+        }
       })
     ).then((values) => {
-      if (!ignore)
-        setLineAvailability((previous) => ({
-          ...previous,
-          ...Object.fromEntries(values.filter(Boolean) as [string, number][]),
-        }));
+      if (ignore) return;
+      const failed: Record<string, boolean> = {};
+      setLineAvailability((previous) => ({
+        ...previous,
+        ...Object.fromEntries(
+          values.filter(
+            (v): v is readonly [string, number] =>
+              v !== null && typeof v[1] === "number"
+          )
+        ),
+      }));
+      for (const v of values) {
+        if (v && typeof v[1] !== "number") failed[v[0]] = true;
+      }
+      setLineAvailabilityFailed((previous) => ({ ...previous, ...failed }));
+    }).catch((error) => {
+      console.error("line availability load failed", error);
     });
     return () => { ignore = true; };
   }, [lineItems, journey.store_id, journey.fulfillment_type, inventoryStoreId, availabilityContext]);
@@ -2102,9 +2124,12 @@ export default function JourneyWorkspace({
                       </div>
                       {!orderLocked &&
                         item.product_id &&
-                        (lineAvailability[item.id] ?? 0) < item.quantity && (
+                        (lineAvailabilityFailed[item.id] ||
+                          (lineAvailability[item.id] ?? 0) < item.quantity) && (
                           <div className="mt-0.5 text-xs text-slate-500">
-                            Availability: {lineAvailability[item.id] ?? "Loading…"}
+                            {lineAvailabilityFailed[item.id]
+                              ? "Availability unavailable"
+                              : `Availability: ${lineAvailability[item.id] ?? "Loading…"}`}
                           </div>
                         )}
                       <div className="mt-0.5 text-xs text-slate-500">
