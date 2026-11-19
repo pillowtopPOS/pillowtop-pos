@@ -739,31 +739,31 @@ check("count label for an all-pickup order",
   fulfillmentCountLabel({
     out: 1, total: 2, method: "pickup",
     hasPickupLine: true, hasDeliveryLine: false,
-  }) === "1 of 2 picked up");
+  }) === "1 of 2 pieces picked up");
 check("count label for an all-delivery order",
   fulfillmentCountLabel({
     out: 1, total: 2, method: "delivery",
     hasPickupLine: false, hasDeliveryLine: true,
-  }) === "1 of 2 delivered");
+  }) === "1 of 2 pieces delivered");
 check("count label for a mixed order",
   fulfillmentCountLabel({
     out: 1, total: 2, method: "delivery",
     hasPickupLine: true, hasDeliveryLine: true,
-  }) === "1 of 2 items out");
+  }) === "1 of 2 pieces out");
 check("count label for a pickup-only order typed delivery",
   fulfillmentCountLabel({
     out: 1, total: 2, method: "delivery",
     hasPickupLine: true, hasDeliveryLine: false,
-  }) === "1 of 2 picked up");
+  }) === "1 of 2 pieces picked up");
 check("count label falls back to order type with no lines",
   fulfillmentCountLabel({
     out: 1, total: 2, method: "delivery",
     hasPickupLine: false, hasDeliveryLine: false,
-  }) === "1 of 2 delivered" &&
+  }) === "1 of 2 pieces delivered" &&
   fulfillmentCountLabel({
     out: 1, total: 2, method: "pickup",
     hasPickupLine: false, hasDeliveryLine: false,
-  }) === "1 of 2 picked up");
+  }) === "1 of 2 pieces picked up");
 
 // fulfillmentMethodChip: the gray card chip.
 check("chip says Pickup for all-pickup lines",

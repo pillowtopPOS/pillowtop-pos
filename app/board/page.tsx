@@ -2287,13 +2287,39 @@ function JourneyCard({
         </p>
       )}
       <p>
-        <span className="inline-block rounded-full bg-slate-100 px-1.5 py-px text-[10px] font-medium text-slate-600">
-          {fulfillmentMethodChip({
+        {(() => {
+          const hasPickup = unitMeta?.hasPickupLine ?? false;
+          const hasDelivery = unitMeta?.hasDeliveryLine ?? false;
+          if (hasPickup && hasDelivery) {
+            // Two-tone chip for mixed orders: blue half, orange half.
+            return (
+              <span className="inline-flex overflow-hidden rounded-full text-[10px] font-medium">
+                <span className="bg-sky-100 px-1.5 py-px text-sky-700">
+                  Pickup
+                </span>
+                <span className="bg-orange-100 px-1.5 py-px text-orange-600">
+                  + Delivery
+                </span>
+              </span>
+            );
+          }
+          const label = fulfillmentMethodChip({
             fulfillment: journey.fulfillment_type,
-            hasPickupLine: unitMeta?.hasPickupLine ?? false,
-            hasDeliveryLine: unitMeta?.hasDeliveryLine ?? false,
-          })}
-        </span>
+            hasPickupLine: hasPickup,
+            hasDeliveryLine: hasDelivery,
+          });
+          return (
+            <span
+              className={`inline-block rounded-full px-1.5 py-px text-[10px] font-medium ${
+                label === "Pickup"
+                  ? "bg-sky-100 text-sky-700"
+                  : "bg-orange-100 text-orange-600"
+              }`}
+            >
+              {label}
+            </span>
+          );
+        })()}
       </p>
       {journey.employee && (
         <p className="truncate text-[10px] leading-tight text-slate-500">

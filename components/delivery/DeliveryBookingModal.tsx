@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Phone } from "lucide-react";
 import Modal from "@/components/Modal";
-import DeliveryContactPanel from "@/components/delivery/DeliveryContactPanel";
 import { formatPhoneDashed } from "@/lib/delivery/calls";
 import {
   bookDeliveryStop,
@@ -369,19 +368,10 @@ export default function DeliveryBookingModal({
           </div>
         </div>
 
-        {/* Contact panel: fetched fresh when the window opens. Warns
-            and informs only; booking is never affected. */}
-        <div className="border-b border-slate-100 px-5 pb-3 sm:px-8">
-          <DeliveryContactPanel
-            journeyId={journeyId}
-            customerName={customerName}
-            customerPhone={customerPhone}
-            journeyNumber={journeyNumber}
-          />
-        </div>
-
-        {/* Scrollable day area */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 sm:px-8">
+        {/* Scrollable day area. min-h-0 lets this flex child shrink
+            below its content height so the footer stays visible on
+            short screens. */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-8">
           {initFailed ? (
             <div className="py-10 text-center" data-testid="delivery-load-error">
               <p className="text-sm text-slate-600">

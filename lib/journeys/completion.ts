@@ -397,11 +397,12 @@ export function lineStatusText(opts: {
   return null;
 }
 
-// Order-level "N of M ..." count label used by the panel summary line
-// and the board card badge. The verb follows the lines' effective
+// Order-level "N of M pieces ..." count label used by the panel summary
+// pill and the board card badge. The verb follows the lines' effective
 // methods: an order whose lines are all pickup says "picked up", a mix
-// of both says "items out", and an order with no lines falls back to
-// its own fulfillment type.
+// of both says "pieces out", and an order with no lines falls back to
+// its own fulfillment type. Per-line counts in the summary do not use
+// this helper and keep their shorter wording.
 export function fulfillmentCountLabel(opts: {
   out: number;
   total: number;
@@ -410,14 +411,14 @@ export function fulfillmentCountLabel(opts: {
   hasDeliveryLine: boolean;
 }): string {
   const verb = opts.hasPickupLine && opts.hasDeliveryLine
-    ? "items out"
+    ? "pieces out"
     : opts.hasPickupLine
-      ? "picked up"
+      ? "pieces picked up"
       : opts.hasDeliveryLine
-        ? "delivered"
+        ? "pieces delivered"
         : opts.method === "pickup"
-          ? "picked up"
-          : "delivered";
+          ? "pieces picked up"
+          : "pieces delivered";
   return `${opts.out} of ${opts.total} ${verb}`;
 }
 

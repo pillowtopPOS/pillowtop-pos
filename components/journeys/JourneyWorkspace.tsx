@@ -985,6 +985,19 @@ export default function JourneyWorkspace({
     fulfillmentSummary,
   ]);
 
+  // The two method-scoped completion controls share one spot in the
+  // action row: "Mark picked up" first in blue, "Mark delivered" second
+  // in orange. Pickup shows for a pickup-typed order's own decision or
+  // for the secondary pickup control on delivery orders; delivery shows
+  // only through the order's own decision.
+  const showPickupButton =
+    (journey.fulfillment_type === "pickup" &&
+      completionDecision?.kind === "button") ||
+    pickupDecision?.kind === "button";
+  const showDeliveryButton =
+    completionDecision?.kind === "button" &&
+    completionDecision.fulfillment === "delivery";
+
   // delivery_completed renders through the gated block below, never as a
   // plain transition button. Hidden/note decisions must not leak into
   // the generic action list or the Next Action bar.
@@ -1315,6 +1328,10 @@ export default function JourneyWorkspace({
       e.item?.status === "RETURN_IN_PROGRESS"
   );
 
+  // Which journey the current journeyUnits rows belong to; used by the
+  // units effect below to clear only on a real journey switch.
+  const unitsJourneyIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     setLineItemsLoading(true);
     fetchJourneyLineItems(journey.id).then((items) => {
@@ -1322,7 +1339,14 @@ export default function JourneyWorkspace({
       setLineItemsLoading(false);
       setLineItemsLoaded(true);
     });
-    setJourneyUnits([]);
+    // Only blank the unit chips when the open order actually changes.
+    // This effect also re-runs on every new journey event (the booking
+    // write produces several), and clearing the list mid-read collapsed
+    // the "Delivered units" block and chips repeatedly.
+    if (unitsJourneyIdRef.current !== journey.id) {
+      unitsJourneyIdRef.current = journey.id;
+      setJourneyUnits([]);
+    }
     let unitsCancelled = false;
     Promise.resolve(
       createClient().rpc("get_journey_units", { p_journey_id: journey.id })
@@ -2010,20 +2034,37 @@ export default function JourneyWorkspace({
                     {t.label}
                   </button>
                 ))}
-                {completionTransition && completionDecision && (
-                  completionDecision.kind === "button" ? (
-                    <button
-                      disabled={refreshPending}
-                      onClick={() => onAction(journey, "delivery_completed")}
-                      className="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-                    >
-                      {completionTransition.label}
-                    </button>
-                  ) : completionDecision.kind === "note" ? (
-                    <p className="w-full text-sm text-slate-600">
-                      {completionDecision.text}
-                    </p>
-                  ) : null
+                {showPickupButton && (
+                  <button
+                    disabled={refreshPending}
+                    onClick={() =>
+                      onAction(journey, "delivery_completed", {
+                        fulfillmentMethod: "pickup",
+                      })
+                    }
+                    className="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                  >
+                    Mark picked up
+                  </button>
+                )}
+                {showDeliveryButton && (
+                  <button
+                    disabled={refreshPending}
+                    onClick={() => onAction(journey, "delivery_completed")}
+                    className="rounded-md bg-orange-500 px-3 py-2 text-sm font-medium text-white hover:bg-orange-600 disabled:opacity-50"
+                  >
+                    Mark delivered
+                  </button>
+                )}
+                {completionDecision?.kind === "note" && (
+                  <p className="w-full text-sm text-slate-600">
+                    {completionDecision.text}
+                  </p>
+                )}
+                {pickupDecision?.kind === "note" && (
+                  <p className="w-full text-sm text-slate-600">
+                    {pickupDecision.text}
+                  </p>
                 )}
                 {hasLiveExchange &&
                   transitions.some((t) => t.event === "trial_completed") && (
@@ -2278,7 +2319,8 @@ export default function JourneyWorkspace({
                 // On a single-line order the per-line status says the
                 // same thing, so the summary count stays hidden.
                 lineItems.length >= 2 && (
-                  <div className="mt-2 text-xs text-slate-500">
+                  <div className="mt-2">
+                    <span className="inline-block rounded-full bg-sky-100 px-2.5 py-0.5 text-xs font-medium text-sky-700">
                     {fulfillmentCountLabel({
                       out: totalHanded,
                       total: totalUnits(lineItems),
@@ -2298,27 +2340,9 @@ export default function JourneyWorkspace({
                           ) === "delivery"
                       ),
                     })}
+                    </span>
                   </div>
                 )}
-
-              {pickupDecision?.kind === "button" && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    onAction(journey, "delivery_completed", {
-                      fulfillmentMethod: "pickup",
-                    })
-                  }
-                  className="mt-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                >
-                  Mark picked up
-                </button>
-              )}
-              {pickupDecision?.kind === "note" && (
-                <p className="mt-2 text-xs text-slate-500">
-                  {pickupDecision.text}
-                </p>
-              )}
 
               {journeyUnits.some((u) => u.requirement_id === null) && (
                 <div className="mt-2 text-xs text-slate-500">
