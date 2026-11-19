@@ -24,6 +24,8 @@ import {
   completionHandoverLines,
   completionMethodLines,
   completionStepperLine,
+  fulfillmentCountLabel,
+  lineStatusText,
   otherMethodItemsRemain,
   effectiveLineFulfillment,
   joinLocationNames,
@@ -681,6 +683,66 @@ check("otherMethodItemsRemain false when all lines share the method",
   check("unknown requirement keeps the line editable",
     noStock.editable === true && noStock.outOfStock === false);
 }
+
+// ---- Per-line order summary status + count labels ----
+// lineStatusText: full line gets "Picked up/Delivered <date>", partial
+// "N of M picked up/delivered", untouched lines get "Still here" only
+// once something on the order has left.
+check("full pickup line reads Picked up with date",
+  lineStatusText({
+    handed: 2, quantity: 2, method: "pickup",
+    dateLabel: "Nov 19", anyOutOnOrder: true,
+  })?.text === "Picked up Nov 19");
+check("full delivery line reads Delivered with date",
+  lineStatusText({
+    handed: 1, quantity: 1, method: "delivery",
+    dateLabel: "Nov 19", anyOutOnOrder: true,
+  })?.text === "Delivered Nov 19");
+check("full line without record date keeps the verb alone",
+  lineStatusText({
+    handed: 1, quantity: 1, method: "pickup",
+    dateLabel: null, anyOutOnOrder: true,
+  })?.text === "Picked up");
+check("partial pickup line counts units",
+  lineStatusText({
+    handed: 1, quantity: 2, method: "pickup",
+    anyOutOnOrder: true,
+  })?.text === "1 of 2 picked up");
+check("partial delivery line counts units",
+  lineStatusText({
+    handed: 1, quantity: 3, method: "delivery",
+    anyOutOnOrder: true,
+  })?.text === "1 of 3 delivered");
+check("untouched line shows Still here once order is partly out",
+  lineStatusText({
+    handed: 0, quantity: 1, method: "pickup",
+    anyOutOnOrder: true,
+  })?.text === "Still here" &&
+  lineStatusText({
+    handed: 0, quantity: 1, method: "pickup",
+    anyOutOnOrder: true,
+  })?.tone === "open");
+check("untouched line shows nothing on an untouched order",
+  lineStatusText({
+    handed: 0, quantity: 1, method: "pickup",
+    anyOutOnOrder: false,
+  }) === null);
+check("done tone is done",
+  lineStatusText({
+    handed: 1, quantity: 1, method: "delivery", anyOutOnOrder: true,
+  })?.tone === "done");
+
+// fulfillmentCountLabel: pickup/delivery verbs by method, "items out"
+// for mixed orders, shared by the panel line and the card badge.
+check("count label for a pickup order",
+  fulfillmentCountLabel({ out: 1, total: 2, method: "pickup", mixed: false })
+    === "1 of 2 picked up");
+check("count label for a delivery order",
+  fulfillmentCountLabel({ out: 1, total: 2, method: "delivery", mixed: false })
+    === "1 of 2 delivered");
+check("count label for a mixed order",
+  fulfillmentCountLabel({ out: 1, total: 2, method: "delivery", mixed: true })
+    === "1 of 2 items out");
 
 // Copy constants.
 check("Completed success message exact",

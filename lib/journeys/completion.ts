@@ -367,6 +367,53 @@ export function completionClosesWithChoice(opts: {
   });
 }
 
+// Per-line status text for the order summary. "done" renders green,
+// "part" plain, "open" amber. Returns null when nothing should render:
+// the line is untouched and no unit on the order has left yet.
+export function lineStatusText(opts: {
+  handed: number;
+  quantity: number;
+  method: "pickup" | "delivery";
+  // Pre-formatted short date like "Nov 19", from the line's latest
+  // fulfillment record.
+  dateLabel?: string | null;
+  // Whether any unit on the order has left — gates "Still here".
+  anyOutOnOrder: boolean;
+}): { text: string; tone: "done" | "part" | "open" } | null {
+  if (opts.handed >= opts.quantity && opts.handed > 0) {
+    const label = opts.method === "pickup" ? "Picked up" : "Delivered";
+    return {
+      text: opts.dateLabel ? `${label} ${opts.dateLabel}` : label,
+      tone: "done",
+    };
+  }
+  if (opts.handed > 0) {
+    const verb = opts.method === "pickup" ? "picked up" : "delivered";
+    return { text: `${opts.handed} of ${opts.quantity} ${verb}`, tone: "part" };
+  }
+  if (opts.anyOutOnOrder) {
+    return { text: "Still here", tone: "open" };
+  }
+  return null;
+}
+
+// Order-level "N of M ..." count label used by the panel summary line
+// and the board card badge. Mixed-method orders fall back to "items out"
+// because a single verb would mislabel the other method's units.
+export function fulfillmentCountLabel(opts: {
+  out: number;
+  total: number;
+  method: "pickup" | "delivery";
+  mixed: boolean;
+}): string {
+  const verb = opts.mixed
+    ? "items out"
+    : opts.method === "pickup"
+      ? "picked up"
+      : "delivered";
+  return `${opts.out} of ${opts.total} ${verb}`;
+}
+
 export type CompletionControl =
   | { kind: "button"; fulfillment: "pickup" | "delivery" }
   | { kind: "note"; text: string };

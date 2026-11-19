@@ -92,6 +92,7 @@ import {
   COMPLETION_DRAG_MESSAGE,
   COMPLETION_NOT_IN_STOCK_LINE,
   effectiveLineFulfillment,
+  fulfillmentCountLabel,
   linePickupLocationId,
   anyRequirementPending,
   completionClosesWithChoice,
@@ -152,7 +153,7 @@ function BoardContent() {
   // the two batched reads in loadData. Empty maps mean the read failed:
   // the badge renders nothing rather than wrong numbers.
   const [fulfillmentCounts, setFulfillmentCounts] = useState<Record<string, number>>({});
-  const [journeyUnitTotals, setJourneyUnitTotals] = useState<Record<string, number>>({});
+  const [journeyUnitTotals, setJourneyUnitTotals] = useState<Record<string, { units: number; mixed: boolean }>>({});
   // Journeys whose every live trial item is parked in an exchange/return
   // stay off the board lists — they still open by id everywhere else.
   const [hiddenJourneyIds, setHiddenJourneyIds] = useState<Set<string>>(new Set());
@@ -307,7 +308,7 @@ function BoardContent() {
     const ids = data.map((j) => j.id);
     const [fulfillCounts, unitTotals] = await Promise.all([
       fetchJourneysFulfillmentCounts(ids),
-      fetchJourneysLineItemQuantities(ids),
+      fetchJourneysLineItemQuantities(data),
     ]);
     setFulfillmentCounts(fulfillCounts);
     setJourneyUnitTotals(unitTotals);
@@ -2147,7 +2148,7 @@ function Column({
   unresolvedJourneyIds: Set<string>;
   trialEvals: Map<string, SleepTrialEvaluation[]>;
   fulfillmentCounts: Record<string, number>;
-  journeyUnitTotals: Record<string, number>;
+  journeyUnitTotals: Record<string, { units: number; mixed: boolean }>;
   onSelect: (j: JourneyWithDetails) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: state });
@@ -2175,7 +2176,8 @@ function Column({
             hasUnresolvedPayment={unresolvedJourneyIds.has(j.id)}
             trialEvals={trialEvals.get(j.id) ?? []}
             unitsOut={fulfillmentCounts[j.id] ?? 0}
-            unitsTotal={journeyUnitTotals[j.id] ?? 0}
+            unitsTotal={journeyUnitTotals[j.id]?.units ?? 0}
+            unitsMixed={journeyUnitTotals[j.id]?.mixed ?? false}
             onSelect={onSelect}
           />
         ))}
@@ -2224,6 +2226,7 @@ function JourneyCard({
   trialEvals,
   unitsOut,
   unitsTotal,
+  unitsMixed,
   onSelect,
 }: {
   journey: JourneyWithDetails;
@@ -2231,6 +2234,7 @@ function JourneyCard({
   trialEvals: SleepTrialEvaluation[];
   unitsOut: number;
   unitsTotal: number;
+  unitsMixed: boolean;
   onSelect: (j: JourneyWithDetails) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
@@ -2307,7 +2311,12 @@ function JourneyCard({
       {unitsOut > 0 && unitsTotal > 0 && unitsOut < unitsTotal && (
         <p>
           <span className="inline-block rounded-full bg-sky-100 px-1.5 py-px text-[10px] font-medium text-sky-700">
-            {unitsOut} of {unitsTotal} items out
+            {fulfillmentCountLabel({
+              out: unitsOut,
+              total: unitsTotal,
+              method: journey.fulfillment_type,
+              mixed: unitsMixed,
+            })}
           </span>
         </p>
       )}

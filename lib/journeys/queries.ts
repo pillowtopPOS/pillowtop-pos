@@ -893,6 +893,9 @@ export type JourneyFulfillment = {
 export type JourneyFulfillmentSummary = {
   byLine: Record<string, number>;
   fulfillments: JourneyFulfillment[];
+  // Latest fulfillment touching each line, for the order summary's
+  // "Picked up Nov 19" per-line status. Keyed by line_item_id.
+  lastOutByLine: Record<string, { completed_on: string; method: "pickup" | "delivery" }>;
 };
 
 // Slice 2a: what has been handed over on this order. byLine maps each
@@ -919,12 +922,27 @@ export async function fetchJourneyFulfillmentSummary(
   if (fulfillmentsError) throw new Error(fulfillmentsError.message);
 
   const byLine: Record<string, number> = {};
-  for (const row of (units ?? []) as { line_item_id: string }[]) {
+  const fulfillById = new Map(
+    ((fulfillments ?? []) as JourneyFulfillment[]).map((f) => [f.id, f])
+  );
+  const lastOutByLine: JourneyFulfillmentSummary["lastOutByLine"] = {};
+  for (const row of (units ?? []) as { line_item_id: string; fulfillment_id: string }[]) {
     byLine[row.line_item_id] = (byLine[row.line_item_id] ?? 0) + 1;
+    const f = fulfillById.get(row.fulfillment_id);
+    if (f) {
+      const cur = lastOutByLine[row.line_item_id];
+      if (!cur || f.completed_on > cur.completed_on) {
+        lastOutByLine[row.line_item_id] = {
+          completed_on: f.completed_on,
+          method: f.method,
+        };
+      }
+    }
   }
   return {
     byLine,
     fulfillments: (fulfillments ?? []) as JourneyFulfillment[],
+    lastOutByLine,
   };
 }
 
@@ -951,27 +969,42 @@ export async function fetchJourneysFulfillmentCounts(
 }
 
 // Board badge helper: total line quantities for many journeys in one
-// read. Missing journeys simply have no key; a failed read returns {} so
-// callers show no badge rather than wrong numbers.
+// read, plus whether the journey mixes pickup and delivery lines (for
+// "N of M items out" vs "N of M picked up/delivered" wording). Missing
+// journeys simply have no key; a failed read returns {} so callers show
+// no badge rather than wrong numbers.
 export async function fetchJourneysLineItemQuantities(
-  journeyIds: string[]
-): Promise<Record<string, number>> {
-  if (journeyIds.length === 0) return {};
+  journeys: { id: string; fulfillment_type: "delivery" | "pickup" | null }[]
+): Promise<Record<string, { units: number; mixed: boolean }>> {
+  if (journeys.length === 0) return {};
   const supabase = createClient();
   const { data, error } = await supabase
     .from("journey_line_items")
-    .select("journey_id, quantity")
-    .in("journey_id", journeyIds);
+    .select("journey_id, quantity, fulfillment_type_override")
+    .in(
+      "journey_id",
+      journeys.map((j) => j.id)
+    );
   if (error) {
     console.error("fetchJourneysLineItemQuantities error", error);
     return {};
   }
-  const out: Record<string, number> = {};
+  const types = new Map(journeys.map((j) => [j.id, j.fulfillment_type]));
+  const out: Record<string, { units: number; mixed: boolean }> = {};
   for (const row of (data ?? []) as {
     journey_id: string;
     quantity: number;
+    fulfillment_type_override: "delivery" | "pickup" | null;
   }[]) {
-    out[row.journey_id] = (out[row.journey_id] ?? 0) + (row.quantity ?? 0);
+    const entry = out[row.journey_id] ?? { units: 0, mixed: false };
+    entry.units += row.quantity ?? 0;
+    if (
+      row.fulfillment_type_override &&
+      row.fulfillment_type_override !== types.get(row.journey_id)
+    ) {
+      entry.mixed = true;
+    }
+    out[row.journey_id] = entry;
   }
   return out;
 }

@@ -78,6 +78,8 @@ import {
   completionClosesOrder,
   completionDestination as completionDestinationFor,
   effectiveLineFulfillment,
+  fulfillmentCountLabel,
+  lineStatusText,
   type CompletionButtonDecision,
 } from "@/lib/journeys/completion";
 import {
@@ -2186,12 +2188,39 @@ export default function JourneyWorkspace({
                       {(() => {
                         const handed =
                           fulfillmentSummary?.byLine[item.id] ?? 0;
-                        if (handed === 0) return null;
+                        const lastOut =
+                          fulfillmentSummary?.lastOutByLine?.[item.id];
+                        const status = lineStatusText({
+                          handed,
+                          quantity: item.quantity,
+                          method:
+                            lastOut?.method ??
+                            effectiveLineFulfillment(
+                              item,
+                              journey.fulfillment_type
+                            ),
+                          dateLabel: lastOut
+                            ? new Date(
+                                `${lastOut.completed_on}T00:00:00`
+                              ).toLocaleDateString(undefined, {
+                                month: "short",
+                                day: "numeric",
+                              })
+                            : null,
+                          anyOutOnOrder: totalHanded > 0,
+                        });
+                        if (!status) return null;
                         return (
-                          <span className="mt-0.5 inline-block rounded border border-slate-300 bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
-                            {handed < item.quantity
-                              ? `Out ${handed} of ${item.quantity}`
-                              : "Out"}
+                          <span
+                            className={`mt-0.5 inline-block text-xs font-medium ${
+                              status.tone === "done"
+                                ? "text-emerald-700"
+                                : status.tone === "open"
+                                  ? "text-amber-700"
+                                  : "text-slate-600"
+                            }`}
+                          >
+                            {status.text}
                           </span>
                         );
                       })()}
@@ -2247,7 +2276,17 @@ export default function JourneyWorkspace({
                 totalHanded > 0 &&
                 !journey.delivered_at && (
                   <div className="mt-2 text-xs text-slate-500">
-                    {totalHanded} of {totalUnits(lineItems)} items out.
+                    {fulfillmentCountLabel({
+                      out: totalHanded,
+                      total: totalUnits(lineItems),
+                      method: journey.fulfillment_type,
+                      mixed: lineItems.some(
+                        (li) =>
+                          li.fulfillment_type_override &&
+                          li.fulfillment_type_override !==
+                            journey.fulfillment_type
+                      ),
+                    })}
                   </div>
                 )}
 
