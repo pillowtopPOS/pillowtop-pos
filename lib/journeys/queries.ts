@@ -1085,6 +1085,63 @@ export async function fetchJourneyLiveTrialStatuses(
   return ((data ?? []) as { status: string }[]).map((r) => r.status);
 }
 
+export type TrialItemStatusRow = {
+  line_item_id: string | null;
+  status: string;
+  close_reason: string | null;
+  closed_at: string | null;
+};
+
+/** Slice 2b: every non-VOIDED trial item on one journey. Powers the
+ *  per-line "Returned" status and the order's returned pill. */
+export async function fetchJourneyTrialItemRows(
+  journeyId: string
+): Promise<TrialItemStatusRow[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("sleep_trial_items")
+    .select("line_item_id,status,close_reason,closed_at")
+    .eq("journey_id", journeyId)
+    .neq("status", "VOIDED");
+  if (error) {
+    console.error("fetchJourneyTrialItemRows error", error);
+    return [];
+  }
+  return (data ?? []) as TrialItemStatusRow[];
+}
+
+/** Slice 2b board badge: closed-RETURNED and total non-VOIDED trial item
+ *  counts per journey, one batched read for every card on the board. */
+export async function fetchReturnedTrialCounts(
+  journeyIds: string[]
+): Promise<Record<string, { returned: number; total: number }>> {
+  if (journeyIds.length === 0) return {};
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("sleep_trial_items")
+    .select("journey_id,status,close_reason")
+    .in("journey_id", journeyIds)
+    .neq("status", "VOIDED");
+  if (error) {
+    console.error("fetchReturnedTrialCounts error", error);
+    return {};
+  }
+  const out: Record<string, { returned: number; total: number }> = {};
+  for (const row of (data ?? []) as {
+    journey_id: string;
+    status: string;
+    close_reason: string | null;
+  }[]) {
+    const entry = out[row.journey_id] ?? { returned: 0, total: 0 };
+    entry.total += 1;
+    if (row.status === "CLOSED" && row.close_reason === "RETURNED") {
+      entry.returned += 1;
+    }
+    out[row.journey_id] = entry;
+  }
+  return out;
+}
+
 export async function cancelJourney(journeyId: string, reason: string) {
   const supabase = createClient();
 

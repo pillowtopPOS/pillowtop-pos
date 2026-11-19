@@ -379,7 +379,28 @@ export function lineStatusText(opts: {
   dateLabel?: string | null;
   // Whether any unit on the order has left. Gates "Still here".
   anyOutOnOrder: boolean;
-}): { text: string; tone: "done" | "part" | "open" } | null {
+  // Units on the line that came back (trial items CLOSED as RETURNED).
+  // Returned wording replaces the pickup/delivery wording for those
+  // units; the tone keeps it visually distinct from "still out".
+  returned?: number;
+  // Pre-formatted short date of the latest returned unit.
+  returnedDateLabel?: string | null;
+}): { text: string; tone: "done" | "part" | "open" | "returned" } | null {
+  const returned = opts.returned ?? 0;
+  if (returned > 0) {
+    if (returned >= opts.quantity && opts.quantity > 0) {
+      return {
+        text: opts.returnedDateLabel
+          ? `Returned ${opts.returnedDateLabel}`
+          : "Returned",
+        tone: "returned",
+      };
+    }
+    return {
+      text: `${returned} of ${opts.quantity} returned`,
+      tone: "returned",
+    };
+  }
   if (opts.handed >= opts.quantity && opts.handed > 0) {
     const label = opts.method === "pickup" ? "Picked up" : "Delivered";
     return {

@@ -46,6 +46,11 @@ import {
   actionCompleteBlockers,
   actionMilestoneKeys,
 } from "../lib/journeys/exchange";
+import {
+  effectivePrice,
+  returnedCreditCents,
+  returnedPillText,
+} from "../lib/journeys/returns";
 import type { JourneyEvent } from "../lib/journeys/queries";
 import { deliveryCompletedActivityText } from "../lib/journeys/activityLabels";
 import type { SleepJourneyState } from "../lib/constants";
@@ -875,6 +880,39 @@ check("return complete blockers drop replacement text",
 check("exchange complete blockers pass through",
   actionCompleteBlockers(["a", "b"], "EXCHANGE").join("|") === "a|b" &&
     actionCompleteBlockers(null, "EXCHANGE").length === 0);
+
+// Slice 2b: a committed/completed return lowers the effective total by
+// refund_owed_cents; balance and credit derive from that, not the price.
+const returnWithFee = [
+  { action: "RETURN", status: "COMMITTED", refund_owed_cents: 90000 },
+];
+check("returned credit sums committed returns",
+  returnedCreditCents(returnWithFee) === 90000);
+check("effective price subtracts the refund owed",
+  effectivePrice(1000, returnWithFee) === 100);
+check("credit due before the refund is recorded",
+  100000 - effectivePrice(1000, returnWithFee) * 100 === 90000);
+check("balance zero after the refund lands in paid",
+  effectivePrice(1000, returnWithFee) - 100 === 0 &&
+    Math.max(0, 10000 - effectivePrice(1000, returnWithFee) * 100) === 0);
+const returnNoFee = [
+  { action: "RETURN", status: "COMPLETED", refund_owed_cents: 100000 },
+];
+check("no-fee completed return zeroes the effective price",
+  effectivePrice(1000, returnNoFee) === 0);
+check("cancelled and draft returns change nothing",
+  effectivePrice(1000, [
+    { action: "RETURN", status: "CANCELLED", refund_owed_cents: 90000 },
+    { action: "RETURN", status: "DRAFT", refund_owed_cents: 5000 },
+  ]) === 1000);
+check("exchange actions are not return credit",
+  returnedCreditCents([
+    { action: "EXCHANGE", status: "COMMITTED", refund_owed_cents: 40000 },
+  ]) === 0);
+check("returned pill wording",
+  returnedPillText(0, 2) === null &&
+    returnedPillText(1, 2) === "1 of 2 returned" &&
+    returnedPillText(2, 2) === "Fully returned");
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`);
 process.exit(failures === 0 ? 0 : 1);

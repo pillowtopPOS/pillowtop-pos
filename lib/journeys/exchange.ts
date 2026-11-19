@@ -309,6 +309,43 @@ export async function getExchangeAction(
   return data as ExchangeActionRead;
 }
 
+/** Every RETURN action that lowers the journey's effective price
+ *  (COMMITTED or COMPLETED). get_journey_exchange_actions only lists open
+ *  actions, so completed returns are found through the action_id that
+ *  record_payment_refund (161) writes into its payment_refunded events. */
+export async function fetchJourneyReturnActions(
+  journeyId: string,
+  events: {
+    event_type: string;
+    outcome: string | null;
+    event_data: unknown;
+  }[]
+): Promise<ExchangeActionRead[]> {
+  const info = await getJourneyExchangeActions(journeyId);
+  const ids = new Set(
+    info.actions
+      .filter((a) => a.action === "RETURN")
+      .map((a) => a.action_id)
+  );
+  for (const e of events) {
+    if (e.event_type !== "payment_refunded" || e.outcome !== "SUCCEEDED") {
+      continue;
+    }
+    const actionId = (e.event_data as { action_id?: unknown } | null)
+      ?.action_id;
+    if (typeof actionId === "string") ids.add(actionId);
+  }
+  const reads = await Promise.all(
+    Array.from(ids).map((id) => getExchangeAction(id).catch(() => null))
+  );
+  return reads.filter(
+    (r): r is ExchangeActionRead =>
+      r !== null &&
+      r.action === "RETURN" &&
+      (r.status === "COMMITTED" || r.status === "COMPLETED")
+  );
+}
+
 export type JourneyExchangeAction = {
   action_id: string;
   status: "DRAFT" | "COMMITTED";

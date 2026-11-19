@@ -42,6 +42,7 @@ import {
   fetchJourneyFulfillmentSummary,
   fetchJourneysFulfillmentCounts,
   fetchJourneysLineItemQuantities,
+  fetchReturnedTrialCounts,
   fetchJourneyRequirementStatuses,
   fetchJourneyLiveTrialStatuses,
   recordPayment,
@@ -69,6 +70,14 @@ import {
 } from "@/lib/journeys/sleepTrial";
 import { localTodayISO } from "@/lib/dates";
 import { computeNetPaid } from "@/lib/journeys/paid";
+import {
+  effectivePrice,
+  returnedPillText,
+} from "@/lib/journeys/returns";
+import {
+  fetchJourneyReturnActions,
+  type ExchangeActionRead,
+} from "@/lib/journeys/exchange";
 import Modal from "@/components/Modal";
 import FinancingCalculator from "@/components/FinancingCalculator";
 import JourneyWorkspace from "@/components/journeys/JourneyWorkspace";
@@ -155,6 +164,11 @@ function BoardContent() {
   // the badge renders nothing rather than wrong numbers.
   const [fulfillmentCounts, setFulfillmentCounts] = useState<Record<string, number>>({});
   const [journeyUnitTotals, setJourneyUnitTotals] = useState<Record<string, { units: number; hasPickupLine: boolean; hasDeliveryLine: boolean }>>({});
+  // Slice 2b: closed-RETURNED vs total trial items per journey, for the
+  // card's "returned" pill.
+  const [returnedTrialCounts, setReturnedTrialCounts] = useState<
+    Record<string, { returned: number; total: number }>
+  >({});
   // Journeys whose every live trial item is parked in an exchange/return
   // stay off the board lists — they still open by id everywhere else.
   const [hiddenJourneyIds, setHiddenJourneyIds] = useState<Set<string>>(new Set());
@@ -261,6 +275,12 @@ function BoardContent() {
     journeyId: string;
     statuses: string[] | null;
   } | null>(null);
+  // RETURN actions for the dialog's journey (2b): the balance line uses
+  // the effective price once they are known.
+  const [completionReturns, setCompletionReturns] = useState<{
+    journeyId: string;
+    actions: ExchangeActionRead[];
+  } | null>(null);
   const calculatorCompanyId = useMemo(() => {
     if (!currentEmployee?.home_store_id) return null;
     return stores.find((s) => s.id === currentEmployee.home_store_id)?.company_id ?? null;
@@ -307,12 +327,14 @@ function BoardContent() {
     // out" badge and the trial-chip filter below. A failed read returns
     // an empty map, which shows no badges rather than wrong numbers.
     const ids = data.map((j) => j.id);
-    const [fulfillCounts, unitTotals] = await Promise.all([
+    const [fulfillCounts, unitTotals, returnedCounts] = await Promise.all([
       fetchJourneysFulfillmentCounts(ids),
       fetchJourneysLineItemQuantities(data),
+      fetchReturnedTrialCounts(ids),
     ]);
     setFulfillmentCounts(fulfillCounts);
     setJourneyUnitTotals(unitTotals);
+    setReturnedTrialCounts(returnedCounts);
 
     // Trial status comes from the evaluator (ST-4) — one batch call for
     // every journey sitting in the Sleep Trial column, plus any journey
@@ -501,15 +523,14 @@ function BoardContent() {
 
   // The completion dialog's balance must be fresh: it can open from a
   // card drag or card button while the panel's events feed is empty or
-  // still showing a different journey.
+  // still showing a different journey. Return actions are read for every
+  // transition so a committed return lowers the shown balance.
   useEffect(() => {
-    if (
-      !pendingTransition ||
-      pendingTransition.transition.event !== "delivery_completed"
-    ) {
+    if (!pendingTransition) {
       setCompletionPaid(null);
       setCompletionHandover(null);
       setDialogTrialStatuses(null);
+      setCompletionReturns(null);
       // The dialog is closed (or is not a completion): an in-flight
       // flag from an unmounted attempt can never be relevant again.
       completionInFlight.current = false;
@@ -517,6 +538,26 @@ function BoardContent() {
     }
     const journeyId = pendingTransition.journey.id;
     let alive = true;
+    setCompletionReturns(null);
+    fetchJourneyEvents(journeyId)
+      .then((evs) => fetchJourneyReturnActions(journeyId, evs))
+      .then((actions) => {
+        if (alive) setCompletionReturns({ journeyId, actions });
+      })
+      .catch(() => {
+        // An empty list shows the unadjusted balance - same as before
+        // 2b - instead of hiding the number on a read failure.
+        if (alive) setCompletionReturns({ journeyId, actions: [] });
+      });
+    if (pendingTransition.transition.event !== "delivery_completed") {
+      setCompletionPaid(null);
+      setCompletionHandover(null);
+      setDialogTrialStatuses(null);
+      completionInFlight.current = false;
+      return () => {
+        alive = false;
+      };
+    }
     setCompletionQty({});
     // Trial items bind when the order reaches Sold and when lines change,
     // so the panel's earlier read can be stale. Read again at the moment
@@ -793,7 +834,14 @@ function BoardContent() {
         }
 
         const totalPaid = await fetchTotalPaid(journey.id);
-        const remaining = journey.price - totalPaid;
+        // 2b: a committed/completed return lowers what is still owed;
+        // collecting the unadjusted remainder would overcharge.
+        const returnActions = await fetchJourneyReturnActions(
+          journey.id,
+          events
+        ).catch(() => []);
+        const remaining =
+          effectivePrice(journey.price, returnActions) - totalPaid;
 
         if (amount > remaining) {
           setPendingOverpayment({
@@ -1294,6 +1342,7 @@ function BoardContent() {
                 trialEvals={trialEvals}
                 fulfillmentCounts={fulfillmentCounts}
                 journeyUnitTotals={journeyUnitTotals}
+                returnedTrialCounts={returnedTrialCounts}
                 onSelect={selectJourney}
               />
             ))}
@@ -1511,7 +1560,14 @@ function BoardContent() {
                     <p className="font-medium text-slate-700">
                       Current balance due: $
                       {(
-                        pendingTransition.journey.price - completionPaid.paid
+                        (completionReturns?.journeyId ===
+                        pendingTransition.journey.id
+                          ? effectivePrice(
+                              pendingTransition.journey.price,
+                              completionReturns.actions
+                            )
+                          : pendingTransition.journey.price) -
+                        completionPaid.paid
                       ).toFixed(2)}
                     </p>
                   </div>
@@ -1526,7 +1582,15 @@ function BoardContent() {
                 <div className="mb-4 rounded-md bg-slate-50 p-3 text-sm">
                   {(() => {
                     const paid = computeNetPaid(events);
-                    const balance = pendingTransition.journey.price - paid;
+                    const price =
+                      completionReturns?.journeyId ===
+                      pendingTransition.journey.id
+                        ? effectivePrice(
+                            pendingTransition.journey.price,
+                            completionReturns.actions
+                          )
+                        : pendingTransition.journey.price;
+                    const balance = price - paid;
                     return (
                       <p className="font-medium text-slate-700">
                         Current balance due: ${balance.toFixed(2)}
@@ -2142,6 +2206,7 @@ function Column({
   trialEvals,
   fulfillmentCounts,
   journeyUnitTotals,
+  returnedTrialCounts,
   onSelect,
 }: {
   state: SleepJourneyState;
@@ -2153,6 +2218,7 @@ function Column({
     string,
     { units: number; hasPickupLine: boolean; hasDeliveryLine: boolean }
   >;
+  returnedTrialCounts: Record<string, { returned: number; total: number }>;
   onSelect: (j: JourneyWithDetails) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: state });
@@ -2181,6 +2247,7 @@ function Column({
             trialEvals={trialEvals.get(j.id) ?? []}
             unitsOut={fulfillmentCounts[j.id] ?? 0}
             unitMeta={journeyUnitTotals[j.id]}
+            returnedCounts={returnedTrialCounts[j.id]}
             onSelect={onSelect}
           />
         ))}
@@ -2229,6 +2296,7 @@ function JourneyCard({
   trialEvals,
   unitsOut,
   unitMeta,
+  returnedCounts,
   onSelect,
 }: {
   journey: JourneyWithDetails;
@@ -2236,6 +2304,7 @@ function JourneyCard({
   trialEvals: SleepTrialEvaluation[];
   unitsOut: number;
   unitMeta?: { units: number; hasPickupLine: boolean; hasDeliveryLine: boolean };
+  returnedCounts?: { returned: number; total: number };
   onSelect: (j: JourneyWithDetails) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
@@ -2354,6 +2423,16 @@ function JourneyCard({
               hasPickupLine: unitMeta?.hasPickupLine ?? false,
               hasDeliveryLine: unitMeta?.hasDeliveryLine ?? false,
             })}
+          </span>
+        </p>
+      )}
+      {(returnedCounts?.returned ?? 0) > 0 && (
+        <p>
+          <span className="inline-block rounded-full bg-violet-100 px-1.5 py-px text-[10px] font-medium text-violet-700">
+            {returnedPillText(
+              returnedCounts?.returned ?? 0,
+              returnedCounts?.total ?? 0
+            )}
           </span>
         </p>
       )}

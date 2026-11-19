@@ -13,11 +13,17 @@ import {
 } from "@/lib/journeys/fulfillment";
 import { formatPhone } from "@/lib/format/phone";
 import {
+  fetchJourneyReturnActions,
   getExchangeAction,
   getJourneyExchangeActions,
   type ExchangeActionRead,
   type ExchangeParentLink,
 } from "@/lib/journeys/exchange";
+import {
+  effectivePrice,
+  returnedCreditCents,
+  returnedPillText,
+} from "@/lib/journeys/returns";
 import {
   fetchProductAvailabilityByLocation,
   fetchProductStock,
@@ -37,6 +43,7 @@ import {
   updateJourneyLineItem,
   canFinalizeDelivery,
   fetchJourneyLiveTrialStatuses,
+  fetchJourneyTrialItemRows,
   fetchJourneyFulfillmentSummary,
   totalUnits,
   type JourneyFulfillmentSummary,
@@ -719,11 +726,81 @@ export default function JourneyWorkspace({
 
   const paid = computeNetPaid(events);
 
-  // Money the customer has over the agreed total: the Credit due row,
+  // Slice 2b: RETURN actions (COMMITTED/COMPLETED) lower this order's
+  // effective price by their refund_owed_cents. Reloaded with events so
+  // a recorded refund refreshes the rail in the same pass.
+  const [returnActions, setReturnActions] = useState<ExchangeActionRead[]>(
+    []
+  );
+  // Closed-RETURNED trial items drive the per-line "Returned" status and
+  // the summary's returned pill; the same rows give the pill's total.
+  const [trialItemRows, setTrialItemRows] = useState<
+    { line_item_id: string | null; status: string; close_reason: string | null; closed_at: string | null }[]
+  >([]);
+  useEffect(() => {
+    let alive = true;
+    fetchJourneyReturnActions(journey.id, events)
+      .then((a) => {
+        if (alive) setReturnActions(a);
+      })
+      .catch(() => {
+        // Keep the last good read - a transient failure must not blank
+        // the effective-price rows.
+      });
+    fetchJourneyTrialItemRows(journey.id)
+      .then((rows) => {
+        if (alive) setTrialItemRows(rows);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [journey.id, events]);
+
+  // Per-line returned counts and the order-level pill numbers.
+  const { returnedByLine, returnedTrialCount, trialItemCount } = useMemo(() => {
+    const byLine: Record<string, { count: number; lastClosedAt: string | null }> = {};
+    let returned = 0;
+    for (const row of trialItemRows) {
+      if (row.status === "CLOSED" && row.close_reason === "RETURNED") {
+        returned += 1;
+        if (row.line_item_id) {
+          const entry = byLine[row.line_item_id] ?? {
+            count: 0,
+            lastClosedAt: null,
+          };
+          entry.count += 1;
+          if (
+            row.closed_at &&
+            (entry.lastClosedAt === null || row.closed_at > entry.lastClosedAt)
+          ) {
+            entry.lastClosedAt = row.closed_at;
+          }
+          byLine[row.line_item_id] = entry;
+        }
+      }
+    }
+    return {
+      returnedByLine: byLine,
+      returnedTrialCount: returned,
+      trialItemCount: trialItemRows.length,
+    };
+  }, [trialItemRows]);
+
+  // Slice 2b: committed/completed returns lower what the customer
+  // effectively owes. journey.price stays the agreed total; every
+  // balance/credit read below uses the effective total instead.
+  const returnedCents = returnedCreditCents(returnActions);
+  const effectiveTotal =
+    journey.price !== null && journey.price !== undefined
+      ? effectivePrice(journey.price, returnActions)
+      : null;
+
+  // Money the customer has over the effective total: the Credit due row,
   // its banner and the Record refund button all read this one number.
   const creditCents =
-    journey.price !== null && journey.price !== undefined
-      ? Math.max(0, Math.round(paid * 100) - Math.round(journey.price * 100))
+    effectiveTotal !== null
+      ? Math.max(0, Math.round(paid * 100) - Math.round(effectiveTotal * 100))
       : 0;
   const refundablePayments = useMemo(
     () => refundablePaymentEvents(events),
@@ -738,8 +815,8 @@ export default function JourneyWorkspace({
   // agreed/paid (and any credit due back) but never an amount still owed.
   const balance = journey.cancelled_at
     ? null
-    : journey.price !== null && journey.price !== undefined
-      ? journey.price - paid
+    : effectiveTotal !== null
+      ? effectiveTotal - paid
       : null;
 
   // An exchange child in Quoted with money still owed: Next Action reads
@@ -753,17 +830,19 @@ export default function JourneyWorkspace({
 
   // A $0 journey (e.g. an even-or-credit exchange that flipped straight to
   // Sold, or an exchange child priced at zero) must never offer Record
-  // Payment — the payment would write a bad record.
-  const paymentAllowed = (journey.price ?? 0) > 0;
+  // Payment - the payment would write a bad record. A fully returned
+  // order also drops to zero owed, so the effective total gates this.
+  const paymentAllowed = (effectiveTotal ?? 0) > 0;
 
   // Paid >= price means no payment is due even if current_state hasn't
   // caught up yet (the Quoted -> Sold flip lands with the same event that
   // paid it). Record Payment must never be offered in that window — a
-  // second payment is a real double-charge, not a cosmetic glitch.
+  // second payment is a real double-charge, not a cosmetic glitch. The
+  // effective total covers the underpaid-order-with-a-return case.
   const paymentSettled =
-    journey.price != null &&
-    journey.price > 0 &&
-    paid >= journey.price;
+    effectiveTotal != null &&
+    effectiveTotal > 0 &&
+    paid >= effectiveTotal;
 
   const nextFollowUp = followUps
     .filter((f) => !f.completed_at)
@@ -2252,6 +2331,7 @@ export default function JourneyWorkspace({
                           fulfillmentSummary?.byLine[item.id] ?? 0;
                         const lastOut =
                           fulfillmentSummary?.lastOutByLine?.[item.id];
+                        const returnedEntry = returnedByLine[item.id];
                         const status = lineStatusText({
                           handed,
                           quantity: item.quantity,
@@ -2270,6 +2350,15 @@ export default function JourneyWorkspace({
                               })
                             : null,
                           anyOutOnOrder: totalHanded > 0,
+                          returned: returnedEntry?.count ?? 0,
+                          returnedDateLabel: returnedEntry?.lastClosedAt
+                            ? new Date(
+                                returnedEntry.lastClosedAt
+                              ).toLocaleDateString(undefined, {
+                                month: "short",
+                                day: "numeric",
+                              })
+                            : null,
                         });
                         if (!status) return null;
                         return (
@@ -2279,7 +2368,9 @@ export default function JourneyWorkspace({
                                 ? "text-emerald-700"
                                 : status.tone === "open"
                                   ? "text-amber-700"
-                                  : "text-slate-600"
+                                  : status.tone === "returned"
+                                    ? "text-violet-700"
+                                    : "text-slate-600"
                             }`}
                           >
                             {status.text}
@@ -2364,6 +2455,13 @@ export default function JourneyWorkspace({
                     </span>
                   </div>
                 )}
+              {returnedPillText(returnedTrialCount, trialItemCount) && (
+                <div className="mt-2">
+                  <span className="inline-block rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-medium text-violet-700">
+                    {returnedPillText(returnedTrialCount, trialItemCount)}
+                  </span>
+                </div>
+              )}
 
               {journeyUnits.some((u) => u.requirement_id === null) && (
                 <div className="mt-2 text-xs text-slate-500">
@@ -2615,10 +2713,9 @@ export default function JourneyWorkspace({
               {(() => {
                 const paymentUnknown = events.some((e) => e.outcome === "UNKNOWN");
                 const paidInFull =
-                  journey.price !== null &&
-                  journey.price !== undefined &&
-                  journey.price > 0 &&
-                  paid >= journey.price;
+                  effectiveTotal !== null &&
+                  effectiveTotal > 0 &&
+                  paid >= effectiveTotal;
                 return (
                   <>
                     <p
@@ -2634,15 +2731,15 @@ export default function JourneyWorkspace({
                         ? "Cancelled"
                         : paymentUnknown
                         ? "Payment outcome unknown"
-                        : journey.price === null || journey.price === undefined
+                        : effectiveTotal === null
                         ? "No price set"
                         : paidInFull
                         ? "Paid in full"
-                        : journey.price === 0 && paid > 0
-                        ? `No items on this order. $${paid.toFixed(2)} paid, shown as Credit due below.`
+                        : effectiveTotal === 0 && paid > 0
+                        ? `Nothing owed on this order. $${paid.toFixed(2)} paid, shown as Credit due below.`
                         : paid > 0
-                        ? `Deposit paid $${paid.toFixed(2)} of $${journey.price.toFixed(2)}`
-                        : `Balance due $${(journey.price - paid).toFixed(2)}`}
+                        ? `Deposit paid $${paid.toFixed(2)} of $${effectiveTotal.toFixed(2)}`
+                        : `Balance due $${(effectiveTotal - paid).toFixed(2)}`}
                     </p>
                     <div className="mt-1">
                       {journey.price !== null && journey.price !== undefined && (
@@ -2650,22 +2747,34 @@ export default function JourneyWorkspace({
                           ${journey.price.toFixed(2)}
                         </RailRow>
                       )}
-                      {journey.price !== null && journey.price !== undefined && (
+                      {returnedCents > 0 && (
+                        <RailRow label="Returned" align="right">
+                          <span className="text-violet-700">
+                            -${(returnedCents / 100).toFixed(2)}
+                          </span>
+                        </RailRow>
+                      )}
+                      {returnedCents > 0 && effectiveTotal !== null && (
+                        <RailRow label="Effective total" align="right">
+                          ${effectiveTotal.toFixed(2)}
+                        </RailRow>
+                      )}
+                      {effectiveTotal !== null && (
                         <RailRow label="Paid" align="right">
                           ${paid.toFixed(2)}
                         </RailRow>
                       )}
-                      {balance !== null && paid <= (journey.price ?? 0) && (
+                      {balance !== null && paid <= (effectiveTotal ?? 0) && (
                         <RailRow label="Balance due" align="right">
                           <span className={balance > 0 ? "text-amber-600" : "text-green-600"}>
                             ${balance.toFixed(2)}
                           </span>
                         </RailRow>
                       )}
-                      {journey.price !== null && journey.price !== undefined && paid > journey.price && (
+                      {effectiveTotal !== null && paid > effectiveTotal && (
                         <RailRow label="Credit due" align="right">
                           <span className="text-blue-600">
-                            ${(paid - journey.price).toFixed(2)}
+                            ${(paid - effectiveTotal).toFixed(2)}
                           </span>
                         </RailRow>
                       )}
@@ -2678,15 +2787,14 @@ export default function JourneyWorkspace({
                         later update.
                       </p>
                     )}
-                    {journey.price !== null &&
-                      journey.price !== undefined &&
+                    {effectiveTotal !== null &&
                       Math.round(paid * 100) >
-                        Math.round(journey.price * 100) && (
+                        Math.round(effectiveTotal * 100) && (
                         <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800">
                           The customer has paid $
                           {(
                             (Math.round(paid * 100) -
-                              Math.round(journey.price * 100)) /
+                              Math.round(effectiveTotal * 100)) /
                             100
                           ).toFixed(2)}{" "}
                           more than the order total. Refund them in your
@@ -2711,9 +2819,8 @@ export default function JourneyWorkspace({
                       paid > 0 &&
                       exchangeRefundCents <= 0 &&
                       !(
-                        journey.price !== null &&
-                        journey.price !== undefined &&
-                        Math.round(paid * 100) > Math.round(journey.price * 100)
+                        effectiveTotal !== null &&
+                        Math.round(paid * 100) > Math.round(effectiveTotal * 100)
                       ) && (
                         <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800">
                           The customer paid ${paid.toFixed(2)} on this
