@@ -141,13 +141,14 @@ export async function updateExchangeDraft(
  *  action returns its existing child journey id. */
 export async function commitSleepTrialAction(
   actionId: string
-): Promise<string> {
+): Promise<string | null> {
   const supabase = createClient();
   const { data, error } = await supabase.rpc("commit_sleep_trial_action", {
     p_action_id: actionId,
   });
   if (error) throw new Error(error.message);
-  return data as string;
+  // A RETURN commit has no child journey and returns null (161).
+  return data as string | null;
 }
 
 /** Cancels a COMMITTED exchange: cancels the child journey through the
@@ -375,6 +376,8 @@ export async function voidExchangeRefund(
 
 export type OpenExchangeWork = {
   action_id: string;
+  /** 161: 'EXCHANGE' | 'RETURN'; absent on pre-161 payloads. */
+  action?: SleepTrialActionKind;
   journey_id: string;
   child_journey_id: string | null;
   customer_name: string;
@@ -461,4 +464,37 @@ export async function createQuarantineArea(
   });
   if (error) throw new Error(error.message);
   return data as string;
+}
+
+// ---------------------------------------------------------------------------
+// Pure action helpers shared by the return UI and its tests.
+// ---------------------------------------------------------------------------
+
+// Milestone rows the card renders per action: a return has no replacement
+// journey, so only the receive, money and complete steps apply.
+export function actionMilestoneKeys(
+  action: SleepTrialActionKind
+): (keyof ExchangeMilestones)[] {
+  if (action === "RETURN") {
+    return ["original_received", "money_settled", "completed"];
+  }
+  return [
+    "replacement_reserved",
+    "replacement_delivered",
+    "original_received",
+    "money_settled",
+    "completed",
+  ];
+}
+
+// get_exchange_action's complete_blockers still lists the replacement
+// milestones for RETURN actions (091 predates returns); the card drops
+// them so Complete can enable once the real blockers are met.
+export function actionCompleteBlockers(
+  blockers: string[] | null | undefined,
+  action: SleepTrialActionKind
+): string[] {
+  const list = blockers ?? [];
+  if (action !== "RETURN") return list;
+  return list.filter((b) => !b.includes("replacement"));
 }

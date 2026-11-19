@@ -109,7 +109,7 @@ export default function MyWorkPage() {
     { key: "ready", title: "Ready to schedule" },
     { key: "follow_ups", title: "Follow-ups" },
     { key: "approvals", title: "Approvals" },
-    { key: "exchanges", title: "Exchanges" },
+    { key: "exchanges", title: "Exchanges & returns" },
     { key: "opportunities", title: "Opportunities" },
   ];
   const ACTION_CLS = "font-semibold underline";
@@ -379,6 +379,7 @@ export default function MyWorkPage() {
             ) {
               const w = item.data;
               const stalled = item.kind === "exchange_stalled";
+              const kindLabel = w.action === "RETURN" ? "Return" : "Exchange";
               return (
                 <div
                   key={w.action_id}
@@ -392,10 +393,10 @@ export default function MyWorkPage() {
                     <p className="text-sm font-medium text-slate-900">
                       <span className={ACTION_CLS}>
                         {stalled
-                          ? `Exchange stalled ${w.days_committed} day${
+                          ? `${kindLabel} stalled ${w.days_committed} day${
                               w.days_committed === 1 ? "" : "s"
                             }:`
-                          : "Exchange in progress:"}
+                          : `${kindLabel} in progress:`}
                       </span>{" "}
                       {w.customer_name ?? "Unknown customer"}
                       <span
@@ -403,7 +404,7 @@ export default function MyWorkPage() {
                           stalled ? "text-red-700" : "text-teal-700"
                         }`}
                       >
-                        Exchange
+                        {kindLabel}
                       </span>
                     </p>
                     {w.replacement_product_name && (

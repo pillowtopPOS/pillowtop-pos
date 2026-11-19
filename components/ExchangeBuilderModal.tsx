@@ -75,7 +75,7 @@ export default function ExchangeBuilderModal({
   currentEmployee: Employee | null;
   canCompleteExchange: boolean;
   onClose: () => void;
-  onCommitted: (childJourneyId: string) => void;
+  onCommitted: (childJourneyId: string | null) => void;
   onChanged: () => void;
 }) {
   const trialItemId = evaluation.trial_item_id;

@@ -76,6 +76,7 @@ import {
 import Modal from "@/components/Modal";
 import ExchangeBuilderModal from "@/components/ExchangeBuilderModal";
 import ExchangeMilestoneCard from "@/components/ExchangeMilestoneCard";
+import ReturnStartModal from "@/components/ReturnStartModal";
 
 // Some EXCEPTION_TYPE_LABELS already end in "exception" (e.g. "Return
 // exception") — appending the word again would print "Return exception
@@ -140,16 +141,13 @@ const ACTION_PRIORITY = [
 // disabled with a "Coming soon" tooltip so the bar is honest about
 // what exists today.
 const COMING_SOON_ACTIONS = new Set([
-  // START_EXCHANGE and VIEW_EXCHANGE are backed (EB-3a). START_RETURN and
-  // VIEW_RETURN stay disabled — returns are a later phase.
-  "START_RETURN",
+  // START_RETURN and VIEW_RETURN are backed since slice 2b (161).
   // REQUEST_PROTECTOR_EXCEPTION stays unbacked: PROTECTOR_OVERRIDE is
-  // deliberately rejected by request_trial_item_exception (074) — the
-  // override is a direct action — and an APPROVAL_REQUIRED protector
+  // deliberately rejected by request_trial_item_exception (074). The
+  // override is a direct action and an APPROVAL_REQUIRED protector
   // request has no path yet.
   "REQUEST_PROTECTOR_EXCEPTION",
   "SCHEDULE_FOLLOW_UP",
-  "VIEW_RETURN",
   "VIEW_HISTORY",
 ]);
 
@@ -242,6 +240,7 @@ export default function SleepTrialSection({
     Record<string, ExchangeActionRead>
   >({});
   const [builderEval, setBuilderEval] = useState<SleepTrialEvaluation | null>(null);
+  const [returnEval, setReturnEval] = useState<SleepTrialEvaluation | null>(null);
   const exceptionRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
@@ -389,7 +388,7 @@ export default function SleepTrialSection({
         setBuilderEval(e);
         break;
       case "VIEW_EXCHANGE": {
-        // Item is EXCHANGE_IN_PROGRESS — jump to the replacement journey.
+        // Item is EXCHANGE_IN_PROGRESS: jump to the replacement journey.
         // A paired item also emits VIEW_EXCHANGE; its action lives on the
         // sibling, so fall back to any committed action's child link.
         const childId =
@@ -399,6 +398,23 @@ export default function SleepTrialSection({
           exchangeInfo?.actions.find((a) => a.child_journey_id)
             ?.child_journey_id;
         if (childId) router.push(`/board?journey=${childId}`);
+        break;
+      }
+      case "START_RETURN":
+        // The modal quotes the return first (sale price, restocking fee,
+        // refund) and only then drafts + commits.
+        setReturnEval(e);
+        break;
+      case "VIEW_RETURN": {
+        // A return lives on this item: the milestone card renders inline.
+        // Make sure collapsed extra mattresses are visible, then scroll to
+        // the item card.
+        setShowAllTrials(true);
+        setTimeout(() => {
+          document
+            .getElementById(`trial-item-${e.trial_item_id}`)
+            ?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 50);
         break;
       }
       case "ADD_SLEEP_CONCERN":
@@ -853,10 +869,22 @@ export default function SleepTrialSection({
           onChanged={refresh}
           onCommitted={(childId) => {
             setBuilderEval(null);
-            // Board's ?journey= param opens the workspace for the child —
-            // the salesperson lands on the replacement sale.
-            router.push(`/board?journey=${childId}`);
+            // Board's ?journey= param opens the workspace for the child:
+            // the salesperson lands on the replacement sale. A commit
+            // can return null (returns have no child); refresh instead.
+            if (childId) {
+              router.push(`/board?journey=${childId}`);
+            } else {
+              refresh();
+            }
           }}
+        />
+      )}
+      {returnEval && (
+        <ReturnStartModal
+          evaluation={returnEval}
+          onClose={() => setReturnEval(null)}
+          onCommitted={refresh}
         />
       )}
       </div>
@@ -964,7 +992,10 @@ function TrialHeroCard({
     d?.night != null || corrections.length > 0 || hasPolicy;
 
   return (
-    <div className="rounded-md border border-teal-200 bg-white p-2.5">
+    <div
+      id={`trial-item-${e.trial_item_id}`}
+      className="rounded-md border border-teal-200 bg-white p-2.5"
+    >
       <div className="flex items-start justify-between gap-2">
         <p className="min-w-0 truncate text-sm font-semibold text-slate-900">
           {title}

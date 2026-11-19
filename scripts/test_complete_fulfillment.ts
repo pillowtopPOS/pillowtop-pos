@@ -42,6 +42,10 @@ import {
   pickRefundPayment,
   refundablePaymentEvents,
 } from "../lib/journeys/paid";
+import {
+  actionCompleteBlockers,
+  actionMilestoneKeys,
+} from "../lib/journeys/exchange";
 import type { JourneyEvent } from "../lib/journeys/queries";
 import { deliveryCompletedActivityText } from "../lib/journeys/activityLabels";
 import type { SleepJourneyState } from "../lib/constants";
@@ -852,6 +856,25 @@ check("a payment already refunded is skipped",
 check("no refundable payments returns null",
   pickRefundPayment([], feed, 500).payment === null &&
   pickRefundPayment([], feed, 500).amountCents === 0);
+
+// 161: return actions have no replacement milestones.
+check("return milestones skip the replacement rows",
+  actionMilestoneKeys("RETURN").join(",") ===
+    "original_received,money_settled,completed");
+check("exchange milestones keep all five rows",
+  actionMilestoneKeys("EXCHANGE").length === 5 &&
+    actionMilestoneKeys("EXCHANGE")[0] === "replacement_reserved");
+check("return complete blockers drop replacement text",
+  actionCompleteBlockers(
+    [
+      "The replacement order has not been delivered yet",
+      "The original mattress has not been marked received yet",
+    ],
+    "RETURN"
+  ).join("|") === "The original mattress has not been marked received yet");
+check("exchange complete blockers pass through",
+  actionCompleteBlockers(["a", "b"], "EXCHANGE").join("|") === "a|b" &&
+    actionCompleteBlockers(null, "EXCHANGE").length === 0);
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`);
 process.exit(failures === 0 ? 0 : 1);

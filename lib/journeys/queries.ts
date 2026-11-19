@@ -1596,7 +1596,8 @@ export async function recordPaymentRefund(
   amount: number,
   method: string,
   reason: string,
-  reference?: string
+  reference?: string,
+  actionId?: string
 ): Promise<string> {
   const supabase = createClient();
 
@@ -1615,6 +1616,9 @@ export async function recordPaymentRefund(
     p_method: method,
     p_reason: reason,
     p_reference: reference ?? null,
+    // 161: when set, the same transaction stamps the return action's
+    // refund fields so the complete milestone is met.
+    p_action_id: actionId ?? null,
   });
 
   if (error) {

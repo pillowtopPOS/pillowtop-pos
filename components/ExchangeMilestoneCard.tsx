@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import Modal from "@/components/Modal";
 import { activityShortDate } from "@/lib/journeys/activityLabels";
 import {
+  actionCompleteBlockers,
+  actionMilestoneKeys,
   cancelSleepTrialAction,
   completeSleepTrialAction,
   centsToDollars,
@@ -15,9 +17,20 @@ import {
   voidReturnedReceipt,
   type ExchangeActionRead,
   type ExchangeMilestone,
+  type ExchangeMilestones,
   type ExchangeRefundMethod,
 } from "@/lib/journeys/exchange";
-import { fetchStores, type Store } from "@/lib/journeys/queries";
+import {
+  fetchJourneyEvents,
+  fetchStores,
+  type JourneyEvent,
+  type Store,
+} from "@/lib/journeys/queries";
+import {
+  pickRefundPayment,
+  refundablePaymentEvents,
+} from "@/lib/journeys/paid";
+import RecordRefundModal from "@/components/RecordRefundModal";
 import { createClient } from "@/lib/supabase/client";
 
 // EB-3b: the milestone card on the original journey's Sleep Trial section.
@@ -25,13 +38,13 @@ import { createClient } from "@/lib/supabase/client";
 // can_complete) and every blocker is computed server-side by
 // get_exchange_action (091) — nothing is recomputed here.
 
-const MILESTONES: { key: keyof ExchangeActionRead["milestones"]; label: string }[] = [
-  { key: "replacement_reserved", label: "Replacement reserved" },
-  { key: "replacement_delivered", label: "Replacement delivered" },
-  { key: "original_received", label: "Original received" },
-  { key: "money_settled", label: "Money settled" },
-  { key: "completed", label: "Completed" },
-];
+const MILESTONE_LABELS: Record<keyof ExchangeMilestones, string> = {
+  replacement_reserved: "Replacement reserved",
+  replacement_delivered: "Replacement delivered",
+  original_received: "Original received",
+  money_settled: "Money settled",
+  completed: "Completed",
+};
 
 const REFUND_METHODS: { value: ExchangeRefundMethod; label: string }[] = [
   { value: "card", label: "Card" },
@@ -102,12 +115,25 @@ export default function ExchangeMilestoneCard({
   const [callerCan, setCallerCan] = useState({
     startExchange: false,
     completeExchange: false,
+    recordRefund: false,
   });
   const [receivedLine, setReceivedLine] = useState<string | null>(null);
   const [callerIsWarehouseBased, setCallerIsWarehouseBased] =
     useState(false);
   const [locationsReady, setLocationsReady] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
+  // RETURN only: the shared refund dialog needs the journey's payments.
+  const [refundRead, setRefundRead] = useState<
+    "idle" | "loading" | "ready" | "failed"
+  >("idle");
+  const [refundData, setRefundData] = useState<{
+    events: JourneyEvent[];
+    payments: JourneyEvent[];
+    initialPaymentId: string | null;
+  } | null>(null);
+
+  const isReturn = action.action === "RETURN";
+  const noun = isReturn ? "return" : "exchange";
 
   useEffect(() => {
     // Server enforces regardless; this only decides whether the buttons
@@ -117,10 +143,11 @@ export default function ExchangeMilestoneCard({
       supabase.rpc("has_permission", { p_key: "sleep_trial.start_exchange" }),
       supabase.rpc("has_permission", { p_key: "sleep_trial.complete_exchange" }),
     ]).then(([a, b]) =>
-      setCallerCan({
+      setCallerCan((c) => ({
+        ...c,
         startExchange: !!a.data,
         completeExchange: !!b.data,
-      })
+      }))
     );
     // Warehouse-based employees may receive without the start_exchange
     // key (server rule), so the button must not hide from them either.
@@ -128,13 +155,20 @@ export default function ExchangeMilestoneCard({
       if (!u.user) return;
       supabase
         .from("employees")
-        .select("home_store_id, stores(location_type)")
+        .select("home_store_id, role, stores(location_type)")
         .eq("auth_user_id", u.user.id)
         .eq("is_active", true)
         .maybeSingle()
         .then(({ data: emp }) => {
           const t = (emp as any)?.stores?.location_type;
           setCallerIsWarehouseBased(t === "WAREHOUSE");
+          // record_payment_refund gates on owner/admin/manager role (098).
+          const role = (emp as any)?.role;
+          setCallerCan((c) => ({
+            ...c,
+            recordRefund:
+              role === "owner" || role === "admin" || role === "manager",
+          }));
         });
     });
   }, []);
@@ -203,9 +237,28 @@ export default function ExchangeMilestoneCard({
   function open(which: "cancel" | "refund" | "void" | "receive" | "voidReceipt") {
     setError(null);
     if (which === "refund") {
-      setRefundMethod("card");
-      setRefundAmount(centsToDollars(owed));
-      setRefundReference("");
+      if (isReturn) {
+        // Returns refund through record_payment_refund (161): fetch the
+        // journey's payments so the shared dialog can offer a picker.
+        setRefundRead("loading");
+        setRefundData(null);
+        fetchJourneyEvents(action.journey_id)
+          .then((evs) => {
+            const payments = refundablePaymentEvents(evs);
+            const pick = pickRefundPayment(payments, evs, owed);
+            setRefundData({
+              events: evs,
+              payments,
+              initialPaymentId: pick.payment?.id ?? null,
+            });
+            setRefundRead("ready");
+          })
+          .catch(() => setRefundRead("failed"));
+      } else {
+        setRefundMethod("card");
+        setRefundAmount(centsToDollars(owed));
+        setRefundReference("");
+      }
     }
     if (which === "cancel") setCancelReason("");
     if (which === "void") setVoidReason("");
@@ -239,7 +292,7 @@ export default function ExchangeMilestoneCard({
   async function submitCancel() {
     setError(null);
     if (!cancelReason.trim()) {
-      setError("A reason is required to cancel an exchange");
+      setError(`A reason is required to cancel a ${noun}`);
       return;
     }
     await submit(() => cancelSleepTrialAction(action.action_id, cancelReason));
@@ -291,7 +344,10 @@ export default function ExchangeMilestoneCard({
     }
   }
 
-  const blockers = action.complete_blockers ?? [];
+  const blockers = actionCompleteBlockers(
+    action.complete_blockers,
+    action.action
+  );
   async function submitReceive() {
     setError(null);
     if (!receiveDate) {
@@ -330,8 +386,8 @@ export default function ExchangeMilestoneCard({
     <div className="mt-1.5 rounded-md border border-teal-300 bg-white p-2.5">
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs font-semibold text-teal-800">
-          Exchange in progress
-          {action.replacement_product_name
+          {isReturn ? "Return in progress" : "Exchange in progress"}
+          {!isReturn && action.replacement_product_name
             ? ` — ${action.replacement_product_name}`
             : ""}
         </p>
@@ -348,8 +404,12 @@ export default function ExchangeMilestoneCard({
       </div>
 
       <ul className="mt-1.5 space-y-0.5">
-        {MILESTONES.map(({ key, label }) => (
-          <MilestoneLine key={key} label={label} m={action.milestones[key]} />
+        {actionMilestoneKeys(action.action).map((key) => (
+          <MilestoneLine
+            key={key}
+            label={MILESTONE_LABELS[key]}
+            m={action.milestones[key]}
+          />
         ))}
       </ul>
 
@@ -363,6 +423,14 @@ export default function ExchangeMilestoneCard({
           system, then click Record refund.
         </p>
       )}
+      {isReturn &&
+        owed > 0 &&
+        !refundRecorded &&
+        !callerCan.recordRefund && (
+          <p className="mt-1 text-xs text-slate-500">
+            A manager records the refund for this return.
+          </p>
+        )}
       {refundRecorded && (
         <p className="mt-1.5 text-xs font-medium text-green-800">
           Refund recorded: {action.refund_method ?? "—"},{" "}
@@ -412,7 +480,7 @@ export default function ExchangeMilestoneCard({
               onClick={() => open("cancel")}
               className="rounded-md border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
             >
-              Cancel exchange
+              {isReturn ? "Cancel return" : "Cancel exchange"}
             </button>
           )}
           {canMarkReceived && (
@@ -431,7 +499,12 @@ export default function ExchangeMilestoneCard({
               Void receipt
             </button>
           )}
-          {action.can_record_refund && (
+          {((!isReturn && action.can_record_refund) ||
+            (isReturn &&
+              callerCan.recordRefund &&
+              action.status === "COMMITTED" &&
+              owed > 0 &&
+              !refundRecorded)) && (
             <button
               onClick={() => open("refund")}
               className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
@@ -439,7 +512,7 @@ export default function ExchangeMilestoneCard({
               Record refund
             </button>
           )}
-          {action.can_void_refund && (
+          {!isReturn && action.can_void_refund && (
             <button
               onClick={() => open("void")}
               className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
@@ -454,7 +527,7 @@ export default function ExchangeMilestoneCard({
                 disabled={blockers.length > 0 || saving}
                 className="rounded-md bg-teal-700 px-2 py-1 text-xs font-medium text-white hover:bg-teal-800 disabled:opacity-50"
               >
-                Complete exchange
+                {isReturn ? "Complete return" : "Complete exchange"}
               </button>
               {blockers.length > 0 && (
                 <ul className="mt-1 space-y-0.5">
@@ -473,6 +546,14 @@ export default function ExchangeMilestoneCard({
           )}
         </div>
       )}
+      {isReturn &&
+        action.status === "COMMITTED" &&
+        !action.can_complete &&
+        callerCan.completeExchange === false && (
+          <p className="mt-1.5 text-xs text-slate-500">
+            An owner or admin completes the return.
+          </p>
+        )}
       {error && !dialog && (
         <p className="mt-1.5 text-xs font-medium text-red-700">{error}</p>
       )}
@@ -485,7 +566,7 @@ export default function ExchangeMilestoneCard({
         >
           <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
             <h3 className="text-sm font-semibold text-slate-900">
-              Cancel exchange
+              {isReturn ? "Cancel return" : "Cancel exchange"}
             </h3>
             {action.cancel_block_code === "payment_on_record" ? (
               <>
@@ -497,7 +578,7 @@ export default function ExchangeMilestoneCard({
                     onClick={() => setDialog(null)}
                     className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
                   >
-                    Keep exchange
+                    Keep {noun}
                   </button>
                 </div>
               </>
@@ -511,21 +592,20 @@ export default function ExchangeMilestoneCard({
                     onClick={() => setDialog(null)}
                     className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
                   >
-                    Keep exchange
+                    Keep {noun}
                   </button>
                 </div>
               </>
             ) : (
               <>
                 <p className="mt-2 text-sm font-semibold text-slate-900">
-                  Cancel this exchange?
+                  Cancel this {noun}?
                 </p>
                 <p className="mt-1 text-sm text-slate-700">
                   This puts the original mattress back on the customer&apos;s
-                  sleep trial and cancels the replacement order. The
-                  approved exception used for this exchange is used up and
-                  will NOT come back. If the customer wants another
-                  exchange, a new exception is needed.
+                  sleep trial{isReturn ? "." : " and cancels the replacement order."}{" "}
+                  {!isReturn &&
+                    "The approved exception used for this exchange is used up and will NOT come back. If the customer wants another exchange, a new exception is needed."}
                 </p>
                 <label className="mt-3 block text-xs font-medium text-slate-700">
                   Why is it being cancelled? (required)
@@ -546,14 +626,18 @@ export default function ExchangeMilestoneCard({
                     onClick={() => setDialog(null)}
                     className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
                   >
-                    Keep exchange
+                    Keep {noun}
                   </button>
                   <button
                     onClick={submitCancel}
                     disabled={saving}
                     className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
                   >
-                    {saving ? "Cancelling…" : "Cancel exchange"}
+                    {saving
+                      ? "Cancelling…"
+                      : isReturn
+                        ? "Cancel return"
+                        : "Cancel exchange"}
                   </button>
                 </div>
               </>
@@ -562,7 +646,73 @@ export default function ExchangeMilestoneCard({
         </Modal>
       )}
 
-      {dialog === "refund" && (
+      {dialog === "refund" && isReturn && (
+        <>
+          {refundRead === "loading" && (
+            <Modal onClose={() => setDialog(null)}>
+              <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
+                <p className="text-sm text-slate-600">Loading payments...</p>
+              </div>
+            </Modal>
+          )}
+          {refundRead === "failed" && (
+            <Modal onClose={() => setDialog(null)}>
+              <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Record refund
+                </h3>
+                <p className="mt-2 text-sm text-red-700">
+                  Could not load the order's payments. Try again.
+                </p>
+                <div className="mt-4 flex justify-end">
+                  <button
+                    onClick={() => setDialog(null)}
+                    className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </Modal>
+          )}
+          {refundRead === "ready" &&
+            refundData &&
+            (refundData.payments.length === 0 ? (
+              <Modal onClose={() => setDialog(null)}>
+                <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    Record refund
+                  </h3>
+                  <p className="mt-2 text-sm text-slate-700">
+                    No refundable payment was found on this order.
+                  </p>
+                  <div className="mt-4 flex justify-end">
+                    <button
+                      onClick={() => setDialog(null)}
+                      className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              </Modal>
+            ) : (
+              <RecordRefundModal
+                payments={refundData.payments}
+                events={refundData.events}
+                defaultAmountCents={owed}
+                initialPaymentId={refundData.initialPaymentId ?? undefined}
+                actionId={action.action_id}
+                onClose={() => setDialog(null)}
+                onRecorded={() => {
+                  setDialog(null);
+                  onChanged();
+                }}
+              />
+            ))}
+        </>
+      )}
+      {dialog === "refund" && !isReturn && (
         <Modal onClose={() => setDialog(null)} saving={saving}>
           <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
             <h3 className="text-sm font-semibold text-slate-900">

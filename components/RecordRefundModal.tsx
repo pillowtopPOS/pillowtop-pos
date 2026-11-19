@@ -42,6 +42,7 @@ export default function RecordRefundModal({
   events,
   defaultAmountCents,
   initialPaymentId,
+  actionId,
   onClose,
   onRecorded,
 }: {
@@ -55,6 +56,9 @@ export default function RecordRefundModal({
   defaultAmountCents: number;
   // Selected payment on open; defaults to the first entry.
   initialPaymentId?: string;
+  // 161: when set the refund is linked to this return action and the
+  // server stamps its refund fields in the same transaction.
+  actionId?: string;
   onClose: () => void;
   onRecorded: () => void;
 }) {
@@ -109,7 +113,8 @@ export default function RecordRefundModal({
           cents / 100,
           method,
           reason.trim(),
-          reference.trim() || undefined
+          reference.trim() || undefined,
+          actionId
         ),
         REFUND_TIMEOUT_MS,
         "The refund request timed out. Check whether it was recorded before trying again."
