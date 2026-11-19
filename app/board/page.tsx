@@ -489,6 +489,9 @@ function BoardContent() {
       setCompletionPaid(null);
       setCompletionHandover(null);
       setDialogTrialStatuses(null);
+      // The dialog is closed (or is not a completion): an in-flight
+      // flag from an unmounted attempt can never be relevant again.
+      completionInFlight.current = false;
       return;
     }
     const journeyId = pendingTransition.journey.id;
@@ -649,7 +652,14 @@ function BoardContent() {
     const supabase = createClient();
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user || !isStoreConfirmedToday(session.user)) {
-      router.push(storeSelectUrl("/board"));
+      // This gate used to push to store-select with no message: the
+      // dialog unmounted mid-navigation and the click looked like it
+      // did nothing. Say why, then navigate a beat later so the text
+      // is actually read.
+      setModalError(
+        "Your store is not confirmed for today, so this could not be recorded. Taking you to the store picker now."
+      );
+      setTimeout(() => router.push(storeSelectUrl("/board")), 1500);
       return;
     }
 
@@ -672,7 +682,10 @@ function BoardContent() {
     // only exists for users with orders.backdate_fulfillment; a date is
     // sent only when it differs from today.
     if (transition.event === "delivery_completed") {
-      if (completionInFlight.current) return;
+      if (completionInFlight.current) {
+        setModalError("This order is already being recorded. Give it a moment.");
+        return;
+      }
       const request = buildCompletionRequest({
         canBackdate: canBackdateFulfillment,
         completedOn: fieldValues.completed_on,
