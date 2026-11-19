@@ -38,6 +38,11 @@ import {
   STOCK_TAG_LABEL,
 } from "../lib/journeys/completion";
 import { STATE_TRANSITIONS, transitionAppliesToFulfillment } from "../lib/journeys/state";
+import {
+  pickRefundPayment,
+  refundablePaymentEvents,
+} from "../lib/journeys/paid";
+import type { JourneyEvent } from "../lib/journeys/queries";
 import { deliveryCompletedActivityText } from "../lib/journeys/activityLabels";
 import type { SleepJourneyState } from "../lib/constants";
 
@@ -797,6 +802,56 @@ check("Completed success message exact",
 check("drag message exact",
   COMPLETION_DRAG_MESSAGE ===
     "Open the order and use its button to mark it picked up or delivered.");
+
+// ---- refund payment picking (credit-due Record refund) ----
+function ev(
+  id: string,
+  eventType: string,
+  amount: number,
+  createdAt: string,
+  extra: Record<string, unknown> = {},
+  outcome = "SUCCEEDED"
+): JourneyEvent {
+  return {
+    id,
+    journey_id: "j1",
+    event_type: eventType,
+    event_data: { amount, ...extra },
+    outcome,
+    triggered_by: "test",
+    created_at: createdAt,
+  };
+}
+const payOld = ev("p1", "payment_completed", 100, "2025-11-01T10:00:00Z");
+const payNew = ev("p2", "deposit_received", 50, "2025-11-02T10:00:00Z");
+const payUnknown = ev("p3", "payment_completed", 999, "2025-11-03T10:00:00Z", {}, "UNKNOWN");
+const feed = [payOld, payNew, payUnknown];
+const refundable = refundablePaymentEvents(feed);
+
+check("refundable payments are succeeded only, newest first",
+  refundable.length === 2 && refundable[0].id === "p2" && refundable[1].id === "p1");
+check("pick prefers the newest payment that covers the credit",
+  pickRefundPayment(refundable, feed, 4000).payment?.id === "p2" &&
+  pickRefundPayment(refundable, feed, 4000).amountCents === 4000);
+check("pick skips newer payments too small to cover",
+  pickRefundPayment(refundable, feed, 8000).payment?.id === "p1" &&
+  pickRefundPayment(refundable, feed, 8000).amountCents === 8000);
+check("pick caps the amount when nothing covers the credit",
+  (() => {
+    const pick = pickRefundPayment(refundable, feed, 20000);
+    return pick.payment?.id === "p1" && pick.amountCents === 10000;
+  })());
+check("a payment already refunded is skipped",
+  (() => {
+    const refund = ev("r1", "payment_refunded", 100, "2025-11-04T10:00:00Z", { refunds_payment_id: "p1" });
+    const feed2 = [...feed, refund];
+    const payments = refundablePaymentEvents(feed2);
+    const pick = pickRefundPayment(payments, feed2, 2000);
+    return payments.length === 1 && pick.payment?.id === "p2" && pick.amountCents === 2000;
+  })());
+check("no refundable payments returns null",
+  pickRefundPayment([], feed, 500).payment === null &&
+  pickRefundPayment([], feed, 500).amountCents === 0);
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`);
 process.exit(failures === 0 ? 0 : 1);

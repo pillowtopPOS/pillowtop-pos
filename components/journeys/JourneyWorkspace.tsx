@@ -72,7 +72,11 @@ import {
   transitionAppliesToFulfillment,
   type JourneyEventType,
 } from "@/lib/journeys/state";
-import { computeNetPaid } from "@/lib/journeys/paid";
+import {
+  computeNetPaid,
+  pickRefundPayment,
+  refundablePaymentEvents,
+} from "@/lib/journeys/paid";
 import {
   completionButtonDecision,
   completionClosesOrder,
@@ -88,6 +92,7 @@ import {
 } from "@/lib/journeys/sleepTrial";
 import Modal from "@/components/Modal";
 import ConfirmModal from "@/components/ConfirmModal";
+import RecordRefundModal from "@/components/RecordRefundModal";
 import ProductPicker, { type ProductSelection } from "@/components/ProductPicker";
 import JourneyActivity from "@/components/JourneyActivity";
 import {
@@ -714,6 +719,21 @@ export default function JourneyWorkspace({
 
   const paid = computeNetPaid(events);
 
+  // Money the customer has over the agreed total: the Credit due row,
+  // its banner and the Record refund button all read this one number.
+  const creditCents =
+    journey.price !== null && journey.price !== undefined
+      ? Math.max(0, Math.round(paid * 100) - Math.round(journey.price * 100))
+      : 0;
+  const refundablePayments = useMemo(
+    () => refundablePaymentEvents(events),
+    [events]
+  );
+  const creditRefundPick = useMemo(
+    () => pickRefundPayment(refundablePayments, events, creditCents),
+    [refundablePayments, events, creditCents]
+  );
+
   // cancelled_at nulls the balance — a cancelled journey shows what was
   // agreed/paid (and any credit due back) but never an amount still owed.
   const balance = journey.cancelled_at
@@ -1027,6 +1047,7 @@ export default function JourneyWorkspace({
   // Bumped on every panel refresh so JourneyActivity refetches its
   // interactions — journey.id alone doesn't change on refresh.
   const [activityRefreshKey, setActivityRefreshKey] = useState(0);
+  const [creditRefundOpen, setCreditRefundOpen] = useState(false);
   // JourneyActivity reports whether an inline form (pin panel,
   // schedule follow-up) has unsaved input or a save in flight.
   const [activityState, setActivityState] = useState({
@@ -2672,6 +2693,16 @@ export default function JourneyWorkspace({
                           payment system, then record the refund here.
                         </p>
                       )}
+                    {canReconcile &&
+                      creditCents > 0 &&
+                      creditRefundPick.payment !== null && (
+                        <button
+                          onClick={() => setCreditRefundOpen(true)}
+                          className="mt-2 w-full rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
+                        >
+                          Record refund
+                        </button>
+                      )}
                     {/* Inform, don't block: a cancelled journey with money
                         still on it owes the customer a refund. Suppressed
                         when an existing banner already says so (exchange
@@ -3193,6 +3224,17 @@ export default function JourneyWorkspace({
             </Modal>
           );
         })()}
+
+        {creditRefundOpen && (
+          <RecordRefundModal
+            payments={refundablePayments}
+            events={events}
+            defaultAmountCents={creditCents}
+            initialPaymentId={creditRefundPick.payment?.id}
+            onClose={() => setCreditRefundOpen(false)}
+            onRecorded={handlePanelRefresh}
+          />
+        )}
       </div>
     </Modal>
   );

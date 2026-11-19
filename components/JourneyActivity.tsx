@@ -44,12 +44,11 @@ import {
 import {
   FOLLOW_UP_METHOD_LABELS,
   FOLLOW_UP_TYPE_LABELS,
-  recordPaymentRefund,
   voidPaymentRefund,
 } from "@/lib/journeys/queries";
 import { refundableCentsOnPayment } from "@/lib/journeys/paid";
-import { PAYMENT_METHOD_OPTIONS } from "@/lib/journeys/state";
 import Modal from "@/components/Modal";
+import RecordRefundModal from "@/components/RecordRefundModal";
 import type {
   Employee,
   FollowUp,
@@ -219,12 +218,6 @@ export default function JourneyActivity({
   } | null>(null);
   const [errorSaving, setErrorSaving] = useState(false);
   const [refundTarget, setRefundTarget] = useState<JourneyEvent | null>(null);
-  const [refundAmount, setRefundAmount] = useState("");
-  const [refundMethod, setRefundMethod] = useState(PAYMENT_METHOD_OPTIONS[0]);
-  const [refundReason, setRefundReason] = useState("");
-  const [refundReference, setRefundReference] = useState("");
-  const [refundSaving, setRefundSaving] = useState(false);
-  const [refundError, setRefundError] = useState<string | null>(null);
   const [voidTarget, setVoidTarget] = useState<JourneyEvent | null>(null);
   const [voidReason, setVoidReason] = useState("");
   const [voidSaving, setVoidSaving] = useState(false);
@@ -467,45 +460,6 @@ export default function JourneyActivity({
     }
   }
 
-  function openRefund(e: JourneyEvent) {
-    setRefundTarget(e);
-    setRefundAmount((refundableCentsOnPayment(e, events) / 100).toFixed(2));
-    setRefundMethod(PAYMENT_METHOD_OPTIONS[0]);
-    setRefundReason("");
-    setRefundReference("");
-    setRefundError(null);
-  }
-
-  async function submitRefund() {
-    if (!refundTarget) return;
-    const amount = parseFloat(refundAmount);
-    if (!(amount > 0)) {
-      setRefundError("Enter an amount above $0.");
-      return;
-    }
-    if (!refundReason.trim()) {
-      setRefundError("A reason is required to record a refund.");
-      return;
-    }
-    setRefundSaving(true);
-    setRefundError(null);
-    try {
-      await recordPaymentRefund(
-        refundTarget.id,
-        amount,
-        refundMethod,
-        refundReason.trim(),
-        refundReference.trim() || undefined
-      );
-      setRefundTarget(null);
-      refresh();
-    } catch (e: any) {
-      setRefundError(e.message ?? "Failed to record the refund");
-    } finally {
-      setRefundSaving(false);
-    }
-  }
-
   async function submitVoidRefund() {
     if (!voidTarget) return;
     if (!voidReason.trim()) {
@@ -638,7 +592,7 @@ export default function JourneyActivity({
                 </p>
                 {canModerate && refundableCents > 0 && (
                   <button
-                    onClick={() => openRefund(e)}
+                    onClick={() => setRefundTarget(e)}
                     className="mt-1 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
                   >
                     Record refund
@@ -974,82 +928,13 @@ export default function JourneyActivity({
       )}
 
       {refundTarget && (
-        <Modal
+        <RecordRefundModal
+          payments={[refundTarget]}
+          events={events}
+          defaultAmountCents={refundableCentsOnPayment(refundTarget, events)}
           onClose={() => setRefundTarget(null)}
-          saving={refundSaving}
-          dirty={refundReason.trim() !== "" || refundReference.trim() !== ""}
-        >
-          <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
-            <h2 className="mb-2 text-lg font-semibold text-slate-900">
-              Record refund
-            </h2>
-            <p className="mb-3 text-sm text-slate-600">
-              This records a refund you already made in your payment system.
-              PillowTop does not move money.
-            </p>
-            <label className="mb-3 block text-sm font-medium text-slate-700">
-              Refund amount
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                value={refundAmount}
-                onChange={(e) => setRefundAmount(e.target.value)}
-                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              />
-            </label>
-            <label className="mb-3 block text-sm font-medium text-slate-700">
-              Refund method
-              <select
-                value={refundMethod}
-                onChange={(e) => setRefundMethod(e.target.value)}
-                className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-              >
-                {PAYMENT_METHOD_OPTIONS.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="mb-3 block text-sm font-medium text-slate-700">
-              Reason
-              <input
-                value={refundReason}
-                onChange={(e) => setRefundReason(e.target.value)}
-                placeholder="Why is this refund being made?"
-                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              />
-            </label>
-            <label className="block text-sm font-medium text-slate-700">
-              Reference (optional)
-              <input
-                value={refundReference}
-                onChange={(e) => setRefundReference(e.target.value)}
-                placeholder="Processor refund id, receipt, etc."
-                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              />
-            </label>
-            {refundError && (
-              <p className="mt-3 text-sm text-red-600">{refundError}</p>
-            )}
-            <div className="mt-4 flex gap-2">
-              <button
-                onClick={submitRefund}
-                disabled={refundSaving}
-                className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
-              >
-                {refundSaving ? "Recording…" : "Record refund"}
-              </button>
-              <button
-                onClick={() => setRefundTarget(null)}
-                className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </Modal>
+          onRecorded={refresh}
+        />
       )}
 
       {voidTarget && (

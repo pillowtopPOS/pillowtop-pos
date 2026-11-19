@@ -9,9 +9,13 @@ import type { JourneyEvent } from "@/lib/journeys/queries";
 
 const PAYMENT_TYPES = new Set(["deposit_received", "payment_completed"]);
 
-function amountCents(e: JourneyEvent): number {
+export function paymentAmountCents(e: JourneyEvent): number {
   const a = e.event_data?.amount;
   return Math.round((typeof a === "number" ? a : 0) * 100);
+}
+
+function amountCents(e: JourneyEvent): number {
+  return paymentAmountCents(e);
 }
 
 export function computeNetPaidCents(events: JourneyEvent[]): number {
@@ -45,4 +49,43 @@ export function refundableCentsOnPayment(
     }
   }
   return amountCents(payment) - refunded;
+}
+
+// SUCCEEDED payments that still have money left to refund, newest first.
+export function refundablePaymentEvents(events: JourneyEvent[]): JourneyEvent[] {
+  return events
+    .filter(
+      (e) =>
+        e.outcome === "SUCCEEDED" &&
+        PAYMENT_TYPES.has(e.event_type) &&
+        refundableCentsOnPayment(e, events) > 0
+    )
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+
+// Where a credit refund should point by default: the first payment
+// (callers pass newest first) that can cover the whole credit, else the
+// one with the most left to refund, with the amount capped there.
+export function pickRefundPayment(
+  payments: JourneyEvent[],
+  events: JourneyEvent[],
+  creditCents: number
+): { payment: JourneyEvent | null; amountCents: number } {
+  let best: JourneyEvent | null = null;
+  let bestCents = -1;
+  for (const p of payments) {
+    const left = refundableCentsOnPayment(p, events);
+    if (left <= 0) continue;
+    if (left >= creditCents) {
+      return { payment: p, amountCents: creditCents };
+    }
+    if (left > bestCents) {
+      best = p;
+      bestCents = left;
+    }
+  }
+  return {
+    payment: best,
+    amountCents: best ? Math.min(creditCents, bestCents) : 0,
+  };
 }
