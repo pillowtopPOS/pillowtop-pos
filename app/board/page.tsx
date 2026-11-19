@@ -37,6 +37,7 @@ import {
   subscribeToJourneyChanges,
   recordJourneyEvent,
   completeJourneyFulfillment,
+  recordJourneyFulfillment,
   fetchJourneyLineItems,
   fetchJourneyFulfillmentSummary,
   fetchJourneysFulfillmentCounts,
@@ -93,14 +94,19 @@ import {
   effectiveLineFulfillment,
   linePickupLocationId,
   anyRequirementPending,
-  completionClosesOrder,
+  completionClosesWithChoice,
   completionConfirmReady,
   completionHandoverLines,
+  completionMethodLines,
+  completionStepperLine,
   joinLocationNames,
   OTHER_ITEMS_STAY_OPEN_NOTE,
+  otherMethodItemsRemain,
   pickupLocationIds,
+  pickupLocationNote,
   remainingUnits,
   STOCK_TAG_LABEL,
+  type CompletionStepperLine,
 } from "@/lib/journeys/completion";
 import { effectiveShipTo, formatShipToLine } from "@/lib/customers/shipTo";
 import type { JourneyLineItem } from "@/lib/journeys/queries";
@@ -167,6 +173,10 @@ function BoardContent() {
   const [pendingTransition, setPendingTransition] = useState<{
     journey: JourneyWithDetails;
     transition: StateTransition;
+    // The fulfillment method the completion dialog acts on. Defaults to
+    // the order's own type; the panel's pickup control passes "pickup"
+    // for delivery orders with pickup lines.
+    method?: "pickup" | "delivery";
   } | null>(null);
   const [pendingFieldValues, setPendingFieldValues] = useState<Record<string, string>>({});
   const [pendingReconcile, setPendingReconcile] = useState<{
@@ -201,6 +211,14 @@ function BoardContent() {
   // orders.backdate_fulfillment gates the earlier-date field in the
   // completion dialog; fetched once per board mount.
   const [canBackdateFulfillment, setCanBackdateFulfillment] = useState(false);
+  // orders.pickup_any_location unlocks every location's pickup steppers
+  // in the completion dialog; without it only the active location is
+  // editable. Fetched once per board mount.
+  const [canPickupAnyLocation, setCanPickupAnyLocation] = useState(false);
+  // Per-line stepper values in the completion dialog. Lines absent here
+  // default to their full remaining quantity; locked or out-of-stock
+  // lines always count as zero.
+  const [completionQty, setCompletionQty] = useState<Record<string, number>>({});
   const completionInFlight = useRef(false);
   // Paid total fetched fresh each time the completion dialog opens; the
   // panel's events feed can be empty or belong to another journey, so
@@ -469,6 +487,7 @@ function BoardContent() {
 
   useEffect(() => {
     hasPermission("orders.backdate_fulfillment").then(setCanBackdateFulfillment);
+    hasPermission("orders.pickup_any_location").then(setCanPickupAnyLocation);
   }, []);
 
   useEffect(() => {
@@ -496,6 +515,7 @@ function BoardContent() {
     }
     const journeyId = pendingTransition.journey.id;
     let alive = true;
+    setCompletionQty({});
     // Trial items bind when the order reaches Sold and when lines change,
     // so the panel's earlier read can be stale. Read again at the moment
     // the dialog opens; until it lands the destination is unknown.
@@ -647,7 +667,11 @@ function BoardContent() {
   async function executeTransition(
     journey: JourneyWithDetails,
     transition: StateTransition,
-    fieldValues: Record<string, string>
+    fieldValues: Record<string, string>,
+    // The exact lines the completion dialog will hand over, when the
+    // caller is the unified completion dialog. null/undefined means the
+    // legacy whole-order path (zero-line orders and non-dialog callers).
+    fulfillmentLines?: { lineItemId: string; quantity: number }[] | null
   ) {
     const supabase = createClient();
     let session;
@@ -690,11 +714,13 @@ function BoardContent() {
       }
     }
 
-    // Completion goes through complete_journey_fulfillment (m147): the
-    // RPC enforces permissions, state rules, and backdate reasons, and
-    // its plain-English errors are shown as returned. The date field
-    // only exists for users with orders.backdate_fulfillment; a date is
-    // sent only when it differs from today.
+    // Completion goes through record_journey_fulfillment with the
+    // dialog's chosen lines, or complete_journey_fulfillment for the
+    // legacy whole-order path (zero-line orders). Both RPCs enforce
+    // permissions, state rules, and backdate reasons, and their
+    // plain-English errors are shown as returned. The date field only
+    // exists for users with orders.backdate_fulfillment; a date is sent
+    // only when it differs from today.
     if (transition.event === "delivery_completed") {
       if (completionInFlight.current) {
         setModalError("This order is already being recorded. Give it a moment.");
@@ -714,10 +740,15 @@ function BoardContent() {
       setBoardBusy(true);
       try {
         const result = await Promise.race([
-          completeJourneyFulfillment(journey.id, {
-            completedOn: request.completedOn,
-            reason: request.reason,
-          }),
+          fulfillmentLines
+            ? recordJourneyFulfillment(journey.id, fulfillmentLines, {
+                completedOn: request.completedOn,
+                reason: request.reason,
+              })
+            : completeJourneyFulfillment(journey.id, {
+                completedOn: request.completedOn,
+                reason: request.reason,
+              }),
           new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error("rpc timed out")), 30000)
           ),
@@ -927,7 +958,34 @@ function BoardContent() {
     setSelectedJourney(j);
   }
 
-  async function executeAction(journey: JourneyWithDetails, eventType: JourneyEventType) {
+  async function executeAction(
+    journey: JourneyWithDetails,
+    eventType: JourneyEventType,
+    opts?: { fulfillmentMethod?: "pickup" | "delivery" }
+  ) {
+    // The completion dialog is scoped to one fulfillment method. The
+    // order's own method follows the transition table; the panel can
+    // also open it for the other method (pickup lines on a delivery
+    // order) from states the transition list does not cover, so the
+    // dialog opens for delivery_completed regardless.
+    if (eventType === "delivery_completed") {
+      const transition = getTransitionForEvent(
+        journey.current_state,
+        eventType
+      ) ?? {
+        to: "Sleep Trial" as SleepJourneyState,
+        event: "delivery_completed" as const,
+        label: "Mark picked up",
+      };
+      setPendingTransition({
+        journey,
+        transition,
+        method: opts?.fulfillmentMethod,
+      });
+      setPendingFieldValues({});
+      return;
+    }
+
     const transition = getTransitionForEvent(journey.current_state, eventType);
     if (
       !transition ||
@@ -938,8 +996,7 @@ function BoardContent() {
 
     if (
       transition.requiredFields &&
-      transition.requiredFields.length > 0 ||
-      transition.event === "delivery_completed"
+      transition.requiredFields.length > 0
     ) {
       setPendingTransition({ journey, transition });
       setPendingFieldValues(
@@ -1020,31 +1077,117 @@ function BoardContent() {
     paidLoaded: completionPaidLoaded,
   });
 
-  // Confirm stays disabled while any handed-over line's requirement is
-  // still pending. The RPC refuses the write too, but the dialog should
-  // never offer a button that cannot succeed. Only the lines the action
-  // actually hands over count.
+  // The method this dialog is acting on: the order's own type unless the
+  // panel opened it for the other method (pickup lines on a delivery
+  // order). Everything below is scoped to this one method.
+  const completionMethod =
+    completionIsOpen && pendingTransition
+      ? pendingTransition.method ?? pendingTransition.journey.fulfillment_type
+      : null;
+
+  // Lines of the dialog's method with units still left to hand over.
   const completionDialogLines =
     completionIsOpen &&
+    completionMethod &&
     completionHandover?.journeyId === pendingTransition.journey.id &&
     completionHandover.status === "loaded"
-      ? completionHandoverLines({
-          fulfillment: pendingTransition.journey.fulfillment_type,
+      ? completionMethodLines({
+          orderFulfillment: pendingTransition.journey.fulfillment_type,
+          method: completionMethod,
           items: completionHandover.items,
           handed: completionHandover.byLine,
         })
       : [];
-  const completionBlocksConfirm =
+  const completionHandoverLoaded =
     completionIsOpen &&
     completionHandover?.journeyId === pendingTransition.journey.id &&
-    completionHandover.status === "loaded" &&
+    completionHandover.status === "loaded";
+  // Confirm stays disabled while a delivery line's requirement is still
+  // pending. The RPC refuses the write too, but the dialog should never
+  // offer a button that cannot succeed. Pickup lines with a pending
+  // requirement get a locked stepper instead.
+  const completionBlocksConfirm =
+    completionMethod === "delivery" &&
+    completionHandoverLoaded &&
     anyRequirementPending(
       completionDialogLines.map((item) =>
         item.product_id
-          ? completionHandover.reqStatus[item.product_id]
+          ? completionHandover!.reqStatus[item.product_id]
           : null
       )
     );
+
+  // Where the signed-in employee works today, for the pickup steppers'
+  // location lock. Same fallback as the RPC's location checks.
+  const completionActiveStoreId =
+    activeStoreId ?? currentEmployee?.home_store_id ?? null;
+
+  // Units each dialog line will hand over: the stepper value for pickup
+  // (locked and out-of-stock lines always 0), the full remaining count
+  // for delivery.
+  const completionPickupInfo = new Map<string, CompletionStepperLine>();
+  const completionChosen: Record<string, number> = {};
+  if (completionHandoverLoaded && completionMethod) {
+    for (const li of completionDialogLines) {
+      if (completionMethod === "pickup") {
+        const info = completionStepperLine(li, pendingTransition.journey.store_id, {
+          handed: completionHandover!.byLine,
+          reqStatus: completionHandover!.reqStatus,
+          canPickupAnyLocation,
+          activeStoreId: completionActiveStoreId,
+        });
+        completionPickupInfo.set(li.id, info);
+        completionChosen[li.id] = info.editable
+          ? Math.min(completionQty[li.id] ?? info.remaining, info.remaining)
+          : 0;
+      } else {
+        completionChosen[li.id] = remainingUnits(
+          li,
+          completionHandover!.byLine
+        );
+      }
+    }
+  }
+  const completionTotalChosen = completionDialogLines.reduce(
+    (sum, li) => sum + (completionChosen[li.id] ?? 0),
+    0
+  );
+  const completionOthersStayOpen =
+    completionHandoverLoaded && completionMethod
+      ? otherMethodItemsRemain({
+          orderFulfillment: pendingTransition.journey.fulfillment_type,
+          method: completionMethod,
+          items: completionHandover!.items,
+          handed: completionHandover!.byLine,
+        })
+      : false;
+  // Whether this Confirm closes the order, judged on the chosen
+  // quantities. null while the reads are still landing.
+  const completionClosesNow =
+    completionHandoverLoaded && completionMethod
+      ? completionClosesWithChoice({
+          orderFulfillment: pendingTransition.journey.fulfillment_type,
+          method: completionMethod,
+          items: completionHandover!.items,
+          handed: completionHandover!.byLine,
+          chosen: completionChosen,
+        })
+      : null;
+
+  // The lines the Confirm button sends. null means the legacy
+  // whole-order path, used only by orders with no line items.
+  function completionConfirmLines():
+    | { lineItemId: string; quantity: number }[]
+    | null {
+    if (!completionHandoverLoaded || !completionMethod) return null;
+    if (completionHandover!.items.length === 0) return null;
+    return completionDialogLines
+      .map((li) => ({
+        lineItemId: li.id,
+        quantity: completionChosen[li.id] ?? 0,
+      }))
+      .filter((l) => l.quantity > 0);
+  }
 
   return (
     <main className="min-h-screen bg-slate-50 p-6">
@@ -1268,10 +1411,14 @@ function BoardContent() {
         >
           <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
             <h2 className="mb-2 text-lg font-semibold text-slate-900">
-              {pendingTransition.transition.label}
+              {pendingTransition.transition.event === "delivery_completed"
+                ? completionMethod === "pickup"
+                  ? "Mark picked up"
+                  : "Mark delivered"
+                : pendingTransition.transition.label}
             </h2>
             {pendingTransition.transition.event === "delivery_completed" &&
-              pendingTransition.journey.fulfillment_type === "pickup" && (
+              completionMethod === "pickup" && (
                 <p className="-mt-1 mb-2 text-sm text-slate-500">
                   {(() => {
                     const locIds =
@@ -1279,12 +1426,7 @@ function BoardContent() {
                         pendingTransition.journey.id &&
                       completionHandover.status === "loaded"
                       ? pickupLocationIds(
-                          completionHandoverLines({
-                            fulfillment:
-                              pendingTransition.journey.fulfillment_type,
-                            items: completionHandover.items,
-                            handed: completionHandover.byLine,
-                          }),
+                          completionDialogLines,
                           pendingTransition.journey
                         )
                       : [pendingTransition.journey.store_id];
@@ -1331,12 +1473,11 @@ function BoardContent() {
                 completionHandover.status === "loaded";
               const closes =
                 isCompletion && handoverLoaded
-                  ? completionClosesOrder({
-                      fulfillment: pendingTransition.journey.fulfillment_type,
-                      items: completionHandover.items,
-                      handed: completionHandover.byLine,
-                    })
-                  : info?.closing ?? true;
+                  ? completionClosesNow ?? true
+                  : completionMethod ===
+                      pendingTransition.journey.fulfillment_type
+                    ? info?.closing ?? true
+                    : false;
               return (
                 <>
                   <p className="mb-4 text-sm text-slate-600">
@@ -1352,7 +1493,7 @@ function BoardContent() {
                   )}
                   {isCompletion &&
                     info?.decision?.kind === "note" &&
-                    pendingTransition.journey.fulfillment_type === "delivery" && (
+                    completionMethod === "delivery" && (
                       <p className="-mt-2 mb-4 text-sm text-slate-600">
                         {info.decision.text}
                       </p>
@@ -1404,7 +1545,7 @@ function BoardContent() {
               if (!handover || handover.status === "loading") {
                 return (
                   <p className="mb-4 text-sm text-slate-600">
-                    Loading what you are handing over...
+                    Loading the items on this order...
                   </p>
                 );
               }
@@ -1420,42 +1561,118 @@ function BoardContent() {
               const shipTo = effectiveShipTo(journey, journey.customer);
               const shipToLine = formatShipToLine(shipTo);
               const stockByVariant = handover.reqStatus;
-              // Only lines of the order's own method with units left are
-              // handed over now; other-method lines stay on the order.
-              const handoverLines = completionHandoverLines({
-                fulfillment: journey.fulfillment_type,
-                items: handover.items,
-                handed: handover.byLine,
-              });
-              const othersStayOpen = !completionClosesOrder({
-                fulfillment: journey.fulfillment_type,
-                items: handover.items,
-                handed: handover.byLine,
-              });
-              const lineStock = handoverLines.map((item) =>
+              const lineStock = completionDialogLines.map((item) =>
                 item.product_id
                   ? completionStockTag(stockByVariant[item.product_id])
                   : null
               );
-              const anyNotInStock = anyRequirementPending(
-                handoverLines.map((item) =>
-                  item.product_id ? stockByVariant[item.product_id] : null
-                )
-              );
+              const anyNotInStock =
+                completionMethod === "delivery" &&
+                anyRequirementPending(
+                  completionDialogLines.map((item) =>
+                    item.product_id ? stockByVariant[item.product_id] : null
+                  )
+                );
+              const storeName = (id: string | null) =>
+                (id &&
+                  (stores.find((s) => s.id === id)?.name ??
+                    (id === journey.store_id
+                      ? journey.store?.name ?? null
+                      : null))) ??
+                "the order store";
               return (
                 <div className="mb-4 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    {journey.fulfillment_type === "pickup"
+                    {completionMethod === "pickup"
                       ? "Items being picked up"
                       : "Items being delivered"}
                   </p>
+                  {completionMethod === "delivery" && (
+                    <p className="mb-2 text-xs text-slate-500">
+                      Delivery items all go out together.
+                    </p>
+                  )}
                   <ul className="space-y-2">
-                    {handoverLines.map((item, idx) => {
-                      const kind = effectiveLineFulfillment(
-                        item,
-                        journey.fulfillment_type
-                      );
+                    {completionDialogLines.map((item, idx) => {
                       const tag = lineStock[idx];
+                      if (completionMethod === "pickup") {
+                        const info = completionPickupInfo.get(item.id);
+                        const qty = completionChosen[item.id] ?? 0;
+                        const locName = storeName(info?.locId ?? null);
+                        const handedCount = handover.byLine[item.id] ?? 0;
+                        return (
+                          <li
+                            key={item.id}
+                            className="rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-medium text-slate-900">
+                                  {item.item_name}
+                                </div>
+                                <div className="text-xs text-slate-500">
+                                  At {locName}
+                                  {handedCount > 0 &&
+                                    ` · ${handedCount} of ${item.quantity} picked up`}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  disabled={!info?.editable || qty <= 0}
+                                  onClick={() =>
+                                    setCompletionQty((q) => ({
+                                      ...q,
+                                      [item.id]: Math.max(
+                                        0,
+                                        (completionChosen[item.id] ?? 0) - 1
+                                      ),
+                                    }))
+                                  }
+                                  className="h-7 w-7 rounded-md border border-slate-300 text-sm text-slate-700 disabled:opacity-40"
+                                >
+                                  -
+                                </button>
+                                <span className="w-8 text-center text-sm font-medium text-slate-900">
+                                  {qty}
+                                </span>
+                                <button
+                                  type="button"
+                                  disabled={
+                                    !info?.editable ||
+                                    qty >= (info?.remaining ?? 0)
+                                  }
+                                  onClick={() =>
+                                    setCompletionQty((q) => ({
+                                      ...q,
+                                      [item.id]: Math.min(
+                                        info?.remaining ?? 0,
+                                        (completionChosen[item.id] ?? 0) + 1
+                                      ),
+                                    }))
+                                  }
+                                  className="h-7 w-7 rounded-md border border-slate-300 text-sm text-slate-700 disabled:opacity-40"
+                                >
+                                  +
+                                </button>
+                                <span className="text-xs text-slate-500">
+                                  of {info?.remaining ?? 0}
+                                </span>
+                              </div>
+                            </div>
+                            {info?.locationLocked && (
+                              <p className="mt-1 text-xs text-slate-500">
+                                {pickupLocationNote([locName])}
+                              </p>
+                            )}
+                            {info?.outOfStock && (
+                              <p className="mt-1 text-xs text-amber-700">
+                                {STOCK_TAG_LABEL.not_in_stock} at {locName}
+                              </p>
+                            )}
+                          </li>
+                        );
+                      }
                       return (
                         <li key={item.id} className="text-slate-700">
                           <div className="flex items-start justify-between gap-2">
@@ -1478,36 +1695,25 @@ function BoardContent() {
                             )}
                           </div>
                           <p className="text-xs text-slate-500">
-                            {kind === "pickup"
-                              ? `Leaving from ${
-                                  stores.find(
-                                    (s) =>
-                                      s.id ===
-                                      linePickupLocationId(
-                                        item,
-                                        journey.store_id
-                                      )
-                                  )?.name ?? "the order store"
-                                }`
-                              : [
-                                  shipToLine || "No delivery address on file",
-                                  handover.bookedDate
-                                    ? `Booked ${new Date(
-                                        `${handover.bookedDate}T00:00:00`
-                                      ).toLocaleDateString(undefined, {
-                                        month: "short",
-                                        day: "numeric",
-                                      })}`
-                                    : null,
-                                ]
-                                  .filter(Boolean)
-                                  .join(" · ")}
+                            {[
+                              shipToLine || "No delivery address on file",
+                              handover.bookedDate
+                                ? `Booked ${new Date(
+                                    `${handover.bookedDate}T00:00:00`
+                                  ).toLocaleDateString(undefined, {
+                                    month: "short",
+                                    day: "numeric",
+                                  })}`
+                                : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
                           </p>
                         </li>
                       );
                     })}
                   </ul>
-                  {othersStayOpen && (
+                  {completionOthersStayOpen && (
                     <p className="mt-2 text-sm text-slate-600">
                       {OTHER_ITEMS_STAY_OPEN_NOTE}
                     </p>
@@ -1645,13 +1851,20 @@ function BoardContent() {
                   executeTransition(
                     pendingTransition.journey,
                     pendingTransition.transition,
-                    pendingFieldValues
+                    pendingFieldValues,
+                    completionIsOpen ? completionConfirmLines() : undefined
                   )
                 }
                 disabled={
                   boardBusy ||
                   completionBlocksConfirm ||
                   (completionIsOpen && !completionReadsReady) ||
+                  // An order with line items must send at least one unit;
+                  // zero-line orders keep the legacy whole-order path.
+                  (completionIsOpen &&
+                    completionHandoverLoaded &&
+                    completionHandover!.items.length > 0 &&
+                    completionTotalChosen === 0) ||
                   (pendingTransition.transition.event ===
                     "delivery_completed" &&
                     completionNeedsReason(

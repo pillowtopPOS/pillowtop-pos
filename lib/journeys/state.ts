@@ -80,7 +80,7 @@ export const STATE_TRANSITIONS: Record<SleepJourneyState, StateTransition[]> = {
     {
       to: "Sleep Trial",
       event: "delivery_completed",
-      label: "Mark Picked Up",
+      label: "Mark picked up",
       fulfillment: "pickup",
     },
   ],
@@ -91,7 +91,7 @@ export const STATE_TRANSITIONS: Record<SleepJourneyState, StateTransition[]> = {
     {
       to: "Sleep Trial",
       event: "delivery_completed",
-      label: "Mark Picked Up",
+      label: "Mark picked up",
       fulfillment: "pickup",
     },
   ],
@@ -99,7 +99,7 @@ export const STATE_TRANSITIONS: Record<SleepJourneyState, StateTransition[]> = {
     {
       to: "Sleep Trial",
       event: "delivery_completed",
-      label: "Mark Delivered",
+      label: "Mark delivered",
       fulfillment: "delivery",
     },
   ],

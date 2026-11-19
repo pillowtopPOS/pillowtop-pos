@@ -177,7 +177,12 @@ export type CompletionButtonDecision =
 // Lines of the other method never block the button, and an order with no
 // same-method units left shows no control at all.
 export function completionButtonDecision(opts: {
+  // The method this control would act on.
   fulfillment: "delivery" | "pickup";
+  // The order's own fulfillment type — supplies the default effective
+  // method for lines without an override. Defaults to `fulfillment`,
+  // which covers orders evaluated for their own method.
+  orderFulfillment?: "delivery" | "pickup";
   canMarkFulfilled: boolean;
   canPickupAnyLocation: boolean;
   canFinalizeDelivery: boolean;
@@ -192,11 +197,12 @@ export function completionButtonDecision(opts: {
   // over yet".
   handed?: Record<string, number>;
 }): CompletionButtonDecision {
+  const orderType = opts.orderFulfillment ?? opts.fulfillment;
   const openLines = opts.items.filter(
     (i) => remainingUnits(i, opts.handed) > 0
   );
   const sameMethodOpen = openLines.filter(
-    (i) => effectiveLineFulfillment(i, opts.fulfillment) === opts.fulfillment
+    (i) => effectiveLineFulfillment(i, orderType) === opts.fulfillment
   );
   // Nothing left to hand over on the order's own method: no button, no
   // note. Other-method remnants belong to the handover dialog. An order
@@ -216,7 +222,7 @@ export function completionButtonDecision(opts: {
 
   const journey = {
     store_id: opts.journeyStoreId,
-    fulfillment_type: opts.fulfillment,
+    fulfillment_type: orderType,
   };
   const locIds = pickupLocationIds(openLines, journey);
 
@@ -264,6 +270,101 @@ export function completionClosesOrder(opts: {
       effectiveLineFulfillment(i, opts.fulfillment) === opts.fulfillment ||
       remainingUnits(i, opts.handed) === 0
   );
+}
+
+// Per-line state for the pickup steppers in the completion dialog. A
+// line is editable only when the signed-in employee may take units from
+// its pickup location and its requirement is not still pending. Locked
+// and out-of-stock lines count as zero everywhere: the stepper, the
+// total, and the payload sent to the RPC.
+export type CompletionStepperLine = {
+  remaining: number;
+  locId: string;
+  locationLocked: boolean;
+  outOfStock: boolean;
+  editable: boolean;
+};
+
+export function completionStepperLine(
+  item: CompletionLineItem & { product_id?: string | null },
+  journeyStoreId: string,
+  opts: {
+    handed?: Record<string, number>;
+    reqStatus: Record<string, string>;
+    canPickupAnyLocation: boolean;
+    activeStoreId: string | null;
+  }
+): CompletionStepperLine {
+  const remaining = remainingUnits(item, opts.handed);
+  const locId = linePickupLocationId(item, journeyStoreId);
+  const locationLocked =
+    !opts.canPickupAnyLocation && locId !== opts.activeStoreId;
+  const tag = item.product_id
+    ? completionStockTag(opts.reqStatus[item.product_id])
+    : null;
+  const outOfStock = tag === "not_in_stock";
+  return {
+    remaining,
+    locId,
+    locationLocked,
+    outOfStock,
+    editable: !locationLocked && !outOfStock,
+  };
+}
+
+// Lines of the dialog's method with units still left to hand over, on
+// an order of type `orderFulfillment`. completionHandoverLines takes a
+// single type; this variant separates the order's default method from
+// the method being acted on so mixed orders are handled correctly.
+export function completionMethodLines<T extends CompletionLineItem>(opts: {
+  orderFulfillment: "delivery" | "pickup";
+  method: "delivery" | "pickup";
+  items: T[];
+  handed?: Record<string, number>;
+}): T[] {
+  return opts.items.filter(
+    (i) =>
+      effectiveLineFulfillment(i, opts.orderFulfillment) === opts.method &&
+      remainingUnits(i, opts.handed) > 0
+  );
+}
+
+// Lines with remaining units whose effective method (under the order's
+// own type) differs from the method the dialog is acting on. While this
+// is true the dialog shows OTHER_ITEMS_STAY_OPEN_NOTE.
+export function otherMethodItemsRemain(opts: {
+  orderFulfillment: "delivery" | "pickup";
+  method: "delivery" | "pickup";
+  items: CompletionLineItem[];
+  handed?: Record<string, number>;
+}): boolean {
+  return opts.items.some(
+    (i) =>
+      effectiveLineFulfillment(i, opts.orderFulfillment) !== opts.method &&
+      remainingUnits(i, opts.handed) > 0
+  );
+}
+
+// Whether the chosen quantities close the order: no other-method units
+// remain and every same-method line is leaving in full. A partial pickup
+// choice keeps the order open. For delivery the chosen map is always the
+// full remaining set, matching completionClosesOrder.
+export function completionClosesWithChoice(opts: {
+  orderFulfillment: "delivery" | "pickup";
+  method: "delivery" | "pickup";
+  items: CompletionLineItem[];
+  handed?: Record<string, number>;
+  // Units the dialog will hand over per line id.
+  chosen: Record<string, number>;
+}): boolean {
+  return opts.items.every((i) => {
+    const rem = remainingUnits(i, opts.handed);
+    if (rem === 0) return true;
+    if (effectiveLineFulfillment(i, opts.orderFulfillment) !== opts.method) {
+      return false;
+    }
+    return (i.id ? opts.chosen[i.id] ?? 0 : 0) >= rem;
+  });
 }
 
 export type CompletionControl =

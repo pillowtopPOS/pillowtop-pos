@@ -20,7 +20,11 @@ import {
   COMPLETION_NO_TRIAL_LINE,
   DELIVERY_FINALIZE_NOTE,
   completionClosesOrder,
+  completionClosesWithChoice,
   completionHandoverLines,
+  completionMethodLines,
+  completionStepperLine,
+  otherMethodItemsRemain,
   effectiveLineFulfillment,
   joinLocationNames,
   linePickupLocationId,
@@ -138,15 +142,15 @@ function labelFor(state: SleepJourneyState, fulfillment: "delivery" | "pickup") 
 }
 
 check("delivery Scheduled offers Mark Delivered",
-  labelFor("Scheduled", "delivery") === "Mark Delivered");
+  labelFor("Scheduled", "delivery") === "Mark delivered");
 check("delivery Sold offers nothing",
   labelFor("Sold", "delivery") === null);
 check("delivery Ready to Schedule offers nothing",
   labelFor("Ready to Schedule", "delivery") === null);
 check("pickup Sold offers Mark Picked Up",
-  labelFor("Sold", "pickup") === "Mark Picked Up");
+  labelFor("Sold", "pickup") === "Mark picked up");
 check("pickup Ready to Schedule offers Mark Picked Up",
-  labelFor("Ready to Schedule", "pickup") === "Mark Picked Up");
+  labelFor("Ready to Schedule", "pickup") === "Mark picked up");
 check("pickup Scheduled offers nothing",
   labelFor("Scheduled", "pickup") === null);
 check("pickup Sleep Trial offers nothing",
@@ -177,7 +181,7 @@ const readyPickup = STATE_TRANSITIONS["Ready to Schedule"].filter((t) =>
   transitionAppliesToFulfillment(t, "pickup")
 );
 check("pickup order in Ready to Schedule sees Mark Picked Up",
-  readyPickup.length === 1 && readyPickup[0].label === "Mark Picked Up");
+  readyPickup.length === 1 && readyPickup[0].label === "Mark picked up");
 const readyDelivery = STATE_TRANSITIONS["Ready to Schedule"].filter((t) =>
   transitionAppliesToFulfillment(t, "delivery")
 );
@@ -485,6 +489,198 @@ check("stock tag hides for cancelled/unknown",
 check("anyRequirementPending only fires on pending",
   anyRequirementPending(["ready", "pending"]) === true &&
   anyRequirementPending(["ready", "cancelled", null]) === false);
+
+// ---- Method-scoped lines (unified dialog) ----
+// completionMethodLines separates the order's own type from the method
+// the dialog acts on, so mixed orders are filtered correctly.
+{
+  const items = [
+    { id: "l1", quantity: 1, fulfillment_type_override: "pickup" as const },
+    { id: "l2", quantity: 2 },
+    { id: "l3", quantity: 1 },
+  ];
+  check("method pickup picks only the override line on a delivery order",
+    completionMethodLines({
+      orderFulfillment: "delivery", method: "pickup", items, handed: {},
+    })
+      .map((l) => l.id)
+      .join(",") === "l1");
+  check("method delivery picks un-overridden lines on a delivery order",
+    completionMethodLines({
+      orderFulfillment: "delivery", method: "delivery", items,
+      handed: { l3: 1 },
+    })
+      .map((l) => l.id)
+      .join(",") === "l2");
+  check("method pickup on a pickup order skips delivery-override lines",
+    completionMethodLines({
+      orderFulfillment: "pickup", method: "pickup",
+      items: [
+        { id: "a", quantity: 1 },
+        { id: "b", quantity: 1, fulfillment_type_override: "delivery" as const },
+      ],
+      handed: {},
+    })
+      .map((l) => l.id)
+      .join(",") === "a");
+}
+
+// otherMethodItemsRemain is scoped to the dialog's method under the
+// order's own type.
+check("otherMethodItemsRemain sees leftover pickup on delivery dialog",
+  otherMethodItemsRemain({
+    orderFulfillment: "delivery", method: "delivery",
+    items: [{ id: "p1", quantity: 1, fulfillment_type_override: "pickup" }],
+    handed: {},
+  }) === true);
+check("otherMethodItemsRemain sees leftover delivery on pickup dialog",
+  otherMethodItemsRemain({
+    orderFulfillment: "delivery", method: "pickup",
+    items: [{ id: "d1", quantity: 1 }],
+    handed: {},
+  }) === true);
+check("otherMethodItemsRemain ignores fully handed other-method lines",
+  otherMethodItemsRemain({
+    orderFulfillment: "delivery", method: "delivery",
+    items: [{ id: "p1", quantity: 1, fulfillment_type_override: "pickup" }],
+    handed: { p1: 1 },
+  }) === false);
+check("otherMethodItemsRemain false when all lines share the method",
+  otherMethodItemsRemain({
+    orderFulfillment: "pickup", method: "pickup",
+    items: [{ id: "p1", quantity: 2 }],
+    handed: { p1: 1 },
+  }) === false);
+
+// completionClosesWithChoice judges the chosen quantities: a partial
+// pickup choice keeps the order open, other-method remnants keep it open.
+{
+  const items = [
+    { id: "a", quantity: 2 },
+    { id: "b", quantity: 1, fulfillment_type_override: "delivery" as const },
+  ];
+  check("full pickup choice closes when no other units remain",
+    completionClosesWithChoice({
+      orderFulfillment: "pickup", method: "pickup",
+      items,
+      handed: { b: 1 },
+      chosen: { a: 2 },
+    }) === true);
+  check("partial pickup choice keeps the order open",
+    completionClosesWithChoice({
+      orderFulfillment: "pickup", method: "pickup",
+      items,
+      handed: { b: 1 },
+      chosen: { a: 1 },
+    }) === false);
+  check("remaining other-method units keep the order open",
+    completionClosesWithChoice({
+      orderFulfillment: "pickup", method: "pickup",
+      items,
+      handed: {},
+      chosen: { a: 2 },
+    }) === false);
+  check("delivery choice is always the full remaining set",
+    completionClosesWithChoice({
+      orderFulfillment: "pickup", method: "delivery",
+      items,
+      handed: {},
+      chosen: { b: 1 },
+    }) === false &&
+    completionClosesWithChoice({
+      orderFulfillment: "delivery", method: "delivery",
+      items: [{ id: "b", quantity: 1 }],
+      handed: {},
+      chosen: { b: 1 },
+    }) === true);
+  check("empty order closes (legacy path)",
+    completionClosesWithChoice({
+      orderFulfillment: "pickup", method: "pickup",
+      items: [],
+      handed: {},
+      chosen: {},
+    }) === true);
+}
+
+// completionButtonDecision orderFulfillment: the pickup decision on a
+// delivery order only counts pickup-effective lines.
+{
+  const items = [{ id: "d1", quantity: 1 }];
+  const d = completionButtonDecision({
+    fulfillment: "pickup",
+    orderFulfillment: "delivery",
+    canMarkFulfilled: true,
+    canPickupAnyLocation: true,
+    canFinalizeDelivery: false,
+    activeStoreId: "s1",
+    items,
+    journeyStoreId: "s1",
+    storeName: () => null,
+    handed: {},
+  });
+  check("pickup decision hidden when only delivery lines remain",
+    d.kind === "hidden");
+  const d2 = completionButtonDecision({
+    fulfillment: "pickup",
+    orderFulfillment: "delivery",
+    canMarkFulfilled: true,
+    canPickupAnyLocation: true,
+    canFinalizeDelivery: false,
+    activeStoreId: "s1",
+    items: [...items, { id: "p1", quantity: 1, fulfillment_type_override: "pickup" as const }],
+    journeyStoreId: "s1",
+    storeName: () => null,
+    handed: {},
+  });
+  check("pickup decision shows when pickup units remain on delivery order",
+    d2.kind === "button" && d2.fulfillment === "pickup");
+}
+
+// completionStepperLine: a pickup row is editable only at the employee's
+// location with stock ready; locked and out-of-stock lines count as zero.
+{
+  const item = {
+    id: "s1",
+    quantity: 3,
+    product_id: "v1",
+    pickup_location_id: null as string | null,
+  };
+  const base = {
+    handed: { s1: 1 } as Record<string, number>,
+    reqStatus: { v1: "ready" },
+    canPickupAnyLocation: false,
+    activeStoreId: "storeA",
+  };
+  const ok = completionStepperLine(item, "storeA", base);
+  check("stepper line editable at own location with stock ready",
+    ok.editable === true && ok.remaining === 2 && ok.locId === "storeA");
+  const locked = completionStepperLine(
+    { ...item, pickup_location_id: "storeB" },
+    "storeA",
+    base
+  );
+  check("stepper line locked at another location",
+    locked.editable === false && locked.locationLocked === true);
+  const anyLoc = completionStepperLine(
+    { ...item, pickup_location_id: "storeB" },
+    "storeA",
+    { ...base, canPickupAnyLocation: true }
+  );
+  check("pickup_any_location unlocks other locations",
+    anyLoc.editable === true && anyLoc.locationLocked === false);
+  const out = completionStepperLine(item, "storeA", {
+    ...base,
+    reqStatus: { v1: "pending" },
+  });
+  check("pending requirement makes the line out of stock",
+    out.editable === false && out.outOfStock === true);
+  const noStock = completionStepperLine(item, "storeA", {
+    ...base,
+    reqStatus: {},
+  });
+  check("unknown requirement keeps the line editable",
+    noStock.editable === true && noStock.outOfStock === false);
+}
 
 // Copy constants.
 check("Completed success message exact",

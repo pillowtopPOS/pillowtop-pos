@@ -93,7 +93,6 @@ import {
   activityEventTitle,
 } from "@/lib/journeys/activityLabels";
 import SleepTrialSection from "@/components/SleepTrialSection";
-import HandoverDialog from "@/components/journeys/HandoverDialog";
 import JourneyDelivery from "@/components/delivery/JourneyDelivery";
 
 // The inventory-ready flag is a one-time notification marker, not a live
@@ -401,7 +400,11 @@ function JourneyStateSummaryBar({
   // double-charge, not a cosmetic glitch.
   paymentSettled: boolean;
   refreshPending?: boolean;
-  onAction: (j: JourneyWithDetails, e: JourneyEventType) => void;
+  onAction: (
+    j: JourneyWithDetails,
+    e: JourneyEventType,
+    opts?: { fulfillmentMethod?: "pickup" | "delivery" }
+  ) => void;
 }) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -589,7 +592,11 @@ export default function JourneyWorkspace({
   trialEvals: SleepTrialEvaluation[];
   onReassigned: (journeyId: string) => void | Promise<void>;
   onClose: () => void;
-  onAction: (j: JourneyWithDetails, e: JourneyEventType) => void;
+  onAction: (
+    j: JourneyWithDetails,
+    e: JourneyEventType,
+    opts?: { fulfillmentMethod?: "pickup" | "delivery" }
+  ) => void;
   onCancel: (j: JourneyWithDetails) => void;
   onRefresh: () => void;
   // True while the board is refetching this journey's row + events after
@@ -693,8 +700,6 @@ export default function JourneyWorkspace({
       ),
     [fulfillmentSummary]
   );
-
-  const [handoverOpen, setHandoverOpen] = useState(false);
 
   const completionGoesTo = useMemo(
     () =>
@@ -892,13 +897,14 @@ export default function JourneyWorkspace({
     (t) => t.event === "delivery_completed"
   );
 
+  const storeNameFor = (id: string) =>
+    stores.find((s) => s.id === id)?.name ??
+    (id === journey.store_id ? journey.store?.name ?? null : null);
+
   const completionDecision: CompletionButtonDecision | null = useMemo(() => {
     if (!completionTransition || !completionPerms || !lineItemsLoaded) {
       return null;
     }
-    const storeName = (id: string) =>
-      stores.find((s) => s.id === id)?.name ??
-      (id === journey.store_id ? journey.store?.name ?? null : null);
     return completionButtonDecision({
       fulfillment: journey.fulfillment_type,
       canMarkFulfilled: completionPerms.canMarkFulfilled,
@@ -907,7 +913,7 @@ export default function JourneyWorkspace({
       activeStoreId: completionPerms.activeStoreId,
       items: lineItems,
       journeyStoreId: journey.store_id,
-      storeName,
+      storeName: storeNameFor,
       handed: fulfillmentSummary?.byLine,
     });
   }, [
@@ -935,23 +941,47 @@ export default function JourneyWorkspace({
     [journey.fulfillment_type, lineItems, fulfillmentSummary]
   );
 
-  // Slice 2a: the pickup handover button shows only while pickup units
-  // remain on an open order the user may mark fulfilled. Delivery-only
-  // orders and orders with no pickup lines left never see it.
-  const showHandoverButton =
+  // The unified completion dialog is scoped to one method. This is the
+  // secondary "Mark picked up" control: it opens the dialog for pickup
+  // lines whenever the primary completion control does not already cover
+  // them (delivery orders, and pickup orders in states the transition
+  // list does not cover like Waiting for Inventory). Same gate the old
+  // handover button used: open order in a handover-allowed state with
+  // the fulfillment summary loaded.
+  const pickupSecondaryActive =
     !journey.cancelled_at &&
     !journey.delivered_at &&
     ["Sold", "Ready to Schedule", "Waiting for Inventory", "Scheduled"].includes(
       journey.current_state
     ) &&
-    (completionPerms?.canMarkFulfilled ?? false) &&
     fulfillmentSummary !== null &&
     !fulfillmentReadFailed &&
-    lineItems.some(
-      (li) =>
-        effectiveLineFulfillment(li, journey.fulfillment_type) === "pickup" &&
-        li.quantity - (fulfillmentSummary?.byLine[li.id] ?? 0) > 0
-    );
+    !(journey.fulfillment_type === "pickup" && completionTransition);
+
+  const pickupDecision: CompletionButtonDecision | null = useMemo(() => {
+    if (!pickupSecondaryActive || !completionPerms || !lineItemsLoaded) {
+      return null;
+    }
+    return completionButtonDecision({
+      fulfillment: "pickup",
+      orderFulfillment: journey.fulfillment_type,
+      canMarkFulfilled: completionPerms.canMarkFulfilled,
+      canPickupAnyLocation: completionPerms.canPickupAnyLocation,
+      canFinalizeDelivery: completionPerms.canFinalizeDelivery,
+      activeStoreId: completionPerms.activeStoreId,
+      items: lineItems,
+      journeyStoreId: journey.store_id,
+      storeName: storeNameFor,
+      handed: fulfillmentSummary?.byLine,
+    });
+  }, [
+    pickupSecondaryActive,
+    completionPerms,
+    lineItemsLoaded,
+    lineItems,
+    journey,
+    fulfillmentSummary,
+  ]);
 
   // delivery_completed renders through the gated block below, never as a
   // plain transition button. Hidden/note decisions must not leak into
@@ -2210,7 +2240,7 @@ export default function JourneyWorkspace({
 
               {fulfillmentReadFailed && (
                 <div className="mt-2 text-xs text-slate-500">
-                  Handover status could not be loaded.
+                  Item status could not be loaded.
                 </div>
               )}
               {!fulfillmentReadFailed &&
@@ -2221,14 +2251,23 @@ export default function JourneyWorkspace({
                   </div>
                 )}
 
-              {showHandoverButton && (
+              {pickupDecision?.kind === "button" && (
                 <button
                   type="button"
-                  onClick={() => setHandoverOpen(true)}
+                  onClick={() =>
+                    onAction(journey, "delivery_completed", {
+                      fulfillmentMethod: "pickup",
+                    })
+                  }
                   className="mt-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
                 >
-                  Hand over items today
+                  Mark picked up
                 </button>
+              )}
+              {pickupDecision?.kind === "note" && (
+                <p className="mt-2 text-xs text-slate-500">
+                  {pickupDecision.text}
+                </p>
               )}
 
               {journeyUnits.some((u) => u.requirement_id === null) && (
@@ -2319,7 +2358,7 @@ export default function JourneyWorkspace({
                               e.target.value = String(handed);
                               setLineQtyError({
                                 itemId: item.id,
-                                text: `Quantity cannot go below the number already handed over (${handed})`,
+                                text: `Quantity cannot go below the number already out (${handed})`,
                               });
                               return;
                             }
@@ -2964,24 +3003,6 @@ export default function JourneyWorkspace({
               </div>
             </div>
           </Modal>
-        )}
-
-        {handoverOpen && (
-          <HandoverDialog
-            journey={journey}
-            lineItems={lineItems}
-            handed={fulfillmentSummary?.byLine ?? {}}
-            stores={stores}
-            activeStoreId={completionPerms?.activeStoreId ?? null}
-            canPickupAnyLocation={
-              completionPerms?.canPickupAnyLocation ?? false
-            }
-            onClose={() => setHandoverOpen(false)}
-            onSuccess={() => {
-              setHandoverOpen(false);
-              handlePanelRefresh();
-            }}
-          />
         )}
 
         {confirmFulfillment && (
