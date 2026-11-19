@@ -2274,17 +2274,28 @@ export default function JourneyWorkspace({
               )}
               {!fulfillmentReadFailed &&
                 totalHanded > 0 &&
-                !journey.delivered_at && (
+                !journey.delivered_at &&
+                // On a single-line order the per-line status says the
+                // same thing, so the summary count stays hidden.
+                lineItems.length >= 2 && (
                   <div className="mt-2 text-xs text-slate-500">
                     {fulfillmentCountLabel({
                       out: totalHanded,
                       total: totalUnits(lineItems),
                       method: journey.fulfillment_type,
-                      mixed: lineItems.some(
+                      hasPickupLine: lineItems.some(
                         (li) =>
-                          li.fulfillment_type_override &&
-                          li.fulfillment_type_override !==
+                          effectiveLineFulfillment(
+                            li,
                             journey.fulfillment_type
+                          ) === "pickup"
+                      ),
+                      hasDeliveryLine: lineItems.some(
+                        (li) =>
+                          effectiveLineFulfillment(
+                            li,
+                            journey.fulfillment_type
+                          ) === "delivery"
                       ),
                     })}
                   </div>

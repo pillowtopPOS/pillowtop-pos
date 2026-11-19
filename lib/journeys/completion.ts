@@ -398,20 +398,41 @@ export function lineStatusText(opts: {
 }
 
 // Order-level "N of M ..." count label used by the panel summary line
-// and the board card badge. Mixed-method orders fall back to "items out"
-// because a single verb would mislabel the other method's units.
+// and the board card badge. The verb follows the lines' effective
+// methods: an order whose lines are all pickup says "picked up", a mix
+// of both says "items out", and an order with no lines falls back to
+// its own fulfillment type.
 export function fulfillmentCountLabel(opts: {
   out: number;
   total: number;
   method: "pickup" | "delivery";
-  mixed: boolean;
+  hasPickupLine: boolean;
+  hasDeliveryLine: boolean;
 }): string {
-  const verb = opts.mixed
+  const verb = opts.hasPickupLine && opts.hasDeliveryLine
     ? "items out"
-    : opts.method === "pickup"
+    : opts.hasPickupLine
       ? "picked up"
-      : "delivered";
+      : opts.hasDeliveryLine
+        ? "delivered"
+        : opts.method === "pickup"
+          ? "picked up"
+          : "delivered";
   return `${opts.out} of ${opts.total} ${verb}`;
+}
+
+// The board card's gray method chip. Uses each line's effective method
+// (line override, else the order's type); orders with no lines fall
+// back to the order's own fulfillment type.
+export function fulfillmentMethodChip(opts: {
+  fulfillment: "pickup" | "delivery";
+  hasPickupLine: boolean;
+  hasDeliveryLine: boolean;
+}): string {
+  if (opts.hasPickupLine && opts.hasDeliveryLine) return "Pickup + Delivery";
+  if (opts.hasPickupLine) return "Pickup";
+  if (opts.hasDeliveryLine) return "Delivery";
+  return opts.fulfillment === "pickup" ? "Pickup" : "Delivery";
 }
 
 export type CompletionControl =

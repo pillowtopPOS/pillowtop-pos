@@ -93,6 +93,7 @@ import {
   COMPLETION_NOT_IN_STOCK_LINE,
   effectiveLineFulfillment,
   fulfillmentCountLabel,
+  fulfillmentMethodChip,
   linePickupLocationId,
   anyRequirementPending,
   completionClosesWithChoice,
@@ -153,7 +154,7 @@ function BoardContent() {
   // the two batched reads in loadData. Empty maps mean the read failed:
   // the badge renders nothing rather than wrong numbers.
   const [fulfillmentCounts, setFulfillmentCounts] = useState<Record<string, number>>({});
-  const [journeyUnitTotals, setJourneyUnitTotals] = useState<Record<string, { units: number; mixed: boolean }>>({});
+  const [journeyUnitTotals, setJourneyUnitTotals] = useState<Record<string, { units: number; hasPickupLine: boolean; hasDeliveryLine: boolean }>>({});
   // Journeys whose every live trial item is parked in an exchange/return
   // stay off the board lists — they still open by id everywhere else.
   const [hiddenJourneyIds, setHiddenJourneyIds] = useState<Set<string>>(new Set());
@@ -2148,7 +2149,10 @@ function Column({
   unresolvedJourneyIds: Set<string>;
   trialEvals: Map<string, SleepTrialEvaluation[]>;
   fulfillmentCounts: Record<string, number>;
-  journeyUnitTotals: Record<string, { units: number; mixed: boolean }>;
+  journeyUnitTotals: Record<
+    string,
+    { units: number; hasPickupLine: boolean; hasDeliveryLine: boolean }
+  >;
   onSelect: (j: JourneyWithDetails) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: state });
@@ -2176,8 +2180,7 @@ function Column({
             hasUnresolvedPayment={unresolvedJourneyIds.has(j.id)}
             trialEvals={trialEvals.get(j.id) ?? []}
             unitsOut={fulfillmentCounts[j.id] ?? 0}
-            unitsTotal={journeyUnitTotals[j.id]?.units ?? 0}
-            unitsMixed={journeyUnitTotals[j.id]?.mixed ?? false}
+            unitMeta={journeyUnitTotals[j.id]}
             onSelect={onSelect}
           />
         ))}
@@ -2225,16 +2228,14 @@ function JourneyCard({
   hasUnresolvedPayment,
   trialEvals,
   unitsOut,
-  unitsTotal,
-  unitsMixed,
+  unitMeta,
   onSelect,
 }: {
   journey: JourneyWithDetails;
   hasUnresolvedPayment: boolean;
   trialEvals: SleepTrialEvaluation[];
   unitsOut: number;
-  unitsTotal: number;
-  unitsMixed: boolean;
+  unitMeta?: { units: number; hasPickupLine: boolean; hasDeliveryLine: boolean };
   onSelect: (j: JourneyWithDetails) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
@@ -2285,6 +2286,15 @@ function JourneyCard({
           </span>
         </p>
       )}
+      <p>
+        <span className="inline-block rounded-full bg-slate-100 px-1.5 py-px text-[10px] font-medium text-slate-600">
+          {fulfillmentMethodChip({
+            fulfillment: journey.fulfillment_type,
+            hasPickupLine: unitMeta?.hasPickupLine ?? false,
+            hasDeliveryLine: unitMeta?.hasDeliveryLine ?? false,
+          })}
+        </span>
+      </p>
       {journey.employee && (
         <p className="truncate text-[10px] leading-tight text-slate-500">
           {journey.employee.name}
@@ -2308,14 +2318,15 @@ function JourneyCard({
       {hasUnresolvedPayment && (
         <p className="text-[10px] font-medium text-amber-600">Unresolved payment</p>
       )}
-      {unitsOut > 0 && unitsTotal > 0 && unitsOut < unitsTotal && (
+      {unitsOut > 0 && (unitMeta?.units ?? 0) > 0 && unitsOut < (unitMeta?.units ?? 0) && (
         <p>
           <span className="inline-block rounded-full bg-sky-100 px-1.5 py-px text-[10px] font-medium text-sky-700">
             {fulfillmentCountLabel({
               out: unitsOut,
-              total: unitsTotal,
+              total: unitMeta?.units ?? 0,
               method: journey.fulfillment_type,
-              mixed: unitsMixed,
+              hasPickupLine: unitMeta?.hasPickupLine ?? false,
+              hasDeliveryLine: unitMeta?.hasDeliveryLine ?? false,
             })}
           </span>
         </p>

@@ -25,6 +25,7 @@ import {
   completionMethodLines,
   completionStepperLine,
   fulfillmentCountLabel,
+  fulfillmentMethodChip,
   lineStatusText,
   otherMethodItemsRemain,
   effectiveLineFulfillment,
@@ -732,17 +733,62 @@ check("done tone is done",
     handed: 1, quantity: 1, method: "delivery", anyOutOnOrder: true,
   })?.tone === "done");
 
-// fulfillmentCountLabel: pickup/delivery verbs by method, "items out"
-// for mixed orders, shared by the panel line and the card badge.
-check("count label for a pickup order",
-  fulfillmentCountLabel({ out: 1, total: 2, method: "pickup", mixed: false })
-    === "1 of 2 picked up");
-check("count label for a delivery order",
-  fulfillmentCountLabel({ out: 1, total: 2, method: "delivery", mixed: false })
-    === "1 of 2 delivered");
+// fulfillmentCountLabel: the verb follows the lines' effective methods,
+// falling back to the order type when there are no lines.
+check("count label for an all-pickup order",
+  fulfillmentCountLabel({
+    out: 1, total: 2, method: "pickup",
+    hasPickupLine: true, hasDeliveryLine: false,
+  }) === "1 of 2 picked up");
+check("count label for an all-delivery order",
+  fulfillmentCountLabel({
+    out: 1, total: 2, method: "delivery",
+    hasPickupLine: false, hasDeliveryLine: true,
+  }) === "1 of 2 delivered");
 check("count label for a mixed order",
-  fulfillmentCountLabel({ out: 1, total: 2, method: "delivery", mixed: true })
-    === "1 of 2 items out");
+  fulfillmentCountLabel({
+    out: 1, total: 2, method: "delivery",
+    hasPickupLine: true, hasDeliveryLine: true,
+  }) === "1 of 2 items out");
+check("count label for a pickup-only order typed delivery",
+  fulfillmentCountLabel({
+    out: 1, total: 2, method: "delivery",
+    hasPickupLine: true, hasDeliveryLine: false,
+  }) === "1 of 2 picked up");
+check("count label falls back to order type with no lines",
+  fulfillmentCountLabel({
+    out: 1, total: 2, method: "delivery",
+    hasPickupLine: false, hasDeliveryLine: false,
+  }) === "1 of 2 delivered" &&
+  fulfillmentCountLabel({
+    out: 1, total: 2, method: "pickup",
+    hasPickupLine: false, hasDeliveryLine: false,
+  }) === "1 of 2 picked up");
+
+// fulfillmentMethodChip: the gray card chip.
+check("chip says Pickup for all-pickup lines",
+  fulfillmentMethodChip({
+    fulfillment: "pickup", hasPickupLine: true, hasDeliveryLine: false,
+  }) === "Pickup");
+check("chip says Delivery for all-delivery lines",
+  fulfillmentMethodChip({
+    fulfillment: "delivery", hasPickupLine: false, hasDeliveryLine: true,
+  }) === "Delivery");
+check("chip says Pickup + Delivery for mixed lines",
+  fulfillmentMethodChip({
+    fulfillment: "delivery", hasPickupLine: true, hasDeliveryLine: true,
+  }) === "Pickup + Delivery");
+check("chip falls back to the order type with no lines",
+  fulfillmentMethodChip({
+    fulfillment: "delivery", hasPickupLine: false, hasDeliveryLine: false,
+  }) === "Delivery" &&
+  fulfillmentMethodChip({
+    fulfillment: "pickup", hasPickupLine: false, hasDeliveryLine: false,
+  }) === "Pickup");
+check("chip uses line methods, not the order type",
+  fulfillmentMethodChip({
+    fulfillment: "delivery", hasPickupLine: true, hasDeliveryLine: false,
+  }) === "Pickup");
 
 // Copy constants.
 check("Completed success message exact",

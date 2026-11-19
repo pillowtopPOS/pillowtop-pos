@@ -968,14 +968,19 @@ export async function fetchJourneysFulfillmentCounts(
   return out;
 }
 
-// Board badge helper: total line quantities for many journeys in one
-// read, plus whether the journey mixes pickup and delivery lines (for
-// "N of M items out" vs "N of M picked up/delivered" wording). Missing
-// journeys simply have no key; a failed read returns {} so callers show
-// no badge rather than wrong numbers.
+// Board card helper: total line quantities for many journeys in one
+// read, plus the effective-method mix of each journey's lines (for the
+// "N of M picked up/delivered/items out" badge and the Pickup/Delivery
+// chip). Missing journeys simply have no key; a failed read returns {}
+// so callers show no badge rather than wrong numbers.
 export async function fetchJourneysLineItemQuantities(
   journeys: { id: string; fulfillment_type: "delivery" | "pickup" | null }[]
-): Promise<Record<string, { units: number; mixed: boolean }>> {
+): Promise<
+  Record<
+    string,
+    { units: number; hasPickupLine: boolean; hasDeliveryLine: boolean }
+  >
+> {
   if (journeys.length === 0) return {};
   const supabase = createClient();
   const { data, error } = await supabase
@@ -990,20 +995,24 @@ export async function fetchJourneysLineItemQuantities(
     return {};
   }
   const types = new Map(journeys.map((j) => [j.id, j.fulfillment_type]));
-  const out: Record<string, { units: number; mixed: boolean }> = {};
+  const out: Record<
+    string,
+    { units: number; hasPickupLine: boolean; hasDeliveryLine: boolean }
+  > = {};
   for (const row of (data ?? []) as {
     journey_id: string;
     quantity: number;
     fulfillment_type_override: "delivery" | "pickup" | null;
   }[]) {
-    const entry = out[row.journey_id] ?? { units: 0, mixed: false };
+    const entry = out[row.journey_id] ?? {
+      units: 0,
+      hasPickupLine: false,
+      hasDeliveryLine: false,
+    };
     entry.units += row.quantity ?? 0;
-    if (
-      row.fulfillment_type_override &&
-      row.fulfillment_type_override !== types.get(row.journey_id)
-    ) {
-      entry.mixed = true;
-    }
+    const effective = row.fulfillment_type_override ?? types.get(row.journey_id);
+    if (effective === "pickup") entry.hasPickupLine = true;
+    if (effective === "delivery") entry.hasDeliveryLine = true;
     out[row.journey_id] = entry;
   }
   return out;
