@@ -202,10 +202,6 @@ function BoardContent() {
   // completion dialog; fetched once per board mount.
   const [canBackdateFulfillment, setCanBackdateFulfillment] = useState(false);
   const completionInFlight = useRef(false);
-  // Visible trace of the delivery_completed confirm path. Browser tests
-  // showed a click that appeared to do nothing; the last stage reached
-  // persists here so a screenshot shows it even after the dialog closes.
-  const [markDeliveredTrace, setMarkDeliveredTrace] = useState<string | null>(null);
   // Paid total fetched fresh each time the completion dialog opens; the
   // panel's events feed can be empty or belong to another journey, so
   // it cannot be trusted for the balance line.
@@ -653,16 +649,7 @@ function BoardContent() {
     transition: StateTransition,
     fieldValues: Record<string, string>
   ) {
-    const isCompletion = transition.event === "delivery_completed";
-    // [markDelivered] diagnostics: each stage logs to console and, for
-    // the completion dialog, to the visible trace line.
-    const trace = (msg: string) => {
-      console.info(`[markDelivered] ${msg}`);
-      if (isCompletion) setMarkDeliveredTrace(msg);
-    };
-
     const supabase = createClient();
-    trace("Step 1: checking sign-in");
     let session;
     try {
       const res = await Promise.race([
@@ -673,10 +660,9 @@ function BoardContent() {
       ]);
       session = res.data.session;
     } catch {
-      const msg =
-        "Could not confirm your sign-in in time (12 seconds). Please reload the page and try again.";
-      trace(msg);
-      setModalError(msg);
+      setModalError(
+        "Could not confirm your sign-in in time (12 seconds). Please reload the page and try again."
+      );
       return;
     }
     if (!session?.user || !isStoreConfirmedToday(session.user)) {
@@ -690,7 +676,6 @@ function BoardContent() {
       setTimeout(() => router.push(storeSelectUrl("/board")), 1500);
       return;
     }
-    trace("Step 2: sign-in ok");
 
     const eventData: Record<string, unknown> = {};
 
@@ -727,7 +712,6 @@ function BoardContent() {
       completionInFlight.current = true;
       setModalError(null);
       setBoardBusy(true);
-      trace("Step 3: sending to server");
       try {
         const result = await Promise.race([
           completeJourneyFulfillment(journey.id, {
@@ -738,7 +722,6 @@ function BoardContent() {
             setTimeout(() => reject(new Error("rpc timed out")), 30000)
           ),
         ]);
-        trace("Step 4: saved");
         // m149: an order with no live sleep trial item lands on
         // Completed, off the board. The panel shows a short green note.
         setCompletionDoneFor(
@@ -748,12 +731,11 @@ function BoardContent() {
         setPendingFieldValues({});
         await handleReassigned(journey.id);
       } catch (e: any) {
-        const msg =
+        setModalError(
           e?.message === "rpc timed out"
             ? "The server did not answer in 30 seconds. Nothing was recorded. Please try again."
-            : e.message ?? "Failed to mark the order fulfilled";
-        trace(`Step 4: failed: ${msg}`);
-        setModalError(msg);
+            : e.message ?? "Failed to mark the order fulfilled"
+        );
       } finally {
         completionInFlight.current = false;
         setBoardBusy(false);
@@ -1095,10 +1077,6 @@ function BoardContent() {
         <p key="board-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {boardError}
         </p>
-      )}
-
-      {markDeliveredTrace && !pendingTransition && (
-        <p className="mb-3 text-xs text-slate-500">{markDeliveredTrace}</p>
       )}
 
       {contactNotice && (
@@ -1696,10 +1674,6 @@ function BoardContent() {
                 Cancel
               </button>
             </div>
-            {pendingTransition.transition.event === "delivery_completed" &&
-              markDeliveredTrace && (
-                <p className="mt-3 text-xs text-slate-500">{markDeliveredTrace}</p>
-              )}
           </div>
         </Modal>
       )}

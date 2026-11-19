@@ -817,6 +817,12 @@ export default function JourneyWorkspace({
   const shipToCloseRef = useRef<(() => void) | null>(null);
   const [lineAvailability, setLineAvailability] = useState<Record<string, number>>({});
   const [lineAvailabilityFailed, setLineAvailabilityFailed] = useState<Record<string, boolean>>({});
+  // Inline quantity-floor message for the edit-order row that was last
+  // blurred below its handed-over count (m153 floor).
+  const [lineQtyError, setLineQtyError] = useState<{
+    itemId: string;
+    text: string;
+  } | null>(null);
   const [lineLocationStock, setLineLocationStock] = useState<Record<string, LocationAvailability[]>>({});
   const [lineStockArrivals, setLineStockArrivals] = useState<Record<string, Record<string, number>>>({});
   const [lineStockLoaded, setLineStockLoaded] = useState(false);
@@ -1342,6 +1348,12 @@ export default function JourneyWorkspace({
 
   const availabilityContext = `${journey.store_id}|${journey.fulfillment_type}|${inventoryStoreId}`;
   const availabilityContextRef = useRef(availabilityContext);
+  // Content key for the lookups below: a lineItems refetch produces a new
+  // array identity even when nothing changed, and depending on the array
+  // itself restarted every in-flight stock read on each panel refresh.
+  const lineItemsKey = lineItems
+    .map((i) => `${i.id}:${i.product_id ?? ""}:${i.quantity}:${i.fulfillment_type_override ?? ""}:${i.pickup_location_id ?? ""}`)
+    .join(",");
   useEffect(() => {
     let ignore = false;
 
@@ -1367,7 +1379,12 @@ export default function JourneyWorkspace({
         if (!item.product_id) return null;
         const locationId = resolveLineItemLocation(item, journey, stores);
         try {
-          const map = await fetchProductStock([item.product_id], locationId);
+          const map = await Promise.race([
+            fetchProductStock([item.product_id], locationId),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("stock read timed out")), 10000)
+            ),
+          ]);
           return [item.id, map[item.product_id]?.ats ?? 0] as const;
         } catch {
           return [item.id, { error: true }] as const;
@@ -1393,7 +1410,8 @@ export default function JourneyWorkspace({
       console.error("line availability load failed", error);
     });
     return () => { ignore = true; };
-  }, [lineItems, journey.store_id, journey.fulfillment_type, inventoryStoreId, availabilityContext]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lineItemsKey, availabilityContext]);
 
   // Per-location stock for the edit-order rows, batched once per product
   // set while editing (same data the new-order screen uses).
@@ -2280,14 +2298,36 @@ export default function JourneyWorkspace({
                         );
                       })()}
                       {!(item.exchange_line_role || item.exchange_action_id) && (
-                      <div className="mt-1.5 flex items-center gap-2">
+                      <div className="mt-1.5">
+                      <div className="flex items-center gap-2">
                         <input
                           type="number"
                           min={1}
                           defaultValue={item.quantity}
-                          onBlur={(e) =>
-                            updateLineItem(item.id, { quantity: Math.max(1, parseInt(e.target.value) || 1) })
-                          }
+                          onBlur={(e) => {
+                            const handed =
+                              fulfillmentSummary?.byLine[item.id] ?? 0;
+                            const parsed = parseInt(e.target.value);
+                            // m153: a line with units already handed over
+                            // cannot go below that count. Say so and pin
+                            // the field back to the floor instead of
+                            // silently writing a different number.
+                            if (
+                              handed > 0 &&
+                              (!Number.isFinite(parsed) || parsed < handed)
+                            ) {
+                              e.target.value = String(handed);
+                              setLineQtyError({
+                                itemId: item.id,
+                                text: `Quantity cannot go below the number already handed over (${handed})`,
+                              });
+                              return;
+                            }
+                            setLineQtyError(null);
+                            updateLineItem(item.id, {
+                              quantity: Math.max(1, parsed || 1),
+                            });
+                          }}
                           className="w-12 rounded-md border border-slate-300 px-1 py-1 text-center text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                         />
                         <span className="text-slate-400">×</span>
@@ -2312,6 +2352,12 @@ export default function JourneyWorkspace({
                         >
                           <Trash2 className="h-3 w-3" />
                         </button>
+                      </div>
+                      {lineQtyError?.itemId === item.id && (
+                        <p className="mt-1 text-xs text-red-600">
+                          {lineQtyError.text}
+                        </p>
+                      )}
                       </div>
                       )}
                       {!(item.exchange_line_role || item.exchange_action_id) &&
