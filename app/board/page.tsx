@@ -231,6 +231,8 @@ function BoardContent() {
   // in the completion dialog; without it only the active location is
   // editable. Fetched once per board mount.
   const [canPickupAnyLocation, setCanPickupAnyLocation] = useState(false);
+  const [canRecordRefund, setCanRecordRefund] = useState(false);
+  const [canAdjustRefund, setCanAdjustRefund] = useState(false);
   // Per-line stepper values in the completion dialog. Lines absent here
   // default to their full remaining quantity; locked or out-of-stock
   // lines always count as zero.
@@ -522,6 +524,8 @@ function BoardContent() {
   useEffect(() => {
     hasPermission("orders.backdate_fulfillment").then(setCanBackdateFulfillment);
     hasPermission("orders.pickup_any_location").then(setCanPickupAnyLocation);
+    hasPermission("payments.record_refund").then(setCanRecordRefund);
+    hasPermission("payments.adjust_refund_amount").then(setCanAdjustRefund);
   }, []);
 
   useEffect(() => {
@@ -1434,6 +1438,8 @@ function BoardContent() {
             currentEmployee?.role === "admin" ||
             currentEmployee?.role === "manager"
           }
+          canRecordRefund={canRecordRefund}
+          canAdjustRefund={canAdjustRefund}
           currentEmployee={currentEmployee}
           trialEvals={trialEvals.get(selectedJourney.id) ?? []}
           onReassigned={handleReassigned}

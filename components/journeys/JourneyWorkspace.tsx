@@ -21,8 +21,10 @@ import {
 } from "@/lib/journeys/exchange";
 import {
   effectivePrice,
+  heldReturnCents,
   isReturnedTrialItem,
   pendingReturnRefund,
+  refundLockedAmountCents,
   returnedCreditCents,
   returnedPillText,
 } from "@/lib/journeys/returns";
@@ -585,6 +587,8 @@ export default function JourneyWorkspace({
   reassignments,
   canReassign,
   canReconcile,
+  canRecordRefund,
+  canAdjustRefund,
   currentEmployee,
   trialEvals,
   onReassigned,
@@ -605,6 +609,10 @@ export default function JourneyWorkspace({
   reassignments: JourneyReassignmentEvent[];
   canReassign: boolean;
   canReconcile: boolean;
+  // 162: payments.record_refund / payments.adjust_refund_amount. Refund
+  // buttons gate on these; payment reconciliation keeps canReconcile.
+  canRecordRefund: boolean;
+  canAdjustRefund: boolean;
   currentEmployee: Employee | null;
   trialEvals: SleepTrialEvaluation[];
   onReassigned: (journeyId: string) => void | Promise<void>;
@@ -795,6 +803,9 @@ export default function JourneyWorkspace({
   // refund entry point (rail button, payment row) must link to it via
   // actionId or the return can never complete and the money counts twice.
   const pendingReturn = pendingReturnRefund(returnActions);
+  const hasCommittedReturn = returnActions.some(
+    (a) => a.action === "RETURN" && a.status === "COMMITTED"
+  );
   const pendingReturnProductName = pendingReturn
     ? trialItemRows.find((r) => r.id === pendingReturn.trial_item_id)
         ?.product_name_snapshot ?? undefined
@@ -828,6 +839,21 @@ export default function JourneyWorkspace({
       ),
     [refundablePayments, events, creditCents, pendingReturn]
   );
+
+  // 162 hold rule: committed, un-refunded returns hold their owed refund
+  // out of the credit. An unlinked refund may only touch the rest; when
+  // a return is pending the rail links to it instead (and waits for the
+  // original to be received, matching the server gate).
+  const heldCents = heldReturnCents(returnActions);
+  const allowedCredit = creditCents - heldCents;
+  const pendingRefundBlocked =
+    pendingReturn != null && pendingReturn.original_received_on == null;
+  const lockedRefundCents = refundLockedAmountCents({
+    canAdjust: canAdjustRefund,
+    linkedOwedCents: pendingReturn?.refund_owed_cents ?? null,
+    creditCents,
+    actions: returnActions,
+  });
 
   // cancelled_at nulls the balance — a cancelled journey shows what was
   // agreed/paid (and any credit due back) but never an amount still owed.
@@ -2188,9 +2214,9 @@ export default function JourneyWorkspace({
                 {hasLiveExchange &&
                   transitions.some((t) => t.event === "trial_completed") && (
                     <p className="w-full text-sm text-slate-600">
-                      Exchange in progress. The sleep trial cannot be
-                      completed until the exchange is cancelled or
-                      completed.
+                      {hasCommittedReturn
+                        ? "Return in progress. The sleep trial cannot be completed until the return is cancelled or completed."
+                        : "Exchange in progress. The sleep trial cannot be completed until the exchange is cancelled or completed."}
                     </p>
                   )}
               </div>
@@ -2205,6 +2231,8 @@ export default function JourneyWorkspace({
               stores={stores}
               currentEmployee={currentEmployee}
               canModerate={canReconcile}
+              canRecordRefund={canRecordRefund}
+              refundLockedCents={lockedRefundCents}
               onChanged={handlePanelRefresh}
               refreshKey={activityRefreshKey}
               onDirtyChange={setActivityState}
@@ -2822,16 +2850,43 @@ export default function JourneyWorkspace({
                           payment system, then record the refund here.
                         </p>
                       )}
-                    {canReconcile &&
+                    {canRecordRefund &&
                       creditCents > 0 &&
-                      creditRefundPick.payment !== null && (
+                      creditRefundPick.payment !== null &&
+                      (pendingRefundBlocked ? (
+                        <div className="mt-2">
+                          <button
+                            disabled
+                            className="w-full cursor-not-allowed rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white opacity-50"
+                          >
+                            Record refund
+                          </button>
+                          <p className="mt-1 text-xs text-slate-500">
+                            The original mattress has not been received yet.
+                          </p>
+                        </div>
+                      ) : pendingReturn == null && allowedCredit <= 0 ? (
+                        <div className="mt-2">
+                          <button
+                            disabled
+                            className="w-full cursor-not-allowed rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white opacity-50"
+                          >
+                            Record refund
+                          </button>
+                          <p className="mt-1 text-xs text-slate-500">
+                            This credit is held for the open return. Record
+                            the refund on the return card after the mattress
+                            is received.
+                          </p>
+                        </div>
+                      ) : (
                         <button
                           onClick={() => setCreditRefundOpen(true)}
                           className="mt-2 w-full rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
                         >
                           Record refund
                         </button>
-                      )}
+                      ))}
                     {/* Inform, don't block: a cancelled journey with money
                         still on it owes the customer a refund. Suppressed
                         when an existing banner already says so (exchange
@@ -3366,6 +3421,8 @@ export default function JourneyWorkspace({
             initialPaymentId={creditRefundPick.payment?.id}
             actionId={pendingReturn?.action_id}
             returnProductName={pendingReturnProductName}
+            lockedAmountCents={lockedRefundCents}
+            completesAction={pendingReturn ? "RETURN" : null}
             onClose={() => setCreditRefundOpen(false)}
             onRecorded={handlePanelRefresh}
           />

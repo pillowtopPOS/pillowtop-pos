@@ -44,6 +44,8 @@ export default function RecordRefundModal({
   initialPaymentId,
   actionId,
   returnProductName,
+  lockedAmountCents,
+  completesAction,
   onClose,
   onRecorded,
 }: {
@@ -63,6 +65,12 @@ export default function RecordRefundModal({
   // Product name for the "recorded for the return of ..." line shown
   // when actionId is set.
   returnProductName?: string;
+  // 162: when set the amount is system-computed and read-only; callers
+  // without payments.adjust_refund_amount must pass exactly this.
+  lockedAmountCents?: number | null;
+  // 162: recording this refund lands the last milestone, so the action
+  // completes automatically. Drives the confirmation line.
+  completesAction?: "RETURN" | "EXCHANGE" | null;
   onClose: () => void;
   onRecorded: () => void;
 }) {
@@ -72,7 +80,7 @@ export default function RecordRefundModal({
   const payment = payments.find((p) => p.id === paymentId) ?? payments[0];
   const maxCents = payment ? refundableCentsOnPayment(payment, events) : 0;
   const [amount, setAmount] = useState(() =>
-    (Math.min(defaultAmountCents, maxCents) / 100).toFixed(2)
+    ((lockedAmountCents ?? Math.min(defaultAmountCents, maxCents)) / 100).toFixed(2)
   );
   const [method, setMethod] = useState(PAYMENT_METHOD_OPTIONS[0]);
   const [reason, setReason] = useState("");
@@ -83,6 +91,7 @@ export default function RecordRefundModal({
 
   function pickPayment(id: string) {
     setPaymentId(id);
+    if (lockedAmountCents != null) return;
     const next = payments.find((p) => p.id === id);
     if (next) {
       const left = refundableCentsOnPayment(next, events);
@@ -182,10 +191,22 @@ export default function RecordRefundModal({
             min={0}
             step="0.01"
             value={amount}
+            readOnly={lockedAmountCents != null}
             onChange={(e) => setAmount(e.target.value)}
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 read-only:bg-slate-50 read-only:text-slate-600"
           />
+          {lockedAmountCents != null && (
+            <span className="mt-1 block text-xs text-slate-500">
+              The system sets this amount. A manager can change it.
+            </span>
+          )}
         </label>
+        {completesAction && (
+          <p className="mb-3 text-sm font-semibold text-slate-900">
+            Recording this refund completes the{" "}
+            {completesAction === "RETURN" ? "return" : "exchange"}.
+          </p>
+        )}
         <label className="mb-3 block text-sm font-medium text-slate-700">
           Refund method
           <select

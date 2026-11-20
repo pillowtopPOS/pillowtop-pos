@@ -47,9 +47,13 @@ import {
   actionMilestoneKeys,
 } from "../lib/journeys/exchange";
 import {
+  actionRefundBlockReason,
+  allowedCreditCents,
   effectivePrice,
+  heldReturnCents,
   isReturnedTrialItem,
   pendingReturnRefund,
+  refundLockedAmountCents,
   returnedCreditCents,
   returnedPillText,
 } from "../lib/journeys/returns";
@@ -974,6 +978,72 @@ check("oldest pending return wins",
     { ...retA, action_id: "new", committed_at: "2025-11-20T10:00:00Z" },
     { ...retA, action_id: "old", committed_at: "2025-11-10T10:00:00Z" },
   ])?.action_id === "old");
+
+// 162 hold + locked-amount rules: committed un-refunded returns hold
+// their owed refund out of the credit; linked refunds lock to the owed
+// amount; only adjust callers get a free amount.
+check("held cents counts only committed un-refunded returns",
+  heldReturnCents([retA]) === 90000 &&
+    heldReturnCents([
+      retA,
+      { ...retA, action_id: "h2", refund_owed_cents: 5000 },
+    ]) === 95000 &&
+    heldReturnCents([
+      { ...retA, action_id: "h3", status: "COMPLETED" },
+      { ...retA, action_id: "h4", status: "CANCELLED" },
+      { ...retA, action_id: "h5", action: "EXCHANGE" },
+      { ...retA, action_id: "h6", refund_recorded_at: "2025-11-11T00:00:00Z" },
+    ]) === 0);
+check("allowed credit subtracts the held return money",
+  allowedCreditCents(120000, [retA]) === 30000 &&
+    allowedCreditCents(90000, [retA]) === 0 &&
+    allowedCreditCents(120000, [
+      { ...retA, action_id: "hx", action: "EXCHANGE" },
+    ]) === 120000);
+check("locked amount: linked locks to owed, unlinked locks to allowed, adjust is free",
+  refundLockedAmountCents({
+    canAdjust: false,
+    linkedOwedCents: 90000,
+    creditCents: 120000,
+    actions: [retA],
+  }) === 90000 &&
+    refundLockedAmountCents({
+      canAdjust: false,
+      linkedOwedCents: null,
+      creditCents: 120000,
+      actions: [retA],
+    }) === 30000 &&
+    refundLockedAmountCents({
+      canAdjust: true,
+      linkedOwedCents: 90000,
+      creditCents: 120000,
+      actions: [retA],
+    }) === null &&
+    refundLockedAmountCents({
+      canAdjust: true,
+      linkedOwedCents: null,
+      creditCents: 120000,
+      actions: [retA],
+    }) === null);
+check("refund block reason follows the receive and delivery milestones",
+  actionRefundBlockReason({
+    action: "RETURN",
+    original_received_on: null,
+  }) === "The original mattress has not been received yet." &&
+    actionRefundBlockReason({
+      action: "RETURN",
+      original_received_on: "2025-11-19",
+    }) === null &&
+    actionRefundBlockReason({
+      action: "EXCHANGE",
+      original_received_on: "2025-11-19",
+      replacement_delivered_on: null,
+    }) === "The replacement has not been delivered yet." &&
+    actionRefundBlockReason({
+      action: "EXCHANGE",
+      original_received_on: "2025-11-19",
+      replacement_delivered_on: "2025-11-20",
+    }) === null);
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`);
 process.exit(failures === 0 ? 0 : 1);

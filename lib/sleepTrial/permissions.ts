@@ -104,7 +104,8 @@ export type PermissionGroup =
   | "Inventory"
   | "Unit ID"
   | "Delivery"
-  | "Orders";
+  | "Orders"
+  | "Payments";
 
 export type PermissionDef = {
   key: string;
@@ -183,5 +184,17 @@ export const ALL_PERMISSIONS: PermissionDef[] = [
     label: "Backdate pickups and deliveries",
     group: "Orders",
     description: "Lets this person record a pickup or delivery as completed on an earlier date, with a reason.",
+  },
+  {
+    key: "payments.record_refund",
+    label: "Record refunds",
+    group: "Payments",
+    description: "Lets this person record a refund already issued in the payment system, at the system-computed amount.",
+  },
+  {
+    key: "payments.adjust_refund_amount",
+    label: "Change the refund amount",
+    group: "Payments",
+    description: "Lets this person record a refund for a different amount than the system computed. Without it the amount is fixed.",
   },
 ];

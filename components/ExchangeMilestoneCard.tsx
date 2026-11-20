@@ -30,6 +30,7 @@ import {
   pickRefundPayment,
   refundablePaymentEvents,
 } from "@/lib/journeys/paid";
+import { actionRefundBlockReason } from "@/lib/journeys/returns";
 import RecordRefundModal from "@/components/RecordRefundModal";
 import { createClient } from "@/lib/supabase/client";
 
@@ -116,6 +117,8 @@ export default function ExchangeMilestoneCard({
     startExchange: false,
     completeExchange: false,
     recordRefund: false,
+    adjustRefund: false,
+    inspectReturns: false,
   });
   const [receivedLine, setReceivedLine] = useState<string | null>(null);
   const [callerIsWarehouseBased, setCallerIsWarehouseBased] =
@@ -143,14 +146,20 @@ export default function ExchangeMilestoneCard({
     Promise.all([
       supabase.rpc("has_permission", { p_key: "sleep_trial.start_exchange" }),
       supabase.rpc("has_permission", { p_key: "sleep_trial.complete_exchange" }),
-    ]).then(([a, b]) =>
-      setCallerCan((c) => ({
-        ...c,
+      supabase.rpc("has_permission", { p_key: "payments.record_refund" }),
+      supabase.rpc("has_permission", { p_key: "payments.adjust_refund_amount" }),
+      supabase.rpc("has_permission", { p_key: "inventory.inspect_returns" }),
+    ]).then(([a, b, c, d, e]) =>
+      setCallerCan((prev) => ({
+        ...prev,
         startExchange: !!a.data,
         completeExchange: !!b.data,
+        recordRefund: !!c.data,
+        adjustRefund: !!d.data,
+        inspectReturns: !!e.data,
       }))
     );
-    // Warehouse-based employees may receive without the start_exchange
+    // Warehouse-based employees may receive without the inspect_returns
     // key (server rule), so the button must not hide from them either.
     supabase.auth.getUser().then(({ data: u }) => {
       if (!u.user) return;
@@ -164,13 +173,6 @@ export default function ExchangeMilestoneCard({
           const t = (emp as any)?.stores?.location_type;
           setCallerIsWarehouseBased(t === "WAREHOUSE");
           setCallerStoreId((emp as any)?.home_store_id ?? null);
-          // record_payment_refund gates on owner/admin/manager role (098).
-          const role = (emp as any)?.role;
-          setCallerCan((c) => ({
-            ...c,
-            recordRefund:
-              role === "owner" || role === "admin" || role === "manager",
-          }));
         });
     });
   }, []);
@@ -390,15 +392,14 @@ export default function ExchangeMilestoneCard({
     await submit(() => voidReturnedReceipt(action.action_id, voidReason));
   }
 
+  // 162: receiving is the gate that unlocks the refund, so the button
+  // shows only to warehouse staff and inventory.inspect_returns holders.
   const canMarkReceived =
     action.status === "COMMITTED" && !action.original_received_on &&
-    (callerCan.startExchange || callerIsWarehouseBased);
+    (callerCan.inspectReturns || callerIsWarehouseBased);
   const canVoidThisReceipt =
     !!action.original_received_on && callerCan.completeExchange;
-
-  const originalReceivedOpen = blockers.some((b) =>
-    b.includes("original mattress")
-  );
+  const refundBlockReason = actionRefundBlockReason(action);
 
   return (
     <div className="mt-1.5 rounded-md border border-teal-300 bg-white p-2.5">
@@ -435,20 +436,20 @@ export default function ExchangeMilestoneCard({
         <p className="mt-1 text-xs text-slate-500">{receivedLine}</p>
       )}
 
+      {action.status === "COMMITTED" && (
+        <p className="mt-1 text-xs text-slate-500">
+          {isReturn
+            ? "Completes automatically when the mattress is received and the refund is recorded."
+            : "Completes automatically when the mattress is received, the replacement is delivered and any refund is recorded."}
+        </p>
+      )}
+
       {owed > 0 && !refundRecorded && (
         <p className="mt-1.5 text-xs font-medium text-amber-800">
           Refund owed to customer: {fmt(owed)}. Issue it in your payment
           system, then click Record refund.
         </p>
       )}
-      {isReturn &&
-        owed > 0 &&
-        !refundRecorded &&
-        !callerCan.recordRefund && (
-          <p className="mt-1 text-xs text-slate-500">
-            A manager records the refund for this return.
-          </p>
-        )}
       {refundRecorded && (
         <p className="mt-1.5 text-xs font-medium text-green-800">
           Refund recorded: {action.refund_method ?? "—"},{" "}
@@ -509,6 +510,13 @@ export default function ExchangeMilestoneCard({
               Mark original received
             </button>
           )}
+          {action.status === "COMMITTED" &&
+            !action.original_received_on &&
+            !canMarkReceived && (
+              <p className="self-center text-xs text-slate-500">
+                The warehouse marks the original received.
+              </p>
+            )}
           {canVoidThisReceipt && (
             <button
               onClick={() => open("voidReceipt")}
@@ -523,13 +531,24 @@ export default function ExchangeMilestoneCard({
               action.status === "COMMITTED" &&
               owed > 0 &&
               !refundRecorded)) && (
-            <button
-              onClick={() => open("refund")}
-              disabled={saving || refundRead === "loading"}
-              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Record refund
-            </button>
+            <div>
+              <button
+                onClick={() => open("refund")}
+                disabled={
+                  saving ||
+                  refundRead === "loading" ||
+                  refundBlockReason !== null
+                }
+                className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Record refund
+              </button>
+              {refundBlockReason && (
+                <p className="mt-1 text-xs text-slate-500">
+                  {refundBlockReason}
+                </p>
+              )}
+            </div>
           )}
           {!isReturn && action.can_void_refund && (
             <button
@@ -539,40 +558,21 @@ export default function ExchangeMilestoneCard({
               Void refund
             </button>
           )}
-          {action.can_complete && (
-            <div>
-              <button
-                onClick={submitComplete}
-                disabled={blockers.length > 0 || saving}
-                className="rounded-md bg-teal-700 px-2 py-1 text-xs font-medium text-white hover:bg-teal-800 disabled:opacity-50"
-              >
-                {isReturn ? "Complete return" : "Complete exchange"}
-              </button>
-              {blockers.length > 0 && (
-                <ul className="mt-1 space-y-0.5">
-                  {blockers.map((b) => (
-                    <li key={b} className="text-xs text-slate-500">
-                      {b}
-                    </li>
-                  ))}
-                  {originalReceivedOpen && (
-                    <li className="text-xs text-slate-500">
-                      Mark the original mattress received first.</li>
-                  )}
-                </ul>
-              )}
-            </div>
-          )}
+          {action.can_complete &&
+            action.status === "COMMITTED" &&
+            blockers.length === 0 && (
+              <div>
+                <button
+                  onClick={submitComplete}
+                  disabled={saving}
+                  className="rounded-md bg-teal-700 px-2 py-1 text-xs font-medium text-white hover:bg-teal-800 disabled:opacity-50"
+                >
+                  {isReturn ? "Complete return" : "Complete exchange"}
+                </button>
+              </div>
+            )}
         </div>
       )}
-      {isReturn &&
-        action.status === "COMMITTED" &&
-        !action.can_complete &&
-        callerCan.completeExchange === false && (
-          <p className="mt-1.5 text-xs text-slate-500">
-            An owner or admin completes the return.
-          </p>
-        )}
       {error && !dialog && (
         <p className="mt-1.5 text-xs font-medium text-red-700">{error}</p>
       )}
@@ -722,6 +722,10 @@ export default function ExchangeMilestoneCard({
                 defaultAmountCents={owed}
                 initialPaymentId={refundData.initialPaymentId ?? undefined}
                 actionId={action.action_id}
+                lockedAmountCents={
+                  callerCan.adjustRefund ? null : owed
+                }
+                completesAction={isReturn ? "RETURN" : "EXCHANGE"}
                 onClose={() => setDialog(null)}
                 onRecorded={() => {
                   setDialog(null);
@@ -769,10 +773,16 @@ export default function ExchangeMilestoneCard({
                 </label>
                 <input
                   value={refundAmount}
+                  readOnly={!callerCan.adjustRefund}
                   onChange={(e) => setRefundAmount(e.target.value)}
                   inputMode="decimal"
-                  className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-brand-500 focus:outline-none"
+                  className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-brand-500 focus:outline-none read-only:bg-slate-50 read-only:text-slate-600"
                 />
+                {!callerCan.adjustRefund && (
+                  <span className="mt-1 block text-[11px] text-slate-500">
+                    The system sets this amount. A manager can change it.
+                  </span>
+                )}
               </div>
             </div>
             <label className="mt-3 block text-xs font-medium text-slate-700">

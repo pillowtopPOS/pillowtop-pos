@@ -180,6 +180,8 @@ export default function JourneyActivity({
   employees,
   currentEmployee,
   canModerate,
+  canRecordRefund = false,
+  refundLockedCents = null,
   onChanged,
   refreshKey = 0,
   onDirtyChange,
@@ -193,7 +195,13 @@ export default function JourneyActivity({
   followUps: FollowUp[];
   employees: Employee[];
   currentEmployee: Employee | null;
+  // Reconcile/void stays gated here; refund buttons gate on
+  // canRecordRefund (payments.record_refund, 162).
   canModerate: boolean;
+  canRecordRefund?: boolean;
+  // Locked refund amount for callers without
+  // payments.adjust_refund_amount; null means free entry.
+  refundLockedCents?: number | null;
   onChanged: () => void;
   refreshKey?: number;
   onDirtyChange?: (state: { dirty: boolean; saving: boolean }) => void;
@@ -597,10 +605,20 @@ export default function JourneyActivity({
                   {activityEventAuthor(e.triggered_by, employees)} ·{" "}
                   {new Date(e.created_at).toLocaleString()}
                 </p>
-                {canModerate && refundableCents > 0 && (
+                {canRecordRefund && refundableCents > 0 && (
                   <button
                     onClick={() => setRefundTarget(e)}
-                    className="mt-1 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
+                    disabled={
+                      pendingReturnRefund != null &&
+                      pendingReturnRefund.original_received_on == null
+                    }
+                    title={
+                      pendingReturnRefund != null &&
+                      pendingReturnRefund.original_received_on == null
+                        ? "The original mattress has not been received yet."
+                        : undefined
+                    }
+                    className="mt-1 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Record refund
                   </button>
@@ -947,6 +965,8 @@ export default function JourneyActivity({
           }
           actionId={pendingReturnRefund?.action_id}
           returnProductName={pendingReturnProductName}
+          lockedAmountCents={refundLockedCents}
+          completesAction={pendingReturnRefund ? "RETURN" : null}
           onClose={() => setRefundTarget(null)}
           onRecorded={refresh}
         />
