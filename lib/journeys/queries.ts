@@ -4,6 +4,7 @@ import type { SleepJourneyState } from "@/lib/constants";
 import type { JourneyEventType } from "./state";
 import { phoneDigitsMatch } from "@/lib/customers/search";
 import type { OpenExchangeWork } from "./exchange";
+import { isReturnedTrialItem } from "./returns";
 
 export type JourneyWithDetails = {
   id: string;
@@ -775,6 +776,13 @@ export function subscribeToJourneyChanges(callback: () => void) {
       { event: "INSERT", schema: "public", table: "journey_events" },
       callback
     )
+    // Trial-item closes (returns, exchanges) do not always write a
+    // journey_events row, so the badge reads need this table too.
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "sleep_trial_items" },
+      callback
+    )
     .subscribe();
 
   return () => {
@@ -1113,9 +1121,10 @@ export async function fetchJourneyTrialItemRows(
   return (data ?? []) as TrialItemStatusRow[];
 }
 
-/** Slice 2b board badge: units in the return pipeline (CLOSED as
- *  RETURNED, or RETURN_IN_PROGRESS) and total non-VOIDED trial items per
- *  journey, one batched read for every card on the board. */
+/** Slice 2b board badge: units CLOSED as RETURNED and total non-VOIDED
+ *  trial items per journey, one batched read for every card on the
+ *  board. RETURN_IN_PROGRESS also covers committed exchanges, so only
+ *  closed items count. */
 export async function fetchReturnedTrialCounts(
   journeyIds: string[]
 ): Promise<Record<string, { returned: number; total: number }>> {
@@ -1138,10 +1147,7 @@ export async function fetchReturnedTrialCounts(
   }[]) {
     const entry = out[row.journey_id] ?? { returned: 0, total: 0 };
     entry.total += 1;
-    if (
-      row.status === "RETURN_IN_PROGRESS" ||
-      (row.status === "CLOSED" && row.close_reason === "RETURNED")
-    ) {
+    if (isReturnedTrialItem(row.status, row.close_reason)) {
       entry.returned += 1;
     }
     out[row.journey_id] = entry;

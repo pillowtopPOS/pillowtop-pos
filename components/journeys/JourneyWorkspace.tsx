@@ -21,6 +21,7 @@ import {
 } from "@/lib/journeys/exchange";
 import {
   effectivePrice,
+  isReturnedTrialItem,
   pendingReturnRefund,
   returnedCreditCents,
   returnedPillText,
@@ -759,17 +760,14 @@ export default function JourneyWorkspace({
     };
   }, [journey.id, events]);
 
-  // Per-line returned counts and the order-level pill numbers. A unit in
-  // the return pipeline (RETURN_IN_PROGRESS or CLOSED as RETURNED)
-  // counts; the "Returned <date>" text uses only closed items' dates.
+  // Per-line returned counts and the order-level pill numbers. Only a
+  // unit CLOSED as RETURNED counts; RETURN_IN_PROGRESS is shared with
+  // committed exchanges and a committed return can still be cancelled.
   const { returnedByLine, returnedTrialCount } = useMemo(() => {
     const byLine: Record<string, { count: number; lastClosedAt: string | null }> = {};
     let returned = 0;
     for (const row of trialItemRows) {
-      const inPipeline =
-        row.status === "RETURN_IN_PROGRESS" ||
-        (row.status === "CLOSED" && row.close_reason === "RETURNED");
-      if (inPipeline) {
+      if (isReturnedTrialItem(row.status, row.close_reason)) {
         returned += 1;
         if (row.line_item_id) {
           const entry = byLine[row.line_item_id] ?? {

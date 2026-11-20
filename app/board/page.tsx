@@ -469,6 +469,15 @@ function BoardContent() {
   // batch — journey row, events, follow-ups and reassignments can never
   // show mismatched generations (e.g. fresh "Paid in full" events under
   // a stale "Quoted" header).
+  // Returned-count badges live outside the journey row, and trial-item
+  // closes do not always write an event the board subscribes to, so the
+  // panel refresh and drawer close refetch them for just this journey.
+  function refreshReturnedTrialCount(journeyId: string) {
+    fetchReturnedTrialCounts([journeyId]).then((m) =>
+      setReturnedTrialCounts((prev) => ({ ...prev, ...m }))
+    );
+  }
+
   async function handleReassigned(journeyId: string) {
     setJourneyRefreshPending(true);
     try {
@@ -504,6 +513,7 @@ function BoardContent() {
       fetchLiveTrialItemStatuses().then((m) =>
         setHiddenJourneyIds(hiddenByInProgressAction(m))
       );
+      refreshReturnedTrialCount(journeyId);
     } finally {
       setJourneyRefreshPending(false);
     }
@@ -1428,6 +1438,7 @@ function BoardContent() {
           trialEvals={trialEvals.get(selectedJourney.id) ?? []}
           onReassigned={handleReassigned}
           onClose={() => {
+            refreshReturnedTrialCount(selectedJourney.id);
             setCompletionDoneFor(null);
             setPanelCompletionInfo(null);
             setSelectedJourney(null);

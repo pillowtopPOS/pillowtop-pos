@@ -48,6 +48,7 @@ import {
 } from "../lib/journeys/exchange";
 import {
   effectivePrice,
+  isReturnedTrialItem,
   pendingReturnRefund,
   returnedCreditCents,
   returnedPillText,
@@ -747,6 +748,17 @@ check("done tone is done",
   lineStatusText({
     handed: 1, quantity: 1, method: "delivery", anyOutOnOrder: true,
   })?.tone === "done");
+// isReturnedTrialItem: only CLOSED + RETURNED counts. RETURN_IN_PROGRESS
+// is shared with committed exchanges and a return can still be cancelled.
+check("closed returned item counts as returned",
+  isReturnedTrialItem("CLOSED", "RETURNED") === true);
+check("return in progress never counts",
+  isReturnedTrialItem("RETURN_IN_PROGRESS", null) === false);
+check("closed exchanged item is not a return",
+  isReturnedTrialItem("CLOSED", "EXCHANGED") === false);
+check("active and voided items are not returned",
+  isReturnedTrialItem("ACTIVE", null) === false &&
+    isReturnedTrialItem("VOIDED", "VOIDED") === false);
 check("all handed units back reads Returned with date",
   lineStatusText({
     handed: 2, quantity: 2, method: "pickup", anyOutOnOrder: true,

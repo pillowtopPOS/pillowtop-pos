@@ -73,3 +73,14 @@ export function pendingReturnRefund(
   );
   return pending[0];
 }
+
+// A trial item only counts as returned once it is CLOSED with
+// close_reason RETURNED. RETURN_IN_PROGRESS is shared with committed
+// exchanges (stv_action_set_item_in_progress sets it for both) and a
+// committed return can still be cancelled, so in-progress never counts.
+export function isReturnedTrialItem(
+  status: string,
+  closeReason: string | null
+): boolean {
+  return status === "CLOSED" && closeReason === "RETURNED";
+}

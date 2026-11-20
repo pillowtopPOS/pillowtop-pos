@@ -379,11 +379,10 @@ export function lineStatusText(opts: {
   dateLabel?: string | null;
   // Whether any unit on the order has left. Gates "Still here".
   anyOutOnOrder: boolean;
-  // Units on the line that came back or are in the return pipeline
-  // (trial items RETURN_IN_PROGRESS or CLOSED as RETURNED). Returned
-  // wording replaces the pickup/delivery wording for those units; the
-  // denominator counts the units that left (handed), matching the
-  // order-level pill.
+  // Units on the line that came back (trial items CLOSED with
+  // close_reason RETURNED). Returned wording replaces the
+  // pickup/delivery wording for those units; the denominator counts
+  // the units that left (handed), matching the order-level pill.
   returned?: number;
   // Pre-formatted short date of the latest returned unit.
   returnedDateLabel?: string | null;
