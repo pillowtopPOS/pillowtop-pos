@@ -10,6 +10,7 @@ import {
   paymentAmountCents,
   refundableCentsOnPayment,
 } from "@/lib/journeys/paid";
+import { refundLinkedLine } from "@/lib/journeys/returns";
 import { PAYMENT_METHOD_OPTIONS } from "@/lib/journeys/state";
 
 const REFUND_TIMEOUT_MS = 30000;
@@ -64,7 +65,7 @@ export default function RecordRefundModal({
   actionId?: string;
   // Product name for the "recorded for the return of ..." line shown
   // when actionId is set.
-  returnProductName?: string;
+  returnProductName?: string | null;
   // 162: when set the amount is system-computed and read-only; callers
   // without payments.adjust_refund_amount must pass exactly this.
   lockedAmountCents?: number | null;
@@ -158,11 +159,7 @@ export default function RecordRefundModal({
         </p>
         {actionId && (
           <p className="mb-3 rounded-md border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-xs text-violet-800">
-            This refund is recorded as the refund for{" "}
-            {returnProductName
-              ? `the return of ${returnProductName}`
-              : "this return"}
-            .
+            {refundLinkedLine(completesAction ?? "RETURN", returnProductName)}
           </p>
         )}
         {payments.length > 1 && (

@@ -2857,7 +2857,7 @@ export default function JourneyWorkspace({
                         <div className="mt-2">
                           <button
                             disabled
-                            className="w-full cursor-not-allowed rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white opacity-50"
+                            className="w-full cursor-not-allowed rounded-md bg-slate-100 px-3 py-2 text-sm font-medium text-slate-400"
                           >
                             Record refund
                           </button>
@@ -2869,7 +2869,7 @@ export default function JourneyWorkspace({
                         <div className="mt-2">
                           <button
                             disabled
-                            className="w-full cursor-not-allowed rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white opacity-50"
+                            className="w-full cursor-not-allowed rounded-md bg-slate-100 px-3 py-2 text-sm font-medium text-slate-400"
                           >
                             Record refund
                           </button>

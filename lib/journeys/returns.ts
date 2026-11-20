@@ -132,6 +132,22 @@ export function refundLockedAmountCents<
   return allowedCreditCents(opts.creditCents, opts.actions);
 }
 
+// One line for every linked-refund dialog: the sentence is identical
+// whether the refund opens from the action card, the Financial rail or
+// a payment row. Falls back to "this return/exchange" when the product
+// name is unknown.
+export function refundLinkedLine(
+  action: "RETURN" | "EXCHANGE",
+  productName?: string | null
+): string {
+  const noun = action === "RETURN" ? "return" : "exchange";
+  const name = productName?.trim();
+  if (name) {
+    return `This refund is recorded as the refund for the ${noun} of ${name}.`;
+  }
+  return `This refund is recorded as the refund for this ${noun}.`;
+}
+
 // Why a linked refund cannot be recorded yet, or null. Mirrors the R2
 // gates in record_payment_refund / record_exchange_refund: a return
 // needs the original back; an exchange needs both physical steps done.

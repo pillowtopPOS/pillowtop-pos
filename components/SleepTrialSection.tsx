@@ -324,9 +324,13 @@ export default function SleepTrialSection({
   useEffect(() => {
     if (refreshKey === 0) return;
     // A refund recorded from the rail or a payment row lands here as a
-    // bump - re-read the actions so the milestone card catches the new
-    // refund_recorded_at without a full section reload.
+    // bump - re-read the actions AND the item evaluations so the
+    // milestone card, the headline and the More menu all catch a
+    // just-closed item without a full section reload.
     reloadActions();
+    evaluateSleepTrialItems([journey.id]).then((m) =>
+      setEvals(m.get(journey.id) ?? [])
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey]);
 
@@ -1165,6 +1169,7 @@ function TrialHeroCard({
             (exchangeAction?.milestones ? (
               <ExchangeMilestoneCard
                 action={exchangeAction}
+                productName={e.item?.product_name}
                 onChanged={() => onExchangeChanged?.()}
               />
             ) : (exchangeAction?.refund_owed_cents ?? 0) > 0 &&

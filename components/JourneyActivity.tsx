@@ -618,7 +618,7 @@ export default function JourneyActivity({
                         ? "The original mattress has not been received yet."
                         : undefined
                     }
-                    className="mt-1 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="mt-1 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
                   >
                     Record refund
                   </button>

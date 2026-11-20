@@ -53,6 +53,7 @@ import {
   heldReturnCents,
   isReturnedTrialItem,
   pendingReturnRefund,
+  refundLinkedLine,
   refundLockedAmountCents,
   returnedCreditCents,
   returnedPillText,
@@ -1044,6 +1045,17 @@ check("refund block reason follows the receive and delivery milestones",
       original_received_on: "2025-11-19",
       replacement_delivered_on: "2025-11-20",
     }) === null);
+check("linked refund line names the product, falls back cleanly",
+  refundLinkedLine("RETURN", "Summit Firm Queen") ===
+    "This refund is recorded as the refund for the return of Summit Firm Queen." &&
+    refundLinkedLine("RETURN") ===
+      "This refund is recorded as the refund for this return." &&
+    refundLinkedLine("RETURN", "  ") ===
+      "This refund is recorded as the refund for this return." &&
+    refundLinkedLine("EXCHANGE", "Summit Plush King") ===
+      "This refund is recorded as the refund for the exchange of Summit Plush King." &&
+    refundLinkedLine("EXCHANGE", null) ===
+      "This refund is recorded as the refund for this exchange.");
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`);
 process.exit(failures === 0 ? 0 : 1);

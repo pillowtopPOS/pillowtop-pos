@@ -471,38 +471,41 @@ function BoardContent() {
   // batch — journey row, events, follow-ups and reassignments can never
   // show mismatched generations (e.g. fresh "Paid in full" events under
   // a stale "Quoted" header).
-  // Returned-count badges live outside the journey row, and trial-item
-  // closes do not always write an event the board subscribes to, so the
-  // panel refresh and drawer close refetch them for just this journey.
-  function refreshReturnedTrialCount(journeyId: string) {
-    fetchReturnedTrialCounts([journeyId]).then((m) =>
-      setReturnedTrialCounts((prev) => ({ ...prev, ...m }))
-    );
+  // Returned-count badges and trial evaluations live outside the journey
+  // row, and trial-item closes do not always write an event the board
+  // subscribes to, so the panel refresh and drawer close refetch them for
+  // just this journey.
+  async function refreshTrialBadgeData(journeyId: string) {
+    const [countMap, evalMap] = await Promise.all([
+      fetchReturnedTrialCounts([journeyId]),
+      // Panel actions (protector override, trial-start correction, an
+      // auto-completed return, ...) can change the item's evaluation -
+      // refresh just this journey's evals so the board card behind the
+      // panel isn't stale until the next loadData.
+      evaluateSleepTrialItems([journeyId]),
+    ]);
+    setReturnedTrialCounts((prev) => ({ ...prev, ...countMap }));
+    setTrialEvals((prev) => {
+      const next = new Map(prev);
+      const evals = evalMap.get(journeyId) ?? [];
+      if (evals.length > 0) next.set(journeyId, evals);
+      else next.delete(journeyId);
+      return next;
+    });
   }
 
   async function handleReassigned(journeyId: string) {
     setJourneyRefreshPending(true);
     try {
-      const [fresh, history, evalMap, evs, fus] = await Promise.all([
+      const [fresh, history, evs, fus] = await Promise.all([
         fetchJourneyById(journeyId),
         fetchJourneyReassignments(journeyId),
-        // Panel actions (protector override, trial-start correction, ...) can
-        // change the item's evaluation — refresh just this journey's evals so
-        // the board card behind the panel isn't stale until the next loadData.
-        evaluateSleepTrialItems([journeyId]),
         fetchJourneyEvents(journeyId),
         fetchJourneyFollowUps(journeyId),
       ]);
       setReassignments(history);
       setEvents(evs);
       setFollowUps(fus);
-      setTrialEvals((prev) => {
-        const next = new Map(prev);
-        const evals = evalMap.get(journeyId) ?? [];
-        if (evals.length > 0) next.set(journeyId, evals);
-        else next.delete(journeyId);
-        return next;
-      });
       if (fresh) {
         setSelectedJourney(fresh);
         setJourneys((prev) => prev.map((j) => (j.id === fresh.id ? fresh : j)));
@@ -515,7 +518,7 @@ function BoardContent() {
       fetchLiveTrialItemStatuses().then((m) =>
         setHiddenJourneyIds(hiddenByInProgressAction(m))
       );
-      refreshReturnedTrialCount(journeyId);
+      await refreshTrialBadgeData(journeyId);
     } finally {
       setJourneyRefreshPending(false);
     }
@@ -1444,7 +1447,7 @@ function BoardContent() {
           trialEvals={trialEvals.get(selectedJourney.id) ?? []}
           onReassigned={handleReassigned}
           onClose={() => {
-            refreshReturnedTrialCount(selectedJourney.id);
+            refreshTrialBadgeData(selectedJourney.id);
             setCompletionDoneFor(null);
             setPanelCompletionInfo(null);
             setSelectedJourney(null);

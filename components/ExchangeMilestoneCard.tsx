@@ -30,7 +30,10 @@ import {
   pickRefundPayment,
   refundablePaymentEvents,
 } from "@/lib/journeys/paid";
-import { actionRefundBlockReason } from "@/lib/journeys/returns";
+import {
+  actionRefundBlockReason,
+  refundLinkedLine,
+} from "@/lib/journeys/returns";
 import RecordRefundModal from "@/components/RecordRefundModal";
 import { createClient } from "@/lib/supabase/client";
 
@@ -90,9 +93,12 @@ function MilestoneLine({ label, m }: { label: string; m: ExchangeMilestone }) {
 
 export default function ExchangeMilestoneCard({
   action,
+  productName,
   onChanged,
 }: {
   action: ExchangeActionRead;
+  // Original item's product name for the refund dialog's linked line.
+  productName?: string | null;
   onChanged: () => void;
 }) {
   const router = useRouter();
@@ -539,7 +545,7 @@ export default function ExchangeMilestoneCard({
                   refundRead === "loading" ||
                   refundBlockReason !== null
                 }
-                className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
               >
                 Record refund
               </button>
@@ -722,6 +728,7 @@ export default function ExchangeMilestoneCard({
                 defaultAmountCents={owed}
                 initialPaymentId={refundData.initialPaymentId ?? undefined}
                 actionId={action.action_id}
+                returnProductName={productName}
                 lockedAmountCents={
                   callerCan.adjustRefund ? null : owed
                 }
@@ -744,6 +751,9 @@ export default function ExchangeMilestoneCard({
             <p className="mt-2 text-sm text-slate-700">
               PillowTop records the refund. Issue it in your payment system
               first.
+            </p>
+            <p className="mt-2 rounded-md border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-xs text-violet-800">
+              {refundLinkedLine("EXCHANGE", productName)}
             </p>
             <p className="mt-1 text-xs text-slate-500">
               Refund owed: {fmt(owed)}
