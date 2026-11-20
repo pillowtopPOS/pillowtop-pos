@@ -4,7 +4,15 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { fetchMyWork, completeFollowUp, FOLLOW_UP_METHOD_LABELS, type MyWorkItem, type ReadyJourney } from "@/lib/journeys/queries";
+import { fetchMyWork, completeFollowUp, fetchCurrentEmployee, fetchStores, FOLLOW_UP_METHOD_LABELS, type MyWorkItem, type ReadyJourney } from "@/lib/journeys/queries";
+import { hasPermission } from "@/lib/inventory/queries";
+import {
+  fetchOpenTrialActions,
+  partitionWork,
+  workStepLabel,
+  type OpenTrialAction,
+  type TrialActionStep,
+} from "@/lib/journeys/exchange";
 import { exceptionTypeLabel } from "@/lib/journeys/sleepTrial";
 import { READY_SCHEDULING_STALE_DAYS } from "@/lib/constants";
 import DeliveryContactModal from "@/components/delivery/DeliveryContactModal";
@@ -30,6 +38,15 @@ export default function MyWorkPage() {
   const [pageError, setPageError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const callCount = useConfirmationCallCount();
+  // 163: the committed-action worklist split into what the caller can
+  // act on now vs the open actions they merely own or watch.
+  const [workPartition, setWorkPartition] = useState<{
+    needsYou: { action: OpenTrialAction; step: TrialActionStep }[];
+    waiting: OpenTrialAction[];
+  }>({ needsYou: [], waiting: [] });
+  const [waitingOpen, setWaitingOpen] = useState(false);
+  // Active store for the "caller's store" half of the waiting filter.
+  const activeStoreIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const supabase = createClient();
@@ -38,6 +55,8 @@ export default function MyWorkPage() {
         router.push("/login");
         return;
       }
+      activeStoreIdRef.current =
+        session.user.user_metadata?.active_store_id ?? null;
       // Read the saved "Show all stores" choice BEFORE the first fetch so
       // the initial load already uses it — no fetch-then-swap jump.
       // Storage may be blocked; every access is wrapped.
@@ -58,7 +77,26 @@ export default function MyWorkPage() {
   // list would be jarring.
   async function load(allStores = showAllStores, quiet = false) {
     if (!quiet) setLoading(true);
-    const data = await fetchMyWork({ allStores });
+    const [data, actions, emp, storeList, canInspectPerm, canRefund] =
+      await Promise.all([
+        fetchMyWork({ allStores }),
+        fetchOpenTrialActions().catch(() => [] as OpenTrialAction[]),
+        fetchCurrentEmployee(),
+        fetchStores(),
+        hasPermission("inventory.inspect_returns"),
+        hasPermission("payments.record_refund"),
+      ]);
+    const homeType = storeList.find(
+      (s) => s.id === emp?.home_store_id
+    )?.location_type;
+    setWorkPartition(
+      partitionWork(actions, {
+        employeeId: emp?.id ?? null,
+        storeId: activeStoreIdRef.current ?? emp?.home_store_id ?? null,
+        canInspect: canInspectPerm || homeType === "WAREHOUSE",
+        canRecordRefund: canRefund,
+      })
+    );
     lastLoadAt.current = Date.now();
     setItems(data);
     if (!quiet) setLoading(false);
@@ -109,7 +147,9 @@ export default function MyWorkPage() {
     { key: "ready", title: "Ready to schedule" },
     { key: "follow_ups", title: "Follow-ups" },
     { key: "approvals", title: "Approvals" },
-    { key: "exchanges", title: "Exchanges & returns" },
+    // "exchanges" stays in the union so exchange items keep mapping to a
+    // section (and the sidebar badge still counts them), but the section
+    // itself is replaced by "Needs you" + "Waiting on others" below.
     { key: "opportunities", title: "Opportunities" },
   ];
   const ACTION_CLS = "font-semibold underline";
@@ -526,6 +566,59 @@ export default function MyWorkPage() {
 
       {!loading && (
         <div className="space-y-6">
+          {workPartition.needsYou.length > 0 && (
+            <section>
+              <h2 className="mb-2 text-sm font-semibold text-slate-700">
+                Needs you ({workPartition.needsYou.length})
+              </h2>
+              <div className="space-y-2">
+                {workPartition.needsYou.map(({ action: a, step }) => (
+                  <div
+                    key={a.action_id}
+                    className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4 ${
+                      a.is_stalled
+                        ? "border-red-200 bg-red-50"
+                        : "border-teal-200 bg-teal-50"
+                    }`}
+                  >
+                    <div>
+                      <p className="text-sm font-medium text-slate-900">
+                        <span className={ACTION_CLS}>
+                          {a.action === "RETURN" ? "Return" : "Exchange"}
+                          {a.is_stalled
+                            ? ` stalled ${a.days_committed} day${
+                                a.days_committed === 1 ? "" : "s"
+                              }:`
+                            : " in progress:"}
+                        </span>{" "}
+                        {a.customer_name ?? "Unknown customer"}
+                        <span
+                          className={`ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-normal ${
+                            a.is_stalled ? "text-red-700" : "text-teal-700"
+                          }`}
+                        >
+                          {workStepLabel(step)}
+                        </span>
+                      </p>
+                      <p className="mt-0.5 text-xs text-slate-600">
+                        {a.product_name ?? "Unknown product"}
+                        {a.store_name ? ` · ${a.store_name}` : ""}
+                        {` · waiting ${a.days_committed} day${
+                          a.days_committed === 1 ? "" : "s"
+                        }`}
+                      </p>
+                    </div>
+                    <Link
+                      href={`/board?journey=${a.journey_id}`}
+                      className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      View Journey
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
           {SECTION_DEFS.map((def) => {
             const sectionItems = items.filter((i) => sectionOf(i) === def.key);
             if (sectionItems.length === 0) return null;
@@ -540,6 +633,62 @@ export default function MyWorkPage() {
               </section>
             );
           })}
+          {workPartition.waiting.length > 0 && (
+            <section>
+              <button
+                type="button"
+                onClick={() => setWaitingOpen((v) => !v)}
+                className="mb-2 text-sm font-semibold text-slate-500 hover:text-slate-700"
+              >
+                Waiting on others ({workPartition.waiting.length}){" "}
+                {waitingOpen ? "▾" : "▸"}
+              </button>
+              {waitingOpen && (
+                <div className="space-y-2">
+                  {workPartition.waiting.map((a) => (
+                    <div
+                      key={a.action_id}
+                      className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4 ${
+                        a.is_stalled
+                          ? "border-red-200 bg-red-50"
+                          : "border-slate-200 bg-white"
+                      }`}
+                    >
+                      <div>
+                        <p className="text-sm font-medium text-slate-900">
+                          <span className={ACTION_CLS}>
+                            {a.action === "RETURN" ? "Return" : "Exchange"}
+                            {a.is_stalled
+                              ? ` stalled ${a.days_committed} day${
+                                  a.days_committed === 1 ? "" : "s"
+                                }:`
+                              : " in progress:"}
+                          </span>{" "}
+                          {a.customer_name ?? "Unknown customer"}
+                        </p>
+                        <p className="mt-0.5 text-xs text-slate-600">
+                          {a.product_name ?? "Unknown product"}
+                          {a.store_name ? ` · ${a.store_name}` : ""}
+                          {a.started_by_name
+                            ? ` · started by ${a.started_by_name}`
+                            : ""}
+                          {` · waiting ${a.days_committed} day${
+                            a.days_committed === 1 ? "" : "s"
+                          }`}
+                        </p>
+                      </div>
+                      <Link
+                        href={`/board?journey=${a.journey_id}`}
+                        className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        View Journey
+                      </Link>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
         </div>
       )}
 

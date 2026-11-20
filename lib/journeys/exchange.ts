@@ -535,3 +535,191 @@ export function actionCompleteBlockers(
   if (action !== "RETURN") return list;
   return list.filter((b) => !b.includes("replacement"));
 }
+
+// ---------------------------------------------------------------------------
+// Open trial-action worklist (163)
+
+export type OpenTrialAction = {
+  action_id: string;
+  action: SleepTrialActionKind;
+  journey_id: string;
+  journey_number: string | null;
+  journey_state: string;
+  customer_name: string | null;
+  trial_item_id: string;
+  product_name: string | null;
+  store_id: string;
+  store_name: string | null;
+  started_by_employee_id: string | null;
+  started_by_name: string | null;
+  committed_at: string;
+  days_committed: number;
+  original_received_on: string | null;
+  replacement_delivered_on: string | null;
+  child_journey_id: string | null;
+  refund_owed_cents: number | null;
+  refund_recorded_at: string | null;
+  is_stalled: boolean;
+};
+
+/** Every COMMITTED return/exchange the caller can see (one batched read
+ *  for the board hide rule, the board chip, My Work and the inventory
+ *  receive list). No role filter server-side: callers partition. */
+export async function fetchOpenTrialActions(): Promise<OpenTrialAction[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("list_open_trial_actions");
+  if (error) {
+    console.error("fetchOpenTrialActions error", error);
+    return [];
+  }
+  return (data as OpenTrialAction[] | null) ?? [];
+}
+
+// What parks a journey's items: "RETURN" when any committed action is a
+// return (those orders stay on the board), "EXCHANGE" when only
+// exchanges are open, null when nothing is open.
+export function inProgressActionKind(
+  actions: { action: string }[] | null | undefined
+): "RETURN" | "EXCHANGE" | null {
+  const list = actions ?? [];
+  if (list.length === 0) return null;
+  return list.some((a) => a.action === "RETURN") ? "RETURN" : "EXCHANGE";
+}
+
+// The committed return a board chip or work row points at. Oldest
+// commit wins when an order somehow has more than one open return.
+export function oldestOpenReturn<
+  T extends { action: string; committed_at: string | null }
+>(actions: T[] | null | undefined): T | null {
+  const returns = (actions ?? []).filter((a) => a.action === "RETURN");
+  if (returns.length === 0) return null;
+  returns.sort((a, b) =>
+    (a.committed_at ?? "").localeCompare(b.committed_at ?? "")
+  );
+  return returns[0];
+}
+
+// Next-step text under the board's "Return in progress" chip: the
+// warehouse receive step while the original is out, the refund step once
+// it is back and money is still owed. Null means nothing actionable is
+// left (auto-complete is about to close it).
+export function returnChipStep(a: {
+  original_received_on: string | null;
+  refund_owed_cents: number | null;
+  refund_recorded_at: string | null;
+}): string | null {
+  if (a.original_received_on == null) return "Waiting for the mattress";
+  if ((a.refund_owed_cents ?? 0) > 0 && a.refund_recorded_at == null) {
+    return "Refund due";
+  }
+  return null;
+}
+
+// Board hide rule (163): a journey leaves the board only when every live
+// trial item is parked on an in-progress action AND none of those
+// actions is a return. Exchange-parked orders stay hidden (the
+// replacement order is on the board); return-parked orders stay visible
+// because nothing else represents them.
+const IN_PROGRESS_TRIAL_STATUSES = new Set([
+  "EXCHANGE_IN_PROGRESS",
+  "RETURN_IN_PROGRESS",
+]);
+
+export function hiddenByInProgressAction(
+  statusesByJourney: Map<string, string[]>,
+  openActions: { journey_id: string; action: string }[]
+): Set<string> {
+  const returnJourneyIds = new Set(
+    openActions.filter((a) => a.action === "RETURN").map((a) => a.journey_id)
+  );
+  const out = new Set<string>();
+  statusesByJourney.forEach((statuses, journeyId) => {
+    if (
+      statuses.length > 0 &&
+      statuses.every((s: string) => IN_PROGRESS_TRIAL_STATUSES.has(s)) &&
+      !returnJourneyIds.has(journeyId)
+    ) {
+      out.add(journeyId);
+    }
+  });
+  return out;
+}
+
+// The step the caller can take on an action right now, or null. Receive
+// comes first (a refund is server-blocked until the original is back);
+// refund needs the original received plus, for exchanges, the
+// replacement delivered. Completion is automatic, so there is no
+// complete step here.
+export type TrialActionStep = "receive" | "refund";
+
+export function callerActionStep<
+  T extends {
+    action: string;
+    original_received_on: string | null;
+    replacement_delivered_on?: string | null;
+    refund_owed_cents: number | null;
+    refund_recorded_at: string | null;
+  }
+>(
+  a: T,
+  caller: { canInspect: boolean; canRecordRefund: boolean }
+): TrialActionStep | null {
+  if (a.original_received_on == null) {
+    return caller.canInspect ? "receive" : null;
+  }
+  if (
+    (a.action !== "EXCHANGE" || a.replacement_delivered_on != null) &&
+    (a.refund_owed_cents ?? 0) > 0 &&
+    a.refund_recorded_at == null &&
+    caller.canRecordRefund
+  ) {
+    return "refund";
+  }
+  return null;
+}
+
+export function workStepLabel(step: TrialActionStep): string {
+  return step === "receive"
+    ? "Receive the returned mattress"
+    : "Record the refund";
+}
+
+// My Work partition (B2). needsYou: every action whose next step the
+// caller's permissions cover. waiting: the rest, but only rows the
+// caller started or that belong to the caller's store - an action at a
+// store the caller has no tie to is simply not theirs to watch.
+export function partitionWork<
+  T extends {
+    action: string;
+    original_received_on: string | null;
+    replacement_delivered_on?: string | null;
+    refund_owed_cents: number | null;
+    refund_recorded_at: string | null;
+    store_id: string;
+    started_by_employee_id: string | null;
+  }
+>(
+  actions: T[] | null | undefined,
+  caller: {
+    employeeId: string | null;
+    storeId: string | null;
+    canInspect: boolean;
+    canRecordRefund: boolean;
+  }
+): { needsYou: { action: T; step: TrialActionStep }[]; waiting: T[] } {
+  const needsYou: { action: T; step: TrialActionStep }[] = [];
+  const waiting: T[] = [];
+  for (const a of actions ?? []) {
+    const step = callerActionStep(a, caller);
+    if (step) {
+      needsYou.push({ action: a, step });
+    } else if (
+      (caller.employeeId != null &&
+        a.started_by_employee_id === caller.employeeId) ||
+      (caller.storeId != null && a.store_id === caller.storeId)
+    ) {
+      waiting.push(a);
+    }
+  }
+  return { needsYou, waiting };
+}

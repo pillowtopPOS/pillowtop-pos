@@ -24,6 +24,10 @@ import {
   fetchRestockCandidates,
   fetchRestockGenerationMode,
 } from "@/lib/transfers/queries";
+import {
+  fetchOpenTrialActions,
+  type OpenTrialAction,
+} from "@/lib/journeys/exchange";
 
 type ImportMapping = {
   SKU: number | null;
@@ -68,6 +72,11 @@ export default function InventoryPage() {
   const [canEditProducts, setCanEditProducts] = useState(false);
   const [canManageParLevels, setCanManageParLevels] = useState(false);
   const [restockBadgeCount, setRestockBadgeCount] = useState(0);
+  // 163: committed returns/exchanges whose original is still out. Only
+  // warehouse staff and inventory.inspect_returns holders see the list.
+  const [returnsToReceive, setReturnsToReceive] = useState<
+    OpenTrialAction[] | null
+  >(null);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"ats" | "physical">("ats");
 
@@ -164,6 +173,21 @@ export default function InventoryPage() {
       setCanViewPhysical(canViewPhysical);
       setCanEditProducts(canEdit);
       setCanManageParLevels(canPar);
+
+      // Returns-to-receive list: warehouse-based callers see it without
+      // the permission key, matching the server's receive gate.
+      const canSeeReturns =
+        homeStore?.location_type === "WAREHOUSE" ||
+        (await hasPermission("inventory.inspect_returns"));
+      if (canSeeReturns) {
+        fetchOpenTrialActions()
+          .then((actions) =>
+            setReturnsToReceive(
+              actions.filter((a) => a.original_received_on == null)
+            )
+          )
+          .catch(() => setReturnsToReceive([]));
+      }
 
       loadProducts(active);
     });
@@ -517,6 +541,50 @@ export default function InventoryPage() {
           </Link>
         </div>
       </header>
+
+      {returnsToReceive !== null && (
+        <section className="mb-4 rounded-lg border border-slate-200 bg-white p-4">
+          <h2 className="text-sm font-semibold text-slate-700">
+            Returns to receive ({returnsToReceive.length})
+          </h2>
+          {returnsToReceive.length === 0 ? (
+            <p className="mt-1 text-xs text-slate-500">
+              Nothing waiting to be received.
+            </p>
+          ) : (
+            <ul className="mt-2 space-y-1.5">
+              {returnsToReceive.map((a) => (
+                <li
+                  key={a.action_id}
+                  className="flex flex-wrap items-center justify-between gap-2 text-sm"
+                >
+                  <span className="min-w-0 text-slate-700">
+                    <span className="font-medium text-slate-900">
+                      {a.customer_name ?? "Unknown customer"}
+                    </span>
+                    {` · ${a.product_name ?? "Unknown product"}`}
+                    {a.store_name ? ` · ${a.store_name}` : ""}
+                    <span className="text-slate-500">
+                      {` · committed ${new Date(
+                        a.committed_at
+                      ).toLocaleDateString()}`}
+                      {` · waiting ${a.days_committed} day${
+                        a.days_committed === 1 ? "" : "s"
+                      }`}
+                    </span>
+                  </span>
+                  <Link
+                    href={`/board?journey=${a.journey_id}`}
+                    className="shrink-0 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    View Journey
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="relative">

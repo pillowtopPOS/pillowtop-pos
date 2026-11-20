@@ -76,7 +76,12 @@ import {
 } from "@/lib/journeys/returns";
 import {
   fetchJourneyReturnActions,
+  fetchOpenTrialActions,
+  hiddenByInProgressAction,
+  oldestOpenReturn,
+  returnChipStep,
   type ExchangeActionRead,
+  type OpenTrialAction,
 } from "@/lib/journeys/exchange";
 import Modal from "@/components/Modal";
 import FinancingCalculator from "@/components/FinancingCalculator";
@@ -123,28 +128,11 @@ import { effectiveShipTo, formatShipToLine } from "@/lib/customers/shipTo";
 import type { JourneyLineItem } from "@/lib/journeys/queries";
 import { hasPermission } from "@/lib/inventory/queries";
 
-// A journey whose every live trial item is mid-exchange/return is parked
-// on its replacement — it leaves the board lists until the action closes
-// or is cancelled. Display-only: the journey still opens by id.
-const IN_PROGRESS_TRIAL_STATUSES = new Set([
-  "EXCHANGE_IN_PROGRESS",
-  "RETURN_IN_PROGRESS",
-]);
-
-function hiddenByInProgressAction(
-  statusesByJourney: Map<string, string[]>
-): Set<string> {
-  const out = new Set<string>();
-  statusesByJourney.forEach((statuses, journeyId) => {
-    if (
-      statuses.length > 0 &&
-      statuses.every((s: string) => IN_PROGRESS_TRIAL_STATUSES.has(s))
-    ) {
-      out.add(journeyId);
-    }
-  });
-  return out;
-}
+// A journey whose every live trial item is parked mid-exchange leaves the
+// board lists (the replacement order represents it); a journey parked by
+// a return stays visible with a violet chip. Display-only either way:
+// the journey still opens by id. The rule itself lives in
+// lib/journeys/exchange (hiddenByInProgressAction).
 
 function BoardContent() {
   const router = useRouter();
@@ -171,13 +159,44 @@ function BoardContent() {
   >({});
   // Journeys whose every live trial item is parked in an exchange/return
   // stay off the board lists — they still open by id everywhere else.
-  const [hiddenJourneyIds, setHiddenJourneyIds] = useState<Set<string>>(new Set());
+  // 163: live item statuses plus the committed-action worklist decide it
+  // (a committed RETURN keeps its journey on the board).
+  const [liveItemStatuses, setLiveItemStatuses] = useState<
+    Map<string, string[]>
+  >(new Map());
+  const [openActions, setOpenActions] = useState<OpenTrialAction[]>([]);
+  const hiddenJourneyIds = useMemo(
+    () => hiddenByInProgressAction(liveItemStatuses, openActions),
+    [liveItemStatuses, openActions]
+  );
+  // Journey ids with any committed action - the table view's
+  // "Exchanges and returns" filter, including exchange-parked originals.
+  const openActionJourneyIds = useMemo(
+    () => new Set(openActions.map((a) => a.journey_id)),
+    [openActions]
+  );
+  // Oldest committed return per journey -> the violet board chip.
+  const returnChipByJourney = useMemo(() => {
+    const m = new Map<string, { step: string | null }>();
+    const byJourney = new Map<string, OpenTrialAction[]>();
+    for (const a of openActions) {
+      const list = byJourney.get(a.journey_id) ?? [];
+      list.push(a);
+      byJourney.set(a.journey_id, list);
+    }
+    byJourney.forEach((list, journeyId) => {
+      const ret = oldestOpenReturn(list);
+      if (ret) m.set(journeyId, { step: returnChipStep(ret) });
+    });
+    return m;
+  }, [openActions]);
   const [loading, setLoading] = useState(true);
   // One-shot notice left by /journeys/new when the order saved but the
   // optional company contact person could not be inserted.
   const [contactNotice, setContactNotice] = useState<string | null>(null);
 
   const [view, setView] = useState<"board" | "table">("board");
+  const [tableActionsOnly, setTableActionsOnly] = useState(false);
   const [search, setSearch] = useState("");
   const [employeeFilter, setEmployeeFilter] = useState<string>("all");
   const [storeFilter, setStoreFilter] = useState<string>("active");
@@ -351,18 +370,25 @@ function BoardContent() {
     ).then(setTrialEvals);
 
     const supabase = createClient();
-    const [{ data: unresolved }, trialItemStatuses] = await Promise.all([
-      supabase
-        .from("journey_events")
-        .select("journey_id")
-        .in("event_type", ["deposit_received", "payment_completed"])
-        .eq("outcome", "UNKNOWN"),
-      fetchLiveTrialItemStatuses(),
-    ]);
+    const [{ data: unresolved }, trialItemStatuses, trialActions] =
+      await Promise.all([
+        supabase
+          .from("journey_events")
+          .select("journey_id")
+          .in("event_type", ["deposit_received", "payment_completed"])
+          .eq("outcome", "UNKNOWN"),
+        fetchLiveTrialItemStatuses(),
+        // 163: the committed-action worklist drives the hide rule (a
+        // committed RETURN keeps its journey on the board) and the
+        // violet Return-in-progress chip. One batched read, same
+        // Promise.all as the other badge fetches.
+        fetchOpenTrialActions(),
+      ]);
     setUnresolvedJourneyIds(
       new Set((unresolved ?? []).map((e: { journey_id: string }) => e.journey_id))
     );
-    setHiddenJourneyIds(hiddenByInProgressAction(trialItemStatuses));
+    setLiveItemStatuses(trialItemStatuses);
+    setOpenActions(trialActions);
 
     if (!opts?.background) setLoading(false);
   };
@@ -476,15 +502,19 @@ function BoardContent() {
   // subscribes to, so the panel refresh and drawer close refetch them for
   // just this journey.
   async function refreshTrialBadgeData(journeyId: string) {
-    const [countMap, evalMap] = await Promise.all([
+    const [countMap, evalMap, trialActions] = await Promise.all([
       fetchReturnedTrialCounts([journeyId]),
       // Panel actions (protector override, trial-start correction, an
       // auto-completed return, ...) can change the item's evaluation -
       // refresh just this journey's evals so the board card behind the
       // panel isn't stale until the next loadData.
       evaluateSleepTrialItems([journeyId]),
+      // The worklist feeds the Return-in-progress chip and the hide
+      // rule; a panel action can flip either one.
+      fetchOpenTrialActions(),
     ]);
     setReturnedTrialCounts((prev) => ({ ...prev, ...countMap }));
+    setOpenActions(trialActions);
     setTrialEvals((prev) => {
       const next = new Map(prev);
       const evals = evalMap.get(journeyId) ?? [];
@@ -514,10 +544,9 @@ function BoardContent() {
         setSelectedJourney(null);
       }
       // Panel actions (committing/cancelling an exchange) change trial-item
-      // statuses, so the board-hide set is refreshed alongside the journey.
-      fetchLiveTrialItemStatuses().then((m) =>
-        setHiddenJourneyIds(hiddenByInProgressAction(m))
-      );
+      // statuses, so the board-hide inputs are refreshed alongside the
+      // journey (the worklist itself refreshes in refreshTrialBadgeData).
+      fetchLiveTrialItemStatuses().then(setLiveItemStatuses);
       await refreshTrialBadgeData(journeyId);
     } finally {
       setJourneyRefreshPending(false);
@@ -1343,6 +1372,18 @@ function BoardContent() {
             </option>
           ))}
         </select>
+
+        {view === "table" && (
+          <label className="flex items-center gap-2 text-sm text-slate-600">
+            <input
+              type="checkbox"
+              checked={tableActionsOnly}
+              onChange={(e) => setTableActionsOnly(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+            />
+            Exchanges and returns
+          </label>
+        )}
       </div>
 
       {loading && <p className="text-sm text-slate-500">Loading…</p>}
@@ -1360,6 +1401,7 @@ function BoardContent() {
                 fulfillmentCounts={fulfillmentCounts}
                 journeyUnitTotals={journeyUnitTotals}
                 returnedTrialCounts={returnedTrialCounts}
+                returnChips={returnChipByJourney}
                 onSelect={selectJourney}
               />
             ))}
@@ -1383,10 +1425,13 @@ function BoardContent() {
             </thead>
             <tbody>
               {journeys
-                .filter(
-                  (j) =>
-                    !hiddenJourneyIds.has(j.id) ||
-                    j.id === selectedJourney?.id
+                .filter((j) =>
+                  // The filter intentionally ignores the hide rule:
+                  // exchange-parked originals must be findable here too.
+                  tableActionsOnly
+                    ? openActionJourneyIds.has(j.id)
+                    : !hiddenJourneyIds.has(j.id) ||
+                      j.id === selectedJourney?.id
                 )
                 .map((j) => (
                 <tr
@@ -2227,6 +2272,7 @@ function Column({
   fulfillmentCounts,
   journeyUnitTotals,
   returnedTrialCounts,
+  returnChips,
   onSelect,
 }: {
   state: SleepJourneyState;
@@ -2239,6 +2285,7 @@ function Column({
     { units: number; hasPickupLine: boolean; hasDeliveryLine: boolean }
   >;
   returnedTrialCounts: Record<string, { returned: number; total: number }>;
+  returnChips: Map<string, { step: string | null }>;
   onSelect: (j: JourneyWithDetails) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: state });
@@ -2268,6 +2315,7 @@ function Column({
             unitsOut={fulfillmentCounts[j.id] ?? 0}
             unitMeta={journeyUnitTotals[j.id]}
             returnedCounts={returnedTrialCounts[j.id]}
+            returnChip={returnChips.get(j.id)}
             onSelect={onSelect}
           />
         ))}
@@ -2317,6 +2365,7 @@ function JourneyCard({
   unitsOut,
   unitMeta,
   returnedCounts,
+  returnChip,
   onSelect,
 }: {
   journey: JourneyWithDetails;
@@ -2325,6 +2374,7 @@ function JourneyCard({
   unitsOut: number;
   unitMeta?: { units: number; hasPickupLine: boolean; hasDeliveryLine: boolean };
   returnedCounts?: { returned: number; total: number };
+  returnChip?: { step: string | null };
   onSelect: (j: JourneyWithDetails) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
@@ -2373,6 +2423,18 @@ function JourneyCard({
           <span className="inline-block rounded-full bg-indigo-100 px-1.5 py-px text-[10px] font-medium text-indigo-700">
             Exchange
           </span>
+        </p>
+      )}
+      {returnChip && (
+        <p className="flex items-center gap-1">
+          <span className="inline-block rounded-full bg-violet-100 px-1.5 py-px text-[10px] font-medium text-violet-700">
+            Return in progress
+          </span>
+          {returnChip.step && (
+            <span className="truncate text-[10px] text-slate-500">
+              {returnChip.step}
+            </span>
+          )}
         </p>
       )}
       <p>

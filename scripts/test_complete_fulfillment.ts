@@ -45,6 +45,12 @@ import {
 import {
   actionCompleteBlockers,
   actionMilestoneKeys,
+  callerActionStep,
+  hiddenByInProgressAction,
+  inProgressActionKind,
+  oldestOpenReturn,
+  partitionWork,
+  returnChipStep,
 } from "../lib/journeys/exchange";
 import {
   actionRefundBlockReason,
@@ -1056,6 +1062,157 @@ check("linked refund line names the product, falls back cleanly",
       "This refund is recorded as the refund for the exchange of Summit Plush King." &&
     refundLinkedLine("EXCHANGE", null) ===
       "This refund is recorded as the refund for this exchange.");
+
+// --- Open trial-action worklist helpers (163, Batch B) ---
+const waReturn = {
+  action: "RETURN",
+  journey_id: "j1",
+  store_id: "s1",
+  started_by_employee_id: "e1",
+  committed_at: "2025-11-01T10:00:00Z",
+  original_received_on: null as string | null,
+  replacement_delivered_on: null as string | null,
+  refund_owed_cents: 50000 as number | null,
+  refund_recorded_at: null as string | null,
+};
+const waExchange = { ...waReturn, action: "EXCHANGE", journey_id: "j2" };
+check("in-progress kind: return wins, exchange only when no return",
+  inProgressActionKind([]) === null &&
+    inProgressActionKind(null) === null &&
+    inProgressActionKind([waExchange]) === "EXCHANGE" &&
+    inProgressActionKind([waExchange, waReturn]) === "RETURN" &&
+    inProgressActionKind([waReturn]) === "RETURN");
+check("oldest open return picks the earliest commit",
+  oldestOpenReturn([
+    { ...waReturn, committed_at: "2025-11-05T10:00:00Z" },
+    waExchange,
+    { ...waReturn, committed_at: "2025-11-01T10:00:00Z" },
+  ])?.committed_at === "2025-11-01T10:00:00Z" &&
+    oldestOpenReturn([waExchange]) === null);
+check("return chip step follows receive then refund milestones",
+  returnChipStep(waReturn) === "Waiting for the mattress" &&
+    returnChipStep({ ...waReturn, original_received_on: "2025-11-10" }) ===
+      "Refund due" &&
+    returnChipStep({
+      ...waReturn,
+      original_received_on: "2025-11-10",
+      refund_owed_cents: 0,
+    }) === null &&
+    returnChipStep({
+      ...waReturn,
+      original_received_on: "2025-11-10",
+      refund_recorded_at: "2025-11-11T00:00:00Z",
+    }) === null);
+check("hide rule: returns stay visible, exchange-parked still hides",
+  (() => {
+    const statuses = new Map<string, string[]>([
+      ["j1", ["RETURN_IN_PROGRESS"]],
+      ["j2", ["EXCHANGE_IN_PROGRESS"]],
+      ["j3", ["ACTIVE", "EXCHANGE_IN_PROGRESS"]],
+      ["j4", ["EXCHANGE_IN_PROGRESS", "RETURN_IN_PROGRESS"]],
+    ]);
+    const hidden = hiddenByInProgressAction(statuses, [
+      waReturn,
+      waExchange,
+      { ...waExchange, journey_id: "j3" },
+      { ...waExchange, journey_id: "j4" },
+      { ...waReturn, journey_id: "j4" },
+    ]);
+    return (
+      !hidden.has("j1") &&
+      hidden.has("j2") &&
+      !hidden.has("j3") &&
+      !hidden.has("j4") &&
+      hidden.size === 1
+    );
+  })());
+check("caller step: receive first, refund after milestones",
+  callerActionStep(waReturn, {
+    canInspect: true,
+    canRecordRefund: true,
+  }) === "receive" &&
+    callerActionStep(waReturn, {
+      canInspect: false,
+      canRecordRefund: true,
+    }) === null &&
+    callerActionStep(
+      { ...waReturn, original_received_on: "2025-11-10" },
+      { canInspect: true, canRecordRefund: true }
+    ) === "refund" &&
+    callerActionStep(
+      { ...waReturn, original_received_on: "2025-11-10" },
+      { canInspect: true, canRecordRefund: false }
+    ) === null &&
+    callerActionStep(
+      {
+        ...waExchange,
+        original_received_on: "2025-11-10",
+        replacement_delivered_on: null,
+      },
+      { canInspect: true, canRecordRefund: true }
+    ) === null &&
+    callerActionStep(
+      {
+        ...waExchange,
+        original_received_on: "2025-11-10",
+        replacement_delivered_on: "2025-11-11",
+      },
+      { canInspect: false, canRecordRefund: true }
+    ) === "refund");
+check("partition: needs-you by permission, waiting by ownership",
+  (() => {
+    const settled = {
+      original_received_on: "2025-11-10",
+      replacement_delivered_on: "2025-11-11",
+      refund_recorded_at: "2025-11-11T00:00:00Z",
+    };
+    const mine = {
+      ...waExchange,
+      ...settled,
+      started_by_employee_id: "e9",
+    };
+    const myStore = {
+      ...waExchange,
+      ...settled,
+      journey_id: "j5",
+      store_id: "s9",
+    };
+    const foreign = {
+      ...waExchange,
+      ...settled,
+      journey_id: "j6",
+      store_id: "s8",
+      started_by_employee_id: "e8",
+    };
+    const p = partitionWork(
+      [
+        waReturn,
+        { ...waReturn, journey_id: "j7", original_received_on: "2025-11-10" },
+        mine,
+        myStore,
+        foreign,
+      ],
+      {
+        employeeId: "e9",
+        storeId: "s9",
+        canInspect: true,
+        canRecordRefund: true,
+      }
+    );
+    return (
+      p.needsYou.length === 2 &&
+      p.needsYou[0].step === "receive" &&
+      p.needsYou[1].step === "refund" &&
+      p.waiting.length === 2 &&
+      p.waiting.every((a) => a.journey_id === "j2" || a.journey_id === "j5") &&
+      partitionWork([waReturn], {
+        employeeId: "e9",
+        storeId: "s9",
+        canInspect: false,
+        canRecordRefund: false,
+      }).needsYou.length === 0
+    );
+  })());
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`);
 process.exit(failures === 0 ? 0 : 1);
