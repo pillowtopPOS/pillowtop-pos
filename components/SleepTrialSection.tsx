@@ -193,12 +193,17 @@ export default function SleepTrialSection({
   canModerate,
   onChanged,
   followUps,
+  refreshKey = 0,
 }: {
   journey: JourneyWithDetails;
   currentEmployee: Employee | null;
   canModerate: boolean;
   onChanged: () => void;
   followUps: FollowUp[];
+  // Bumped by the parent after money events (refund recorded/voided
+  // anywhere on the order) so the milestone card re-reads its actions
+  // without a full section reload.
+  refreshKey?: number;
 }) {
   const [concerns, setConcerns] = useState<SleepConcern[]>([]);
   const [issues, setIssues] = useState<SleepConcernIssue[]>([]);
@@ -270,13 +275,31 @@ export default function SleepTrialSection({
     setItemExceptions(iex);
     setApprovers(appr);
     setPermKeys(pk);
-    setExchangeInfo(xinfo);
-    // Full action read per COMMITTED action (091's get_exchange_action
-    // carries the milestones, flags and refund data the milestone card
-    // renders; a pre-091 database returns the 089 shape and the card
-    // falls back to the plain refund line).
+    await reloadActions(xinfo);
+    setIssues(await fetchSleepConcernIssues(c.map((x) => x.id)));
+    // Entries load upfront (one fetch per concern) so the collapsed
+    // card summary and the expanded history share the same data.
+    const entryLists = await Promise.all(
+      c.map((x) => fetchSleepConcernEntries(x.id))
+    );
+    setEntriesByConcern(
+      Object.fromEntries(c.map((x, idx) => [x.id, entryLists[idx]]))
+    );
+  };
+
+  // Full action read per COMMITTED action (091's get_exchange_action
+  // carries the milestones, flags and refund data the milestone card
+  // renders; a pre-091 database returns the 089 shape and the card
+  // falls back to the plain refund line). When xinfo is null it is
+  // fetched first, so refreshKey bumps only redo this slice of load().
+  async function reloadActions(xinfo?: JourneyExchangeInfo | null) {
+    const info =
+      xinfo !== undefined
+        ? xinfo
+        : await getJourneyExchangeActions(journey.id).catch(() => null);
+    setExchangeInfo(info);
     const actionPairs = await Promise.all(
-      (xinfo?.actions ?? [])
+      (info?.actions ?? [])
         .filter((a) => a.status === "COMMITTED")
         .map(async (a) => {
           const full = await getExchangeAction(a.action_id).catch(() => null);
@@ -291,21 +314,21 @@ export default function SleepTrialSection({
         )
       )
     );
-    setIssues(await fetchSleepConcernIssues(c.map((x) => x.id)));
-    // Entries load upfront (one fetch per concern) so the collapsed
-    // card summary and the expanded history share the same data.
-    const entryLists = await Promise.all(
-      c.map((x) => fetchSleepConcernEntries(x.id))
-    );
-    setEntriesByConcern(
-      Object.fromEntries(c.map((x, idx) => [x.id, entryLists[idx]]))
-    );
-  };
+  }
 
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [journey.id, journey.delivered_at]);
+
+  useEffect(() => {
+    if (refreshKey === 0) return;
+    // A refund recorded from the rail or a payment row lands here as a
+    // bump - re-read the actions so the milestone card catches the new
+    // refund_recorded_at without a full section reload.
+    reloadActions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey]);
 
   async function refresh() {
     await load();
@@ -498,6 +521,7 @@ export default function SleepTrialSection({
               actionByItem[orderedEvals[0].trial_item_id] ?? null
             }
             onExchangeChanged={refresh}
+            canStartReturn={permKeys.has("sleep_trial.start_return")}
           />
           {orderedEvals.length > 1 &&
             (showAllTrials ? (
@@ -517,6 +541,7 @@ export default function SleepTrialSection({
                     onCorrectStart={() => setCorrectionEval(e)}
                     exchangeAction={actionByItem[e.trial_item_id] ?? null}
                     onExchangeChanged={refresh}
+                    canStartReturn={permKeys.has("sleep_trial.start_return")}
                   />
                 </div>
               ))
@@ -909,6 +934,7 @@ function TrialHeroCard({
   onCorrectStart,
   exchangeAction = null,
   onExchangeChanged,
+  canStartReturn = false,
 }: {
   evaluation: SleepTrialEvaluation;
   onAction: (action: string) => void;
@@ -918,6 +944,7 @@ function TrialHeroCard({
   onCorrectStart: () => void;
   exchangeAction?: ExchangeActionRead | null;
   onExchangeChanged?: () => void;
+  canStartReturn?: boolean;
 }) {
   const status = e.headline?.status ?? "UNKNOWN";
   const actionKey = headlineAction(e);
@@ -1126,7 +1153,12 @@ function TrialHeroCard({
             </p>
           )}
           {!isMinNightWait && !isEligible && e.headline?.explanation && (
-            <p className="text-xs text-slate-600">{e.headline.explanation}</p>
+            <p className="text-xs text-slate-600">
+              {e.headline.reason_code === "ACTION_IN_PROGRESS" &&
+              exchangeAction?.action === "RETURN"
+                ? "A return is already in progress for this mattress."
+                : e.headline.explanation}
+            </p>
           )}
           {(e.item?.status === "EXCHANGE_IN_PROGRESS" ||
             e.item?.status === "RETURN_IN_PROGRESS") &&
@@ -1232,6 +1264,7 @@ function TrialHeroCard({
         evaluation={e}
         onAction={onAction}
         noApprovers={noApproverRequests}
+        canStartReturn={canStartReturn}
       />
     </div>
   );
@@ -1383,10 +1416,12 @@ function NextActionBar({
   evaluation: e,
   onAction,
   noApprovers = false,
+  canStartReturn = false,
 }: {
   evaluation: SleepTrialEvaluation;
   onAction: (action: string) => void;
   noApprovers?: boolean;
+  canStartReturn?: boolean;
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
   // ADD_SLEEP_CONCERN has its own home in the Sleep Concerns header —
@@ -1415,11 +1450,20 @@ function NextActionBar({
     e.item?.status === "ACTIVE" &&
     e.actions?.EXCHANGE?.status !== "ELIGIBLE" &&
     !ordered.includes("START_EXCHANGE");
+  const showBlockedReturn =
+    canStartReturn &&
+    e.item?.status === "ACTIVE" &&
+    e.actions?.RETURN?.status !== "ELIGIBLE" &&
+    !ordered.includes("START_RETURN");
 
   // One allowed action renders as a plain button; otherwise everything
-  // (plus the blocked Start Exchange placeholder) lives under "More".
-  const singleAction = ordered.length === 1 && !showBlockedExchange;
-  const menuCount = ordered.length + (showBlockedExchange ? 1 : 0);
+  // (plus the blocked action placeholders) lives under "More".
+  const singleAction =
+    ordered.length === 1 && !showBlockedExchange && !showBlockedReturn;
+  const menuCount =
+    ordered.length +
+    (showBlockedExchange ? 1 : 0) +
+    (showBlockedReturn ? 1 : 0);
 
   const btnBase =
     "rounded-md px-2.5 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50";
@@ -1476,6 +1520,17 @@ function NextActionBar({
                       Start Exchange
                       <span className="block font-normal text-slate-400">
                         {e.actions?.EXCHANGE?.explanation ?? "Blocked"}
+                      </span>
+                    </button>
+                  )}
+                  {showBlockedReturn && (
+                    <button
+                      disabled
+                      className="block w-full cursor-not-allowed px-3 py-1.5 text-left text-xs text-slate-500"
+                    >
+                      Start Return
+                      <span className="block font-normal text-slate-400">
+                        {e.actions?.RETURN?.explanation ?? "Blocked"}
                       </span>
                     </button>
                   )}

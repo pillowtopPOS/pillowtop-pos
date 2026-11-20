@@ -120,6 +120,7 @@ export default function ExchangeMilestoneCard({
   const [receivedLine, setReceivedLine] = useState<string | null>(null);
   const [callerIsWarehouseBased, setCallerIsWarehouseBased] =
     useState(false);
+  const [callerStoreId, setCallerStoreId] = useState<string | null>(null);
   const [locationsReady, setLocationsReady] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   // RETURN only: the shared refund dialog needs the journey's payments.
@@ -162,6 +163,7 @@ export default function ExchangeMilestoneCard({
         .then(({ data: emp }) => {
           const t = (emp as any)?.stores?.location_type;
           setCallerIsWarehouseBased(t === "WAREHOUSE");
+          setCallerStoreId((emp as any)?.home_store_id ?? null);
           // record_payment_refund gates on owner/admin/manager role (098).
           const role = (emp as any)?.role;
           setCallerCan((c) => ({
@@ -197,9 +199,25 @@ export default function ExchangeMilestoneCard({
           withArea.length > 0
             ? [...withArea, ...warehouses.filter((l) => !quarantineParentIds.has(l.id))]
             : warehouses;
+        // Default to the real main warehouse: the caller's store's
+        // assigned warehouse when it is listed, else the oldest
+        // warehouse by created_at (test-named rows sort first by name).
+        const callerWarehouseId = stores.find(
+          (s) => s.id === callerStoreId
+        )?.assigned_warehouse_id;
+        const preferred =
+          (callerWarehouseId &&
+            ordered.find((l) => l.id === callerWarehouseId)) ||
+          [...ordered].sort((a, b) =>
+            (a.created_at ?? "").localeCompare(b.created_at ?? "")
+          )[0];
         if (cancelled) return;
         setReceiveLocations(ordered);
-        setReceiveLocationId(ordered[0]?.id ?? "");
+        setReceiveLocationId((cur) =>
+          cur && ordered.some((l) => l.id === cur)
+            ? cur
+            : preferred?.id ?? ""
+        );
         setLocationsReady(true);
       } catch {
         if (!cancelled) {
@@ -211,7 +229,7 @@ export default function ExchangeMilestoneCard({
     return () => {
       cancelled = true;
     };
-  }, [dialog]);
+  }, [dialog, callerStoreId]);
 
   useEffect(() => {
     if (!action.original_received_on) {
@@ -507,7 +525,8 @@ export default function ExchangeMilestoneCard({
               !refundRecorded)) && (
             <button
               onClick={() => open("refund")}
-              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              disabled={saving || refundRead === "loading"}
+              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Record refund
             </button>

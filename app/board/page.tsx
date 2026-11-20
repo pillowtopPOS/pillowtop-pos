@@ -2426,12 +2426,13 @@ function JourneyCard({
           </span>
         </p>
       )}
-      {(returnedCounts?.returned ?? 0) > 0 && (
+      {(returnedCounts?.returned ?? 0) > 0 &&
+        returnedPillText(returnedCounts?.returned ?? 0, unitsOut) && (
         <p>
           <span className="inline-block rounded-full bg-violet-100 px-1.5 py-px text-[10px] font-medium text-violet-700">
             {returnedPillText(
               returnedCounts?.returned ?? 0,
-              returnedCounts?.total ?? 0
+              unitsOut
             )}
           </span>
         </p>

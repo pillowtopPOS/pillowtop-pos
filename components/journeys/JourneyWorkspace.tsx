@@ -759,12 +759,17 @@ export default function JourneyWorkspace({
     };
   }, [journey.id, events]);
 
-  // Per-line returned counts and the order-level pill numbers.
-  const { returnedByLine, returnedTrialCount, trialItemCount } = useMemo(() => {
+  // Per-line returned counts and the order-level pill numbers. A unit in
+  // the return pipeline (RETURN_IN_PROGRESS or CLOSED as RETURNED)
+  // counts; the "Returned <date>" text uses only closed items' dates.
+  const { returnedByLine, returnedTrialCount } = useMemo(() => {
     const byLine: Record<string, { count: number; lastClosedAt: string | null }> = {};
     let returned = 0;
     for (const row of trialItemRows) {
-      if (row.status === "CLOSED" && row.close_reason === "RETURNED") {
+      const inPipeline =
+        row.status === "RETURN_IN_PROGRESS" ||
+        (row.status === "CLOSED" && row.close_reason === "RETURNED");
+      if (inPipeline) {
         returned += 1;
         if (row.line_item_id) {
           const entry = byLine[row.line_item_id] ?? {
@@ -785,7 +790,6 @@ export default function JourneyWorkspace({
     return {
       returnedByLine: byLine,
       returnedTrialCount: returned,
-      trialItemCount: trialItemRows.length,
     };
   }, [trialItemRows]);
 
@@ -2100,6 +2104,7 @@ export default function JourneyWorkspace({
                   canModerate={canReconcile}
                   onChanged={handlePanelRefresh}
                   followUps={followUps}
+                  refreshKey={activityRefreshKey}
                 />
               )}
             </div>
@@ -2473,10 +2478,10 @@ export default function JourneyWorkspace({
                     </span>
                   </div>
                 )}
-              {returnedPillText(returnedTrialCount, trialItemCount) && (
+              {returnedPillText(returnedTrialCount, totalHanded) && (
                 <div className="mt-2">
                   <span className="inline-block rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-medium text-violet-700">
-                    {returnedPillText(returnedTrialCount, trialItemCount)}
+                    {returnedPillText(returnedTrialCount, totalHanded)}
                   </span>
                 </div>
               )}

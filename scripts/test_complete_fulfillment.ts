@@ -747,6 +747,24 @@ check("done tone is done",
   lineStatusText({
     handed: 1, quantity: 1, method: "delivery", anyOutOnOrder: true,
   })?.tone === "done");
+check("all handed units back reads Returned with date",
+  lineStatusText({
+    handed: 2, quantity: 2, method: "pickup", anyOutOnOrder: true,
+    returned: 2, returnedDateLabel: "Nov 19",
+  })?.text === "Returned Nov 19" &&
+  lineStatusText({
+    handed: 2, quantity: 2, method: "pickup", anyOutOnOrder: true,
+    returned: 2,
+  })?.tone === "returned");
+check("partial return counts against handed, not quantity",
+  lineStatusText({
+    handed: 2, quantity: 2, method: "delivery", anyOutOnOrder: true,
+    returned: 1,
+  })?.text === "1 of 2 returned" &&
+  lineStatusText({
+    handed: 1, quantity: 3, method: "pickup", anyOutOnOrder: true,
+    returned: 1,
+  })?.text === "Returned");
 
 // fulfillmentCountLabel: the verb follows the lines' effective methods,
 // falling back to the order type when there are no lines.

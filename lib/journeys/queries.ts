@@ -183,6 +183,7 @@ export type Store = {
   // Arrives with migration 066; absent from fetchStores until then so the app
   // keeps working pre-migration. StoreManagement merges it in separately.
   timezone?: string | null;
+  created_at?: string | null;
 };
 
 export type EmployeeRole =
@@ -418,7 +419,7 @@ export async function fetchStores(activeOnly = false): Promise<Store[]> {
   let query = supabase
     .from("stores")
     .select(
-      "id, company_id, name, store_code, address, street_address, city, state, zip_code, phone, is_active, trial_length_nights, minimum_adjustment_nights, trial_ending_warning_days, location_type, parent_location_id, assigned_warehouse_id, transfer_schedule_day"
+      "id, company_id, name, store_code, address, street_address, city, state, zip_code, phone, is_active, trial_length_nights, minimum_adjustment_nights, trial_ending_warning_days, location_type, parent_location_id, assigned_warehouse_id, transfer_schedule_day, created_at"
     )
     .order("name");
   if (activeOnly) {
@@ -1112,8 +1113,9 @@ export async function fetchJourneyTrialItemRows(
   return (data ?? []) as TrialItemStatusRow[];
 }
 
-/** Slice 2b board badge: closed-RETURNED and total non-VOIDED trial item
- *  counts per journey, one batched read for every card on the board. */
+/** Slice 2b board badge: units in the return pipeline (CLOSED as
+ *  RETURNED, or RETURN_IN_PROGRESS) and total non-VOIDED trial items per
+ *  journey, one batched read for every card on the board. */
 export async function fetchReturnedTrialCounts(
   journeyIds: string[]
 ): Promise<Record<string, { returned: number; total: number }>> {
@@ -1136,7 +1138,10 @@ export async function fetchReturnedTrialCounts(
   }[]) {
     const entry = out[row.journey_id] ?? { returned: 0, total: 0 };
     entry.total += 1;
-    if (row.status === "CLOSED" && row.close_reason === "RETURNED") {
+    if (
+      row.status === "RETURN_IN_PROGRESS" ||
+      (row.status === "CLOSED" && row.close_reason === "RETURNED")
+    ) {
       entry.returned += 1;
     }
     out[row.journey_id] = entry;
