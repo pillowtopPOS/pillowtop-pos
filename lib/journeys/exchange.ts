@@ -723,3 +723,18 @@ export function partitionWork<
   }
   return { needsYou, waiting };
 }
+
+// Sidebar badge parity (163): the badge counts what the My Work page
+// actually renders - every non-action item (ready, follow-ups,
+// approvals, opportunities) plus the caller's Needs you rows. The
+// exchange/return items still inside the fetched list and the
+// Waiting-on-others rows are not counted.
+export function visibleWorkCount(
+  items: { kind: string }[] | null | undefined,
+  needsYouCount: number
+): number {
+  const rendered = (items ?? []).filter(
+    (i) => i.kind !== "exchange_progress" && i.kind !== "exchange_stalled"
+  ).length;
+  return rendered + needsYouCount;
+}

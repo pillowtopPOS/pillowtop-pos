@@ -9,6 +9,7 @@ import { hasPermission } from "@/lib/inventory/queries";
 import {
   fetchOpenTrialActions,
   partitionWork,
+  visibleWorkCount,
   workStepLabel,
   type OpenTrialAction,
   type TrialActionStep,
@@ -44,7 +45,9 @@ export default function MyWorkPage() {
     needsYou: { action: OpenTrialAction; step: TrialActionStep }[];
     waiting: OpenTrialAction[];
   }>({ needsYou: [], waiting: [] });
-  const [waitingOpen, setWaitingOpen] = useState(false);
+  // null = follow the auto rule (expanded when any waiting row is
+  // stalled); a click pins the user's choice until the next load.
+  const [waitingOpen, setWaitingOpen] = useState<boolean | null>(null);
   // Active store for the "caller's store" half of the waiting filter.
   const activeStoreIdRef = useRef<string | null>(null);
 
@@ -89,20 +92,22 @@ export default function MyWorkPage() {
     const homeType = storeList.find(
       (s) => s.id === emp?.home_store_id
     )?.location_type;
-    setWorkPartition(
-      partitionWork(actions, {
-        employeeId: emp?.id ?? null,
-        storeId: activeStoreIdRef.current ?? emp?.home_store_id ?? null,
-        canInspect: canInspectPerm || homeType === "WAREHOUSE",
-        canRecordRefund: canRefund,
-      })
-    );
+    const partition = partitionWork(actions, {
+      employeeId: emp?.id ?? null,
+      storeId: activeStoreIdRef.current ?? emp?.home_store_id ?? null,
+      canInspect: canInspectPerm || homeType === "WAREHOUSE",
+      canRecordRefund: canRefund,
+    });
+    setWorkPartition(partition);
     lastLoadAt.current = Date.now();
     setItems(data);
     if (!quiet) setLoading(false);
-    // Keep the sidebar badge equal to exactly what this page renders.
+    // Keep the sidebar badge equal to what this page renders: the kept
+    // sections plus Needs you. Waiting-on-others does not count.
     window.dispatchEvent(
-      new CustomEvent<number>("my-work-count", { detail: data.length })
+      new CustomEvent<number>("my-work-count", {
+        detail: visibleWorkCount(data, partition.needsYou.length),
+      })
     );
   }
   loadRef.current = load;
@@ -635,15 +640,27 @@ export default function MyWorkPage() {
           })}
           {workPartition.waiting.length > 0 && (
             <section>
+              {(() => {
+                const stalledCount = workPartition.waiting.filter(
+                  (a) => a.is_stalled
+                ).length;
+                const open = waitingOpen ?? stalledCount > 0;
+                return (
+                  <>
               <button
                 type="button"
-                onClick={() => setWaitingOpen((v) => !v)}
+                onClick={() => setWaitingOpen(!open)}
                 className="mb-2 text-sm font-semibold text-slate-500 hover:text-slate-700"
               >
                 Waiting on others ({workPartition.waiting.length}){" "}
-                {waitingOpen ? "▾" : "▸"}
+                {stalledCount > 0 && (
+                  <span className="font-medium text-red-600">
+                    · {stalledCount} stalled{" "}
+                  </span>
+                )}
+                {open ? "▾" : "▸"}
               </button>
-              {waitingOpen && (
+              {open && (
                 <div className="space-y-2">
                   {workPartition.waiting.map((a) => (
                     <div
@@ -687,6 +704,9 @@ export default function MyWorkPage() {
                   ))}
                 </div>
               )}
+                  </>
+                );
+              })()}
             </section>
           )}
         </div>

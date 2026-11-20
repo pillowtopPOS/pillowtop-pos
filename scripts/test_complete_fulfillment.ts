@@ -51,6 +51,7 @@ import {
   oldestOpenReturn,
   partitionWork,
   returnChipStep,
+  visibleWorkCount,
 } from "../lib/journeys/exchange";
 import {
   actionRefundBlockReason,
@@ -1213,6 +1214,21 @@ check("partition: needs-you by permission, waiting by ownership",
       }).needsYou.length === 0
     );
   })());
+check("badge count: kept sections plus needs-you, waiting excluded",
+  visibleWorkCount(
+    [
+      { kind: "ready_for_scheduling" },
+      { kind: "follow_up" },
+      { kind: "approval" },
+      { kind: "opportunity" },
+      { kind: "exchange_progress" },
+      { kind: "exchange_stalled" },
+    ],
+    3
+  ) === 7 &&
+    visibleWorkCount([], 0) === 0 &&
+    visibleWorkCount(null, 2) === 2 &&
+    visibleWorkCount([{ kind: "exchange_progress" }], 0) === 0);
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`);
 process.exit(failures === 0 ? 0 : 1);

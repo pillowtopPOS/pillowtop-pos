@@ -3,7 +3,9 @@ import { describeError } from "@/lib/utils";
 import type { SleepJourneyState } from "@/lib/constants";
 import type { JourneyEventType } from "./state";
 import { phoneDigitsMatch } from "@/lib/customers/search";
-import type { OpenExchangeWork } from "./exchange";
+import type { OpenExchangeWork, OpenTrialAction } from "./exchange";
+import { partitionWork } from "./exchange";
+import { hasPermission } from "@/lib/inventory/queries";
 import { isReturnedTrialItem } from "./returns";
 
 export type JourneyWithDetails = {
@@ -1957,12 +1959,17 @@ export async function fetchMyWork(opts?: {
   return items;
 }
 
-// Badge count for the My Work nav item — counts the same five sources as
-// fetchMyWork without hydrating journeys.
+// Badge count for the My Work nav item - counts what the page renders:
+// the four kept sections (ready, follow-ups, approvals, opportunities)
+// plus the caller's Needs you rows from the same partitionWork inputs the
+// page uses. Waiting-on-others rows are intentionally not counted.
 export async function fetchMyWorkCount(): Promise<number> {
   const supabase = createClient();
+  const { data: { session } } = await supabase.auth.getSession();
+  const activeStoreId =
+    session?.user?.user_metadata?.active_store_id ?? null;
 
-  const [followUps, opportunities, approvals, ready, exchangeWork] =
+  const [followUps, opportunities, approvals, ready, openActions, emp, storeList, canInspectPerm, canRefund] =
     await Promise.all([
       supabase
         .from("follow_ups")
@@ -1974,8 +1981,25 @@ export async function fetchMyWorkCount(): Promise<number> {
         .eq("status", "new"),
       supabase.rpc("list_pending_exception_approvals"),
       supabase.rpc("list_ready_journeys"),
-      supabase.rpc("list_open_exchange_work"),
+      supabase.rpc("list_open_trial_actions"),
+      fetchCurrentEmployee(),
+      fetchStores(),
+      hasPermission("inventory.inspect_returns"),
+      hasPermission("payments.record_refund"),
     ]);
+
+  const homeType = storeList.find(
+    (s) => s.id === emp?.home_store_id
+  )?.location_type;
+  const { needsYou } = partitionWork(
+    (openActions.data as OpenTrialAction[] | null) ?? [],
+    {
+      employeeId: emp?.id ?? null,
+      storeId: activeStoreId ?? emp?.home_store_id ?? null,
+      canInspect: canInspectPerm || homeType === "WAREHOUSE",
+      canRecordRefund: canRefund,
+    }
+  );
 
   const rpcLen = (d: unknown) => (Array.isArray(d) ? d.length : 0);
   return (
@@ -1983,7 +2007,7 @@ export async function fetchMyWorkCount(): Promise<number> {
     (opportunities.count ?? 0) +
     rpcLen(approvals.data) +
     rpcLen(ready.data) +
-    rpcLen(exchangeWork.data)
+    needsYou.length
   );
 }
 
