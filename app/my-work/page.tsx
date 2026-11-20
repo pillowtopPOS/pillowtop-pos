@@ -147,14 +147,11 @@ export default function MyWorkPage() {
   };
 
 
-  type WorkSection = "ready" | "follow_ups" | "approvals" | "exchanges" | "opportunities";
+  type WorkSection = "ready" | "follow_ups" | "approvals" | "opportunities";
   const SECTION_DEFS: { key: WorkSection; title: string }[] = [
     { key: "ready", title: "Ready to schedule" },
     { key: "follow_ups", title: "Follow-ups" },
     { key: "approvals", title: "Approvals" },
-    // "exchanges" stays in the union so exchange items keep mapping to a
-    // section (and the sidebar badge still counts them), but the section
-    // itself is replaced by "Needs you" + "Waiting on others" below.
     { key: "opportunities", title: "Opportunities" },
   ];
   const ACTION_CLS = "font-semibold underline";
@@ -164,8 +161,6 @@ export default function MyWorkPage() {
       case "ready_for_scheduling": return "ready";
       case "follow_up": return "follow_ups";
       case "approval": return "approvals";
-      case "exchange_progress":
-      case "exchange_stalled": return "exchanges";
       default: return "opportunities";
     }
   }
@@ -410,68 +405,6 @@ export default function MyWorkPage() {
                   </div>
                   <Link
                     href={`/board?journey=${a.journey_id}`}
-                    className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                  >
-                    View Journey
-                  </Link>
-                </div>
-              );
-            }
-
-            if (
-              item.kind === "exchange_progress" ||
-              item.kind === "exchange_stalled"
-            ) {
-              const w = item.data;
-              const stalled = item.kind === "exchange_stalled";
-              const kindLabel = w.action === "RETURN" ? "Return" : "Exchange";
-              return (
-                <div
-                  key={w.action_id}
-                  className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4 ${
-                    stalled
-                      ? "border-red-200 bg-red-50"
-                      : "border-teal-200 bg-teal-50"
-                  }`}
-                >
-                  <div>
-                    <p className="text-sm font-medium text-slate-900">
-                      <span className={ACTION_CLS}>
-                        {stalled
-                          ? `${kindLabel} stalled ${w.days_committed} day${
-                              w.days_committed === 1 ? "" : "s"
-                            }:`
-                          : `${kindLabel} in progress:`}
-                      </span>{" "}
-                      {w.customer_name ?? "Unknown customer"}
-                      <span
-                        className={`ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-normal ${
-                          stalled ? "text-red-700" : "text-teal-700"
-                        }`}
-                      >
-                        {kindLabel}
-                      </span>
-                    </p>
-                    {w.replacement_product_name && (
-                      <p className="mt-0.5 text-xs text-slate-600">
-                        Replacement: {w.replacement_product_name}
-                      </p>
-                    )}
-                    <ul className="mt-0.5 space-y-0.5">
-                      {w.open_milestones.map((m) => (
-                        <li
-                          key={m}
-                          className={`text-xs ${
-                            stalled ? "text-red-700" : "text-slate-500"
-                          }`}
-                        >
-                          {m}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                  <Link
-                    href={`/board?journey=${w.journey_id}`}
                     className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
                   >
                     View Journey

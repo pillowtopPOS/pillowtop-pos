@@ -3,7 +3,7 @@ import { describeError } from "@/lib/utils";
 import type { SleepJourneyState } from "@/lib/constants";
 import type { JourneyEventType } from "./state";
 import { phoneDigitsMatch } from "@/lib/customers/search";
-import type { OpenExchangeWork, OpenTrialAction } from "./exchange";
+import type { OpenTrialAction } from "./exchange";
 import { partitionWork } from "./exchange";
 import { hasPermission } from "@/lib/inventory/queries";
 import { isReturnedTrialItem } from "./returns";
@@ -1787,9 +1787,7 @@ export type MyWorkItem =
   | { kind: "follow_up"; data: FollowUp & { journey: JourneyWithDetails | null } }
   | { kind: "opportunity"; data: Opportunity }
   | { kind: "approval"; data: PendingApproval }
-  | { kind: "ready_for_scheduling"; data: ReadyJourney }
-  | { kind: "exchange_progress"; data: OpenExchangeWork }
-  | { kind: "exchange_stalled"; data: OpenExchangeWork };
+  | { kind: "ready_for_scheduling"; data: ReadyJourney };
 
 export async function fetchMyWork(opts?: {
   allStores?: boolean;
@@ -1812,7 +1810,6 @@ export async function fetchMyWork(opts?: {
     { data: opportunities, error: oppError },
     { data: approvals, error: apprError },
     { data: ready, error: readyError },
-    { data: exchangeWork, error: exchangeError },
   ] =
     await Promise.all([
       supabase
@@ -1833,17 +1830,12 @@ export async function fetchMyWork(opts?: {
       // drops out when the journey is scheduled or leaves the state.
       // allStores widens recipients to the whole company (m123).
       readyPromise,
-      // Open exchanges the caller should keep an eye on (091). Derived —
-      // drops out when the action is cancelled or completed.
-      supabase.rpc("list_open_exchange_work"),
     ]);
 
   if (followError) console.error("fetchMyWork follow_ups error", followError);
   if (oppError) console.error("fetchMyWork opportunities error", oppError);
   if (apprError) console.error("fetchMyWork approvals error", apprError);
   if (readyError) console.error("fetchMyWork ready journeys error", readyError);
-  if (exchangeError)
-    console.error("fetchMyWork open exchanges error", exchangeError);
 
   const journeyIds = ((followUps as unknown as FollowUp[]) ?? [])
     .map((f) => f.journey_id)
@@ -1884,15 +1876,6 @@ export async function fetchMyWork(opts?: {
     items.push({ kind: "ready_for_scheduling", data: r });
   }
 
-  // One exchange never appears as both kinds — is_stalled is a server
-  // flag, so the split can't disagree with the RPC.
-  for (const w of (exchangeWork as unknown as OpenExchangeWork[]) ?? []) {
-    items.push({
-      kind: w.is_stalled ? "exchange_stalled" : "exchange_progress",
-      data: w,
-    });
-  }
-
   // Display order: inventory_shortage follow-ups first (oldest due first),
   // then ready journeys (oldest ready first), overdue follow-ups (oldest
   // due first), approvals (oldest request first), new opportunities
@@ -1903,8 +1886,7 @@ export async function fetchMyWork(opts?: {
       ? -1
       : i.kind === "ready_for_scheduling"
         ? 0
-        : i.kind === "exchange_stalled" ||
-          (i.kind === "follow_up" && overdue(i.data.due_at))
+        : i.kind === "follow_up" && overdue(i.data.due_at)
           ? 1
           : i.kind === "approval"
             ? 2
@@ -1918,9 +1900,7 @@ export async function fetchMyWork(opts?: {
         ? i.data.due_at
         : i.kind === "approval"
           ? i.data.requested_at
-          : i.kind === "exchange_progress" || i.kind === "exchange_stalled"
-            ? i.data.committed_at
-            : i.data.created_at;
+          : i.data.created_at;
   // Deterministic tie-break so rows with identical timestamps cannot
   // swap positions between reloads. Ready rows order by journey_number
   // then journey_id; other kinds fall back to their own stable id.
@@ -1932,9 +1912,6 @@ export async function fetchMyWork(opts?: {
         return `${i.data.journey_number ?? ""}|${i.data.journey_id}`;
       case "approval":
         return i.data.id;
-      case "exchange_progress":
-      case "exchange_stalled":
-        return i.data.action_id;
       default:
         return i.data.id;
     }

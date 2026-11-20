@@ -50,6 +50,8 @@ import {
   inProgressActionKind,
   oldestOpenReturn,
   partitionWork,
+  refundIsFinalBlocker,
+  REFUND_COMPLETE_BLOCKER,
   returnChipStep,
   visibleWorkCount,
 } from "../lib/journeys/exchange";
@@ -57,6 +59,7 @@ import {
   actionRefundBlockReason,
   allowedCreditCents,
   effectivePrice,
+  heldActionCents,
   heldReturnCents,
   isReturnedTrialItem,
   pendingReturnRefund,
@@ -64,6 +67,7 @@ import {
   refundLockedAmountCents,
   returnedCreditCents,
   returnedPillText,
+  unlinkedRefundCapCents,
 } from "../lib/journeys/returns";
 import type { JourneyEvent } from "../lib/journeys/queries";
 import { deliveryCompletedActivityText } from "../lib/journeys/activityLabels";
@@ -1221,14 +1225,43 @@ check("badge count: kept sections plus needs-you, waiting excluded",
       { kind: "follow_up" },
       { kind: "approval" },
       { kind: "opportunity" },
-      { kind: "exchange_progress" },
-      { kind: "exchange_stalled" },
     ],
     3
   ) === 7 &&
     visibleWorkCount([], 0) === 0 &&
-    visibleWorkCount(null, 2) === 2 &&
-    visibleWorkCount([{ kind: "exchange_progress" }], 0) === 0);
+    visibleWorkCount(null, 2) === 2);
+
+check("refund is the final blocker only when it is the sole one",
+  refundIsFinalBlocker([REFUND_COMPLETE_BLOCKER], "RETURN") &&
+    refundIsFinalBlocker([REFUND_COMPLETE_BLOCKER], "EXCHANGE") &&
+    !refundIsFinalBlocker(
+      ["The replacement has not been delivered yet", REFUND_COMPLETE_BLOCKER],
+      "EXCHANGE"
+    ) &&
+    !refundIsFinalBlocker(
+      ["The original mattress has not been marked received yet"],
+      "RETURN"
+    ) &&
+    !refundIsFinalBlocker(null, "RETURN") &&
+    // Replacement blockers are filtered for returns before the check.
+    refundIsFinalBlocker(
+      ["The replacement has not been delivered yet", REFUND_COMPLETE_BLOCKER],
+      "RETURN"
+    ));
+
+check("held action money and the unlinked refund cap",
+  heldActionCents([
+    { action: "RETURN", status: "COMMITTED", refund_owed_cents: 40000, refund_recorded_at: null },
+    { action: "EXCHANGE", status: "COMMITTED", refund_owed_cents: 10000, refund_recorded_at: null },
+    { action: "EXCHANGE", status: "COMMITTED", refund_owed_cents: 5000, refund_recorded_at: "2026-01-02" },
+    { action: "RETURN", status: "COMPLETED", refund_owed_cents: 9000, refund_recorded_at: null },
+    { action: "RETURN", status: "COMMITTED", refund_owed_cents: 0, refund_recorded_at: null },
+    { action: "RETURN", status: "CANCELLED", refund_owed_cents: 7000, refund_recorded_at: null },
+  ]) === 50000 &&
+    heldActionCents([]) === 0 &&
+    unlinkedRefundCapCents(120000, 50000) === 70000 &&
+    unlinkedRefundCapCents(40000, 50000) === 0 &&
+    unlinkedRefundCapCents(120000, 0) === 120000);
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`);
 process.exit(failures === 0 ? 0 : 1);

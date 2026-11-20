@@ -47,6 +47,7 @@ export default function RecordRefundModal({
   returnProductName,
   lockedAmountCents,
   completesAction,
+  serverCapCents,
   onClose,
   onRecorded,
 }: {
@@ -72,8 +73,14 @@ export default function RecordRefundModal({
   // 162: recording this refund lands the last milestone, so the action
   // completes automatically. Drives the confirmation line.
   completesAction?: "RETURN" | "EXCHANGE" | null;
+  // 162 held-money mirror: the server's ceiling for an unlinked refund
+  // (net paid minus money held for committed actions). The amount field
+  // and submit refuse past it instead of surfacing the server error.
+  // Pass only for unlinked refunds; linked refunds settle held money and
+  // are exempt.
+  serverCapCents?: number | null;
   onClose: () => void;
-  onRecorded: () => void;
+  onRecorded: () => void | Promise<void>;
 }) {
   const [paymentId, setPaymentId] = useState(
     initialPaymentId ?? payments[0]?.id ?? ""
@@ -89,6 +96,20 @@ export default function RecordRefundModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
+
+  // Live mirror of the server's caps so the submit button refuses what
+  // the RPC would reject: more than the payment has left, or past the
+  // held-money ceiling on an unlinked refund.
+  const enteredCents = Math.round(parseFloat(amount) * 100);
+  const overPayment =
+    lockedAmountCents == null &&
+    Number.isFinite(enteredCents) &&
+    enteredCents > maxCents;
+  const overHeld =
+    lockedAmountCents == null &&
+    serverCapCents != null &&
+    Number.isFinite(enteredCents) &&
+    enteredCents > serverCapCents;
 
   function pickPayment(id: string) {
     setPaymentId(id);
@@ -133,7 +154,10 @@ export default function RecordRefundModal({
         REFUND_TIMEOUT_MS,
         "The refund request timed out. Check whether it was recorded before trying again."
       );
-      onRecorded();
+      // The refund can auto-complete its action, so the dialog waits for
+      // the caller's refresh before closing; otherwise the card behind it
+      // shows a state that is already done.
+      await onRecorded();
       onClose();
     } catch (e: any) {
       setError(e.message ?? "Failed to record the refund");
@@ -197,6 +221,18 @@ export default function RecordRefundModal({
               The system sets this amount. A manager can change it.
             </span>
           )}
+          {overPayment && (
+            <span className="mt-1 block text-xs text-amber-700">
+              This payment only has ${(maxCents / 100).toFixed(2)} left to
+              refund.
+            </span>
+          )}
+          {!overPayment && overHeld && (
+            <span className="mt-1 block text-xs text-amber-700">
+              This refund would touch money held for a committed return or
+              exchange. Record that refund from the return card.
+            </span>
+          )}
         </label>
         {completesAction && (
           <p className="mb-3 text-sm font-semibold text-slate-900">
@@ -240,7 +276,7 @@ export default function RecordRefundModal({
         <div className="mt-4 flex gap-2">
           <button
             onClick={submit}
-            disabled={saving}
+            disabled={saving || overPayment || overHeld}
             className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
           >
             {saving ? "Recording…" : "Record refund"}

@@ -188,6 +188,9 @@ export default function JourneyActivity({
   stores = [],
   pendingReturnRefund,
   pendingReturnProductName,
+  pendingReturnLinkReady = false,
+  allowedCreditCents = 0,
+  refundServerCapCents = null,
 }: {
   journey: JourneyWithDetails;
   stores?: { id: string; name: string }[];
@@ -205,10 +208,19 @@ export default function JourneyActivity({
   onChanged: () => void;
   refreshKey?: number;
   onDirtyChange?: (state: { dirty: boolean; saving: boolean }) => void;
-  // A committed return still waiting on its refund: the payment-row
-  // refund must link to it (p_action_id) or the return never completes.
+  // A committed return still waiting on its refund: once the original is
+  // received the payment-row refund links to it (p_action_id) or the
+  // return never completes. Before that the row refunds only the free
+  // credit (allowedCreditCents) and stays disabled when that is zero.
   pendingReturnRefund?: PendingReturnAction | null;
   pendingReturnProductName?: string;
+  pendingReturnLinkReady?: boolean;
+  // Credit due minus held return money: the server's exact amount for an
+  // unlinked refund from a non-adjust caller.
+  allowedCreditCents?: number;
+  // Net paid minus all held action money: the server's editable ceiling
+  // for an unlinked refund (adjust callers included).
+  refundServerCapCents?: number | null;
 }) {
   const [interactions, setInteractions] = useState<JourneyInteraction[]>([]);
   const [extraLines, setExtraLines] = useState<
@@ -610,11 +622,13 @@ export default function JourneyActivity({
                     onClick={() => setRefundTarget(e)}
                     disabled={
                       pendingReturnRefund != null &&
-                      pendingReturnRefund.original_received_on == null
+                      !pendingReturnLinkReady &&
+                      allowedCreditCents <= 0
                     }
                     title={
                       pendingReturnRefund != null &&
-                      pendingReturnRefund.original_received_on == null
+                      !pendingReturnLinkReady &&
+                      allowedCreditCents <= 0
                         ? "The original mattress has not been received yet."
                         : undefined
                     }
@@ -956,17 +970,32 @@ export default function JourneyActivity({
         <RecordRefundModal
           payments={[refundTarget]}
           events={events}
-          // A pending return refund must link to its action; the amount
-          // defaults to what the return owes, capped by what this
-          // payment can still refund.
+          // A received return links its refund to the action (the amount
+          // defaults to what the return owes). Before the original is
+          // received the refund is unlinked and can only take the free
+          // credit, capped by what this payment can still refund.
           defaultAmountCents={
-            pendingReturnRefund?.refund_owed_cents ??
-            refundableCentsOnPayment(refundTarget, events)
+            pendingReturnLinkReady
+              ? pendingReturnRefund!.refund_owed_cents ??
+                refundableCentsOnPayment(refundTarget, events)
+              : Math.min(
+                  Math.max(0, allowedCreditCents),
+                  refundableCentsOnPayment(refundTarget, events)
+                )
           }
-          actionId={pendingReturnRefund?.action_id}
-          returnProductName={pendingReturnProductName}
+          actionId={
+            pendingReturnLinkReady
+              ? pendingReturnRefund?.action_id
+              : undefined
+          }
+          returnProductName={
+            pendingReturnLinkReady ? pendingReturnProductName : undefined
+          }
           lockedAmountCents={refundLockedCents}
-          completesAction={pendingReturnRefund ? "RETURN" : null}
+          completesAction={pendingReturnLinkReady ? "RETURN" : null}
+          serverCapCents={
+            pendingReturnLinkReady ? null : refundServerCapCents
+          }
           onClose={() => setRefundTarget(null)}
           onRecorded={refresh}
         />

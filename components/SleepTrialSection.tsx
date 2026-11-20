@@ -198,7 +198,9 @@ export default function SleepTrialSection({
   journey: JourneyWithDetails;
   currentEmployee: Employee | null;
   canModerate: boolean;
-  onChanged: () => void;
+  // May return a promise; refresh() awaits it so refund dialogs only
+  // close once the parent has re-read the journey and its actions.
+  onChanged: () => void | Promise<void>;
   followUps: FollowUp[];
   // Bumped by the parent after money events (refund recorded/voided
   // anywhere on the order) so the milestone card re-reads its actions
@@ -336,7 +338,7 @@ export default function SleepTrialSection({
 
   async function refresh() {
     await load();
-    onChanged();
+    await onChanged();
   }
 
   if (!hasTrial) {
@@ -947,7 +949,7 @@ function TrialHeroCard({
   canCorrectStart: boolean;
   onCorrectStart: () => void;
   exchangeAction?: ExchangeActionRead | null;
-  onExchangeChanged?: () => void;
+  onExchangeChanged?: () => void | Promise<void>;
   canStartReturn?: boolean;
 }) {
   const status = e.headline?.status ?? "UNKNOWN";

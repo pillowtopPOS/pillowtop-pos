@@ -7,6 +7,8 @@ import { activityShortDate } from "@/lib/journeys/activityLabels";
 import {
   actionCompleteBlockers,
   actionMilestoneKeys,
+  refundIsFinalBlocker,
+  REFUND_COMPLETE_BLOCKER,
   cancelSleepTrialAction,
   completeSleepTrialAction,
   centsToDollars,
@@ -99,7 +101,7 @@ export default function ExchangeMilestoneCard({
   action: ExchangeActionRead;
   // Original item's product name for the refund dialog's linked line.
   productName?: string | null;
-  onChanged: () => void;
+  onChanged: () => void | Promise<void>;
 }) {
   const router = useRouter();
   const [dialog, setDialog] = useState<
@@ -406,6 +408,16 @@ export default function ExchangeMilestoneCard({
   const canVoidThisReceipt =
     !!action.original_received_on && callerCan.completeExchange;
   const refundBlockReason = actionRefundBlockReason(action);
+  // The refund completes the action only when it is the last open
+  // blocker; any other open blocker is what still has to happen after
+  // the refund is recorded.
+  const refundIsFinal = refundIsFinalBlocker(
+    action.complete_blockers,
+    action.action
+  );
+  const refundStillNeeded = blockers.filter(
+    (b) => b !== REFUND_COMPLETE_BLOCKER
+  );
 
   return (
     <div className="mt-1.5 rounded-md border border-teal-300 bg-white p-2.5">
@@ -732,11 +744,13 @@ export default function ExchangeMilestoneCard({
                 lockedAmountCents={
                   callerCan.adjustRefund ? null : owed
                 }
-                completesAction={isReturn ? "RETURN" : "EXCHANGE"}
+                completesAction={
+                  refundIsFinal ? (isReturn ? "RETURN" : "EXCHANGE") : null
+                }
                 onClose={() => setDialog(null)}
-                onRecorded={() => {
+                onRecorded={async () => {
+                  await onChanged();
                   setDialog(null);
-                  onChanged();
                 }}
               />
             ))}
@@ -755,6 +769,22 @@ export default function ExchangeMilestoneCard({
             <p className="mt-2 rounded-md border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-xs text-violet-800">
               {refundLinkedLine("EXCHANGE", productName)}
             </p>
+            {refundIsFinal ? (
+              <p className="mt-2 text-sm font-semibold text-slate-900">
+                Recording this refund completes the exchange.
+              </p>
+            ) : (
+              refundStillNeeded.length > 0 && (
+                <div className="mt-2 text-xs text-slate-500">
+                  <p>Still needed before the exchange completes:</p>
+                  <ul className="mt-0.5 list-disc pl-4">
+                    {refundStillNeeded.map((b) => (
+                      <li key={b}>{b}</li>
+                    ))}
+                  </ul>
+                </div>
+              )
+            )}
             <p className="mt-1 text-xs text-slate-500">
               Refund owed: {fmt(owed)}
             </p>

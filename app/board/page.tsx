@@ -540,9 +540,11 @@ function BoardContent() {
         setSelectedJourney(fresh);
         setJourneys((prev) => prev.map((j) => (j.id === fresh.id ? fresh : j)));
         panelDataFreshFor.current = journeyId;
-      } else {
-        setSelectedJourney(null);
       }
+      // fresh === null means fetchJourneyById errored (it returns null on
+      // any failure, not only not-found). Journeys are never hard-deleted,
+      // so keep the panel on the last good data instead of closing it and
+      // any open dialog with it.
       // Panel actions (committing/cancelling an exchange) change trial-item
       // statuses, so the board-hide inputs are refreshed alongside the
       // journey (the worklist itself refreshes in refreshTrialBadgeData).

@@ -13,6 +13,7 @@ import {
 } from "@/lib/journeys/fulfillment";
 import { formatPhone } from "@/lib/format/phone";
 import {
+  fetchJourneyHeldActions,
   fetchJourneyReturnActions,
   getExchangeAction,
   getJourneyExchangeActions,
@@ -21,12 +22,14 @@ import {
 } from "@/lib/journeys/exchange";
 import {
   effectivePrice,
+  heldActionCents,
   heldReturnCents,
   isReturnedTrialItem,
   pendingReturnRefund,
   refundLockedAmountCents,
   returnedCreditCents,
   returnedPillText,
+  unlinkedRefundCapCents,
 } from "@/lib/journeys/returns";
 import {
   fetchProductAvailabilityByLocation,
@@ -743,6 +746,12 @@ export default function JourneyWorkspace({
   const [returnActions, setReturnActions] = useState<ExchangeActionRead[]>(
     []
   );
+  // Every COMMITTED action on this journey (returns and exchanges) read
+  // in full; their un-recorded refunds are the money the server holds
+  // back from any unlinked refund.
+  const [heldActions, setHeldActions] = useState<ExchangeActionRead[]>(
+    []
+  );
   // Closed-RETURNED trial items drive the per-line "Returned" status and
   // the summary's returned pill; the same rows give the pill's total.
   const [trialItemRows, setTrialItemRows] = useState<TrialItemStatusRow[]>(
@@ -758,6 +767,11 @@ export default function JourneyWorkspace({
         // Keep the last good read - a transient failure must not blank
         // the effective-price rows.
       });
+    fetchJourneyHeldActions(journey.id)
+      .then((a) => {
+        if (alive) setHeldActions(a);
+      })
+      .catch(() => {});
     fetchJourneyTrialItemRows(journey.id)
       .then((rows) => {
         if (alive) setTrialItemRows(rows);
@@ -803,6 +817,11 @@ export default function JourneyWorkspace({
   // refund entry point (rail button, payment row) must link to it via
   // actionId or the return can never complete and the money counts twice.
   const pendingReturn = pendingReturnRefund(returnActions);
+  // A pending return can only take its linked refund after the original
+  // is received (the server's linked-refund gate). Until then every
+  // entry point refunds only the credit still free of held money.
+  const pendingLinkReady =
+    pendingReturn != null && pendingReturn.original_received_on != null;
   const hasCommittedReturn = returnActions.some(
     (a) => a.action === "RETURN" && a.status === "COMMITTED"
   );
@@ -835,9 +854,11 @@ export default function JourneyWorkspace({
       pickRefundPayment(
         refundablePayments,
         events,
-        pendingReturn?.refund_owed_cents ?? creditCents
+        pendingLinkReady
+          ? pendingReturn!.refund_owed_cents ?? 0
+          : Math.max(0, creditCents - heldReturnCents(returnActions))
       ),
-    [refundablePayments, events, creditCents, pendingReturn]
+    [refundablePayments, events, creditCents, pendingLinkReady, pendingReturn, returnActions]
   );
 
   // 162 hold rule: committed, un-refunded returns hold their owed refund
@@ -846,14 +867,23 @@ export default function JourneyWorkspace({
   // original to be received, matching the server gate).
   const heldCents = heldReturnCents(returnActions);
   const allowedCredit = creditCents - heldCents;
-  const pendingRefundBlocked =
-    pendingReturn != null && pendingReturn.original_received_on == null;
   const lockedRefundCents = refundLockedAmountCents({
     canAdjust: canAdjustRefund,
-    linkedOwedCents: pendingReturn?.refund_owed_cents ?? null,
+    linkedOwedCents: pendingLinkReady
+      ? pendingReturn!.refund_owed_cents
+      : null,
     creditCents,
     actions: returnActions,
   });
+  // The server's ceiling for an unlinked refund: net paid minus money
+  // held for every committed, un-refunded action on this order (162
+  // covers exchanges too). Linked refunds settle held money and are
+  // exempt, so the dialog only gets this when no action links.
+  const refundServerCapCents = unlinkedRefundCapCents(
+    Math.round(paid * 100),
+    heldActionCents(heldActions)
+  );
+
 
   // cancelled_at nulls the balance — a cancelled journey shows what was
   // agreed/paid (and any credit due back) but never an amount still owed.
@@ -2009,8 +2039,12 @@ export default function JourneyWorkspace({
       ).length > 0
   ).length;
   const noStockCount = outstandingLines.length - remoteOutstanding;
+  // A single night number is only honest for a single-mattress order; each
+  // trial item has its own night so a multi-item order shows no header night
+  // (the per-item cards still show their own).
   const stateDetail =
     journey.current_state === "Sleep Trial" &&
+    trialEvals.length === 1 &&
     urgentTrial?.display.night != null &&
     urgentTrial.display.length_nights != null
       ? `Night ${urgentTrial.display.night} of ${urgentTrial.display.length_nights}`
@@ -2238,6 +2272,9 @@ export default function JourneyWorkspace({
               onDirtyChange={setActivityState}
               pendingReturnRefund={pendingReturn}
               pendingReturnProductName={pendingReturnProductName}
+              pendingReturnLinkReady={pendingLinkReady}
+              allowedCreditCents={allowedCredit}
+              refundServerCapCents={refundServerCapCents}
             />
 
             {events.some((e) => e.outcome === "UNKNOWN") && canReconcile && (
@@ -2853,7 +2890,9 @@ export default function JourneyWorkspace({
                     {canRecordRefund &&
                       creditCents > 0 &&
                       creditRefundPick.payment !== null &&
-                      (pendingRefundBlocked ? (
+                      (pendingReturn != null &&
+                      !pendingLinkReady &&
+                      allowedCredit <= 0 ? (
                         <div className="mt-2">
                           <button
                             disabled
@@ -3413,16 +3452,26 @@ export default function JourneyWorkspace({
             payments={refundablePayments}
             events={events}
             // A pending return refund must link to its action so the
-            // return can complete; the amount defaults to what the
-            // return owes rather than the whole credit.
+            // return can complete - but only once the original is
+            // received (the server's linked-refund gate). Before that the
+            // refund is unlinked and defaults to the free credit.
             defaultAmountCents={
-              pendingReturn?.refund_owed_cents ?? creditCents
+              pendingLinkReady
+                ? pendingReturn!.refund_owed_cents ?? 0
+                : Math.max(0, allowedCredit)
             }
             initialPaymentId={creditRefundPick.payment?.id}
-            actionId={pendingReturn?.action_id}
-            returnProductName={pendingReturnProductName}
+            actionId={
+              pendingLinkReady ? pendingReturn!.action_id : undefined
+            }
+            returnProductName={
+              pendingLinkReady ? pendingReturnProductName : undefined
+            }
             lockedAmountCents={lockedRefundCents}
-            completesAction={pendingReturn ? "RETURN" : null}
+            completesAction={pendingLinkReady ? "RETURN" : null}
+            serverCapCents={
+              pendingLinkReady ? null : refundServerCapCents
+            }
             onClose={() => setCreditRefundOpen(false)}
             onRecorded={handlePanelRefresh}
           />

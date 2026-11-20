@@ -148,6 +148,38 @@ export function refundLinkedLine(
   return `This refund is recorded as the refund for this ${noun}.`;
 }
 
+// Money held for committed actions of either kind that still owe an
+// un-recorded refund. Mirrors held_cents in migration 162: unlike
+// held_return_cents (return money only, already netted out of the credit
+// due), this is the cap the server applies to adjust callers so an
+// unlinked refund can never touch money owed to an open return or
+// exchange.
+export function heldActionCents<
+  T extends ReturnActionLike & { refund_recorded_at?: string | null }
+>(actions: T[] | null | undefined): number {
+  let sum = 0;
+  for (const a of actions ?? []) {
+    if (
+      a.status === "COMMITTED" &&
+      a.refund_recorded_at == null &&
+      (a.refund_owed_cents ?? 0) > 0
+    ) {
+      sum += a.refund_owed_cents ?? 0;
+    }
+  }
+  return sum;
+}
+
+// The server's unlinked-refund cap: net paid minus all held money.
+// Passing more is refused with the held-money error, so the dialog uses
+// this as its editable ceiling alongside the per-payment remainder.
+export function unlinkedRefundCapCents(
+  netPaidCents: number,
+  heldCents: number
+): number {
+  return Math.max(0, netPaidCents - Math.max(0, heldCents));
+}
+
 // Why a linked refund cannot be recorded yet, or null. Mirrors the R2
 // gates in record_payment_refund / record_exchange_refund: a return
 // needs the original back; an exchange needs both physical steps done.

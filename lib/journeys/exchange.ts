@@ -346,6 +346,21 @@ export async function fetchJourneyReturnActions(
   );
 }
 
+/** Every COMMITTED action on the journey (RETURN and EXCHANGE) read out
+ *  in full so the client can mirror the server's held-money cap on
+ *  unlinked refunds: their un-recorded refund_owed_cents is held. */
+export async function fetchJourneyHeldActions(
+  journeyId: string
+): Promise<ExchangeActionRead[]> {
+  const info = await getJourneyExchangeActions(journeyId);
+  const reads = await Promise.all(
+    info.actions
+      .filter((a) => a.status === "COMMITTED")
+      .map((a) => getExchangeAction(a.action_id).catch(() => null))
+  );
+  return reads.filter((r): r is ExchangeActionRead => r !== null);
+}
+
 export type JourneyExchangeAction = {
   action_id: string;
   status: "DRAFT" | "COMMITTED";
@@ -411,29 +426,7 @@ export async function voidExchangeRefund(
   if (error) throw new Error(error.message);
 }
 
-export type OpenExchangeWork = {
-  action_id: string;
-  /** 161: 'EXCHANGE' | 'RETURN'; absent on pre-161 payloads. */
-  action?: SleepTrialActionKind;
-  journey_id: string;
-  child_journey_id: string | null;
-  customer_name: string;
-  replacement_product_name: string | null;
-  committed_at: string;
-  days_committed: number;
-  open_milestones: string[];
-  is_stalled: boolean;
-};
-
-/** Derived My Work feed (091). One row per COMMITTED exchange the caller
- *  should see: the starter, employees homed at the journey's store, or
- *  sleep_trial.complete_exchange holders. */
-export async function listOpenExchangeWork(): Promise<OpenExchangeWork[]> {
-  const supabase = createClient();
-  const { data, error } = await supabase.rpc("list_open_exchange_work");
-  if (error) throw new Error(error.message);
-  return (data as OpenExchangeWork[] | null) ?? [];
-}
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Dollars <-> cents. The database stores integer cents; inputs collect
@@ -534,6 +527,22 @@ export function actionCompleteBlockers(
   const list = blockers ?? [];
   if (action !== "RETURN") return list;
   return list.filter((b) => !b.includes("replacement"));
+}
+
+// The owed-refund blocker text emitted by get_exchange_action's
+// complete_blockers. Recording the refund completes the action only when
+// it is the sole remaining blocker; anything else still open (undelivered
+// replacement, unreceived original, unpaid replacement balance) means the
+// refund dialog must not claim completion.
+export const REFUND_COMPLETE_BLOCKER =
+  "The owed refund has not been recorded yet";
+
+export function refundIsFinalBlocker(
+  blockers: string[] | null | undefined,
+  action: SleepTrialActionKind
+): boolean {
+  const list = actionCompleteBlockers(blockers, action);
+  return list.length === 1 && list[0] === REFUND_COMPLETE_BLOCKER;
 }
 
 // ---------------------------------------------------------------------------
@@ -730,11 +739,8 @@ export function partitionWork<
 // exchange/return items still inside the fetched list and the
 // Waiting-on-others rows are not counted.
 export function visibleWorkCount(
-  items: { kind: string }[] | null | undefined,
+  items: unknown[] | null | undefined,
   needsYouCount: number
 ): number {
-  const rendered = (items ?? []).filter(
-    (i) => i.kind !== "exchange_progress" && i.kind !== "exchange_stalled"
-  ).length;
-  return rendered + needsYouCount;
+  return (items ?? []).length + needsYouCount;
 }
