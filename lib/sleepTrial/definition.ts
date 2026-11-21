@@ -174,7 +174,7 @@ export const DEFAULT_DEFINITION: SleepTrialDefinition = {
     exchange: {
       allowed: true,
       max_count: 1,
-      replacement_trial: [{ n: 1, rule: "FULL_NEW" }],
+      replacement_trial: [{ n: 1, rule: "NONE" }],
       replacement_minimum: { rule: "SAME_AS_POLICY" },
       downgrade_difference: "STORE_CREDIT",
       require_concern: false,
@@ -346,12 +346,12 @@ export const POLICY_TEMPLATES: PolicyTemplate[] = [
     key: "simple_120",
     name: "Simple 120-Night Exchange",
     blurb:
-      "120-night trial, 30-night minimum, one exchange with a fresh trial, no fee, no returns.",
+      "120-night trial, 30-night minimum, one exchange with no further trial, no fee, no returns.",
     build: () => {
       const d = cloneDefinition(DEFAULT_DEFINITION);
       d.base.trial.length_nights = 120;
       d.base.trial.minimum_nights = 30;
-      d.base.exchange.replacement_trial = [{ n: 1, rule: "REMAINING" }];
+      d.base.exchange.replacement_trial = [{ n: 1, rule: "NONE" }];
       return d;
     },
   },
@@ -359,14 +359,14 @@ export const POLICY_TEMPLATES: PolicyTemplate[] = [
     key: "protector_backed",
     name: "Protector-Backed Exchange",
     blurb:
-      "Same as Simple, but a qualifying protector is required and the exchange gets a full new trial.",
+      "Same as Simple, but a qualifying protector is required and the exchange gets no further trial.",
     build: () => {
       const d = cloneDefinition(DEFAULT_DEFINITION);
       d.base.trial.length_nights = 120;
       d.base.trial.minimum_nights = 30;
       d.base.protector.required = true;
       d.base.protector.missing_behavior = "BLOCK_WITH_OVERRIDE";
-      d.base.exchange.replacement_trial = [{ n: 1, rule: "FULL_NEW" }];
+      d.base.exchange.replacement_trial = [{ n: 1, rule: "NONE" }];
       return d;
     },
   },

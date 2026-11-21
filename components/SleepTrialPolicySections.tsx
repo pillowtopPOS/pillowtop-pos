@@ -247,7 +247,7 @@ function Sel<T extends string>({
   label: string;
   help?: string;
   value: T;
-  options: { value: T; label: string }[];
+  options: { value: T; label: string; disabled?: boolean }[];
   disabled: boolean;
   future?: boolean;
   errors?: string[];
@@ -269,7 +269,7 @@ function Sel<T extends string>({
         className={inputCls}
       >
         {options.map((o) => (
-          <option key={o.value} value={o.value}>
+          <option key={o.value} value={o.value} disabled={o.disabled}>
             {o.label}
           </option>
         ))}
@@ -620,9 +620,21 @@ export function TrialTermsSection(props: SectionProps) {
 // --- 3. Exchanges ------------------------------------------------------------
 
 const REPLACEMENT_RULE_OPTIONS = [
-  { value: "FULL_NEW" as const, label: "A full new trial" },
-  { value: "REMAINING" as const, label: "The remaining nights" },
-  { value: "FIXED" as const, label: "A fixed number of nights" },
+  {
+    value: "FULL_NEW" as const,
+    label: "A full new trial (coming soon)",
+    disabled: true,
+  },
+  {
+    value: "REMAINING" as const,
+    label: "The remaining nights (coming soon)",
+    disabled: true,
+  },
+  {
+    value: "FIXED" as const,
+    label: "A fixed number of nights (coming soon)",
+    disabled: true,
+  },
   { value: "NONE" as const, label: "No further trial" },
 ];
 
@@ -699,6 +711,10 @@ export function ExchangesSection(props: SectionProps) {
                 errors={fe(props, "exchange.replacement_trial")}
                 warnings={fw(props, "exchange.replacement_trial")}
               />
+              <p className="mb-2 text-xs text-slate-500">
+                Only &apos;No further trial&apos; works today. Exchanges
+                under the other rules cannot be completed yet.
+              </p>
               <div className="space-y-3">
                 {Array.from({ length: x.max_count }, (_, i) => i + 1).map(
                   (n) => {
@@ -735,6 +751,13 @@ export function ExchangesSection(props: SectionProps) {
                               setReplacementRule(props, n, "FIXED", v)
                             }
                           />
+                        )}
+                        {r.rule !== "NONE" && (
+                          <p className="w-full rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-800">
+                            This policy gives the replacement a new trial.
+                            Exchanges cannot be committed under it until that
+                            is built. Change it to &apos;No further trial&apos;.
+                          </p>
                         )}
                       </div>
                     );

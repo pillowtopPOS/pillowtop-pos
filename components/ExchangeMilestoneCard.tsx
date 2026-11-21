@@ -160,6 +160,12 @@ export default function ExchangeMilestoneCard({
   const [callerIsWarehouseBased, setCallerIsWarehouseBased] =
     useState(false);
   const [callerStoreId, setCallerStoreId] = useState<string | null>(null);
+  // The stepper reads the replacement order's CURRENT fulfillment
+  // method, not the method stamped on the action at commit time - it
+  // can be edited afterwards. Refetches whenever the action refreshes.
+  const [childFulfillmentType, setChildFulfillmentType] = useState<
+    "delivery" | "pickup" | null
+  >(null);
   const [locationsReady, setLocationsReady] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   // RETURN only: the shared refund dialog needs the journey's payments.
@@ -171,6 +177,24 @@ export default function ExchangeMilestoneCard({
     payments: JourneyEvent[];
     initialPaymentId: string | null;
   } | null>(null);
+
+  useEffect(() => {
+    if (!action.child_journey_id) {
+      setChildFulfillmentType(null);
+      return;
+    }
+    let cancelled = false;
+    fetchJourneyById(action.child_journey_id).then((j) => {
+      if (!cancelled) {
+        setChildFulfillmentType(
+          (j?.fulfillment_type as "delivery" | "pickup" | null) ?? null
+        );
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [action]);
 
   const isReturn = action.action === "RETURN";
   const noun = isReturn ? "return" : "exchange";
@@ -632,7 +656,13 @@ export default function ExchangeMilestoneCard({
         {actionMilestoneKeys(action.action).map((key) => (
           <MilestoneLine
             key={key}
-            label={MILESTONE_LABELS[key]}
+            label={
+              key === "replacement_delivered" &&
+              (childFulfillmentType ?? action.fulfillment_method) ===
+                "pickup"
+                ? "Replacement picked up"
+                : MILESTONE_LABELS[key]
+            }
             m={action.milestones[key]}
           />
         ))}
