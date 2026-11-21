@@ -121,6 +121,7 @@ export const ALL_PERMISSIONS: PermissionDef[] = [
   ...SLEEP_TRIAL_PERMISSIONS.map((p) => ({ ...p, group: "Sleep trial" as const })),
   { key: "sleep_trial.complete_exchange", label: "Complete exchanges", group: "Sleep trial" },
   { key: "sleep_trial.void_refund", label: "Void recorded refunds", group: "Sleep trial" },
+  { key: "sleep_trial.reopen_action", label: "Reopen completed returns and exchanges", group: "Sleep trial" },
   { key: "inventory.reduce_below_committed", label: "Reduce stock below committed", group: "Inventory" },
   { key: "inventory.inspect_returns", label: "Inspect returned items", group: "Inventory" },
   { key: "inventory.manage_inspection_checklist", label: "Edit the inspection checklist", group: "Inventory" },

@@ -47,6 +47,8 @@ import {
   voidPaymentRefund,
 } from "@/lib/journeys/queries";
 import { refundableCentsOnPayment } from "@/lib/journeys/paid";
+import { fetchJourneyCompletedActions } from "@/lib/journeys/exchange";
+import type { ExchangeActionRead } from "@/lib/journeys/exchange";
 import type { PendingReturnAction } from "@/lib/journeys/returns";
 import Modal from "@/components/Modal";
 import RecordRefundModal from "@/components/RecordRefundModal";
@@ -100,6 +102,7 @@ function eventCategory(e: JourneyEvent): FeedFilter {
     case "delivery_completed":
       return "fulfillment";
     case "trial_completed":
+    case "sleep_trial_action_reopened":
       return "sleep_trial";
     default:
       return "orders";
@@ -249,6 +252,14 @@ export default function JourneyActivity({
   const [voidReason, setVoidReason] = useState("");
   const [voidSaving, setVoidSaving] = useState(false);
   const [voidError, setVoidError] = useState<string | null>(null);
+  // 164: a refund event's action_id pointing at a COMPLETED action turns
+  // its Void button into "Void refund and reopen" (server delegates to
+  // reopen). Completed actions are discovered via their interaction/
+  // event trail; callers need sleep_trial.reopen_action for that path.
+  const [completedActions, setCompletedActions] = useState<
+    ExchangeActionRead[]
+  >([]);
+  const [canReopenAction, setCanReopenAction] = useState(false);
 
   const customerId = journey.customer?.id ?? null;
 
@@ -271,6 +282,30 @@ export default function JourneyActivity({
       fetchCustomerContacts(customerId).then(setContacts);
     }
   }, [journey.id, customerId, refreshKey]);
+
+  useEffect(() => {
+    let alive = true;
+    const supabase = createClient();
+    supabase
+      .rpc("has_permission", { p_key: "sleep_trial.reopen_action" })
+      .then(({ data }) => {
+        if (alive) setCanReopenAction(!!data);
+      });
+    fetchJourneyCompletedActions(journey.id)
+      .then((a) => {
+        if (alive) setCompletedActions(a);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [journey.id, refreshKey]);
+
+  const completedActionById = useMemo(() => {
+    const m = new Map<string, ExchangeActionRead>();
+    for (const a of completedActions) m.set(a.action_id, a);
+    return m;
+  }, [completedActions]);
 
   // Unit + transfer events for this journey, written in the same plain
   // language as the unit page (shared formatter, activityLabels.ts).
@@ -601,6 +636,22 @@ export default function JourneyActivity({
               e.outcome === "SUCCEEDED"
                 ? refundableCentsOnPayment(e, events)
                 : 0;
+            // 164: a refund linked to a COMPLETED action can only be
+            // voided by reopening the action, which needs the reopen
+            // permission rather than the plain void gate.
+            const linkedCompletedAction =
+              e.event_type === "payment_refunded"
+                ? completedActionById.get(
+                    String(
+                      (e.event_data as { action_id?: unknown } | null)
+                        ?.action_id ?? ""
+                    )
+                  ) ?? null
+                : null;
+            const showVoidButton =
+              e.event_type === "payment_refunded" &&
+              e.outcome === "SUCCEEDED" &&
+              (linkedCompletedAction ? canReopenAction : canModerate);
             return (
               <div key={`e-${e.id}`} className="px-1 py-1">
                 <p
@@ -611,6 +662,12 @@ export default function JourneyActivity({
                   }`}
                 >
                   {activityEventTitle(e, journey.store?.name)}
+                  {e.event_type === "payment_refunded" &&
+                    e.outcome === "VOIDED" && (
+                      <span className="ml-1.5 rounded bg-slate-100 px-1 py-0.5 align-middle text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                        Voided
+                      </span>
+                    )}
                 </p>
                 {detail && <p className="text-xs text-slate-500">{detail}</p>}
                 <p className="text-xs text-slate-400">
@@ -637,20 +694,20 @@ export default function JourneyActivity({
                     Record refund
                   </button>
                 )}
-                {canModerate &&
-                  e.event_type === "payment_refunded" &&
-                  e.outcome === "SUCCEEDED" && (
-                    <button
-                      onClick={() => {
-                        setVoidTarget(e);
-                        setVoidReason("");
-                        setVoidError(null);
-                      }}
-                      className="mt-1 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
-                    >
-                      Void refund
-                    </button>
-                  )}
+                {showVoidButton && (
+                  <button
+                    onClick={() => {
+                      setVoidTarget(e);
+                      setVoidReason("");
+                      setVoidError(null);
+                    }}
+                    className="mt-1 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
+                  >
+                    {linkedCompletedAction
+                      ? "Void refund and reopen"
+                      : "Void refund"}
+                  </button>
+                )}
               </div>
             );
           }
@@ -1001,7 +1058,14 @@ export default function JourneyActivity({
         />
       )}
 
-      {voidTarget && (
+      {voidTarget && (() => {
+        const linkedAction = completedActionById.get(
+          String(
+            (voidTarget.event_data as { action_id?: unknown } | null)
+              ?.action_id ?? ""
+          )
+        );
+        return (
         <Modal
           onClose={() => setVoidTarget(null)}
           saving={voidSaving}
@@ -1009,12 +1073,19 @@ export default function JourneyActivity({
         >
           <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
             <h2 className="mb-2 text-lg font-semibold text-slate-900">
-              Void refund
+              {linkedAction ? "Void refund and reopen" : "Void refund"}
             </h2>
             <p className="mb-3 text-sm text-slate-600">
               The refund stays in history as voided and the payment counts
               again. A reason is required.
             </p>
+            {linkedAction && (
+              <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                This refund completed the {linkedAction.action === "RETURN" ? "return" : "exchange"}.
+                Voiding it reopens the {linkedAction.action === "RETURN" ? "return" : "exchange"} so
+                the correct refund can be recorded.
+              </p>
+            )}
             <input
               value={voidReason}
               onChange={(e) => setVoidReason(e.target.value)}
@@ -1030,7 +1101,11 @@ export default function JourneyActivity({
                 disabled={voidSaving}
                 className="flex-1 rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
               >
-                {voidSaving ? "Voiding…" : "Void refund"}
+                {voidSaving
+                  ? "Voiding…"
+                  : linkedAction
+                    ? "Void and reopen"
+                    : "Void refund"}
               </button>
               <button
                 onClick={() => setVoidTarget(null)}
@@ -1041,7 +1116,8 @@ export default function JourneyActivity({
             </div>
           </div>
         </Modal>
-      )}
+        );
+      })()}
     </div>
   );
 }

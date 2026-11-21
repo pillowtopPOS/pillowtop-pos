@@ -107,6 +107,10 @@ export function activityEventTitle(e: JourneyEvent, pickupName?: string | null):
       return `Journey cancelled${data.reason ? ` — ${data.reason}` : ""}`;
     case "trial_completed":
       return "Sleep trial completed";
+    case "sleep_trial_action_reopened":
+      return data.action === "RETURN"
+        ? "Return reopened"
+        : "Exchange reopened";
     default:
       if (process.env.NODE_ENV !== "production") {
         console.warn(`[JourneyActivity] Unmapped event type: ${e.event_type}`);
@@ -165,6 +169,8 @@ export function activityEventDetail(e: JourneyEvent): string | undefined {
       return data.reason ? String(data.reason) : undefined;
     case "inventory_received":
       return "All required products are available.";
+    case "sleep_trial_action_reopened":
+      return data.reason ? `Reason: ${String(data.reason)}` : undefined;
     case "line_items_changed_balance_due":
       return typeof data.balance_due === "number"
         ? `Balance due ${money(data.balance_due)}`

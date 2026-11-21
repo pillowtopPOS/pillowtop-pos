@@ -68,6 +68,7 @@ import type {
 import { activityShortDate } from "@/lib/journeys/activityLabels";
 import { localTodayISO } from "@/lib/dates";
 import {
+  fetchJourneyCompletedActions,
   getExchangeAction,
   getJourneyExchangeActions,
   type ExchangeActionRead,
@@ -246,6 +247,11 @@ export default function SleepTrialSection({
   const [actionByItem, setActionByItem] = useState<
     Record<string, ExchangeActionRead>
   >({});
+  // 164: COMPLETED actions get no trial-item slot (their item is CLOSED)
+  // but still need a card so a wrong refund can be reopened.
+  const [completedActions, setCompletedActions] = useState<
+    ExchangeActionRead[]
+  >([]);
   const [builderEval, setBuilderEval] = useState<SleepTrialEvaluation | null>(null);
   const [returnEval, setReturnEval] = useState<SleepTrialEvaluation | null>(null);
   const exceptionRef = useRef<HTMLDivElement>(null);
@@ -315,6 +321,9 @@ export default function SleepTrialSection({
             pair[1]?.status === "COMMITTED"
         )
       )
+    );
+    setCompletedActions(
+      await fetchJourneyCompletedActions(journey.id).catch(() => [])
     );
   }
 
@@ -566,6 +575,17 @@ export default function SleepTrialSection({
           Can&apos;t determine eligibility — no trial items on this order
         </p>
       )}
+
+      {/* 164: completed returns/exchanges keep a card so a mistake can
+          be reopened (their trial item is CLOSED, so nothing above
+          renders them). */}
+      {completedActions.map((a) => (
+        <ExchangeMilestoneCard
+          key={a.action_id}
+          action={a}
+          onChanged={refresh}
+        />
+      ))}
 
       {/* Sleep concerns */}
       <div className="mt-3 border-t border-teal-200 pt-2">

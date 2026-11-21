@@ -134,3 +134,16 @@ export function getTransitionForEvent(
 export function getValidNextStates(from: SleepJourneyState): SleepJourneyState[] {
   return STATE_TRANSITIONS[from].map((t) => t.to);
 }
+
+// 164: the auto-complete sweep dedupes on an existing trial_completed
+// event, but a reopen writes sleep_trial_action_reopened and derives the
+// journey back to Sleep Trial. Any trial_completed older than the latest
+// reopen is stale: the order may need a fresh one when it re-closes.
+export function needsTrialCompleted(
+  latestCompletedAt: string | null | undefined,
+  latestReopenedAt: string | null | undefined
+): boolean {
+  if (!latestCompletedAt) return true;
+  if (!latestReopenedAt) return false;
+  return latestCompletedAt <= latestReopenedAt;
+}

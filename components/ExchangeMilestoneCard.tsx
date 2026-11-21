@@ -15,6 +15,7 @@ import {
   dollarsToCents,
   recordExchangeRefund,
   receiveReturnedUnit,
+  reopenSleepTrialAction,
   voidExchangeRefund,
   voidReturnedReceipt,
   type ExchangeActionRead,
@@ -105,7 +106,7 @@ export default function ExchangeMilestoneCard({
 }) {
   const router = useRouter();
   const [dialog, setDialog] = useState<
-    "cancel" | "refund" | "void" | "receive" | "voidReceipt" | null
+    "cancel" | "refund" | "void" | "receive" | "voidReceipt" | "reopen" | null
   >(null);
   const submitGuard = useRef(false);
   const [saving, setSaving] = useState(false);
@@ -117,6 +118,7 @@ export default function ExchangeMilestoneCard({
   const [refundAmount, setRefundAmount] = useState("");
   const [refundReference, setRefundReference] = useState("");
   const [voidReason, setVoidReason] = useState("");
+  const [reopenReason, setReopenReason] = useState("");
   // EB-4a: receive + void-receipt state
   const [receiveDate, setReceiveDate] = useState("");
   const [receiveLocationId, setReceiveLocationId] = useState("");
@@ -262,7 +264,7 @@ export default function ExchangeMilestoneCard({
   const refundRecorded = action.refund_recorded_at != null;
   const history = action.refund_history ?? [];
 
-  function open(which: "cancel" | "refund" | "void" | "receive" | "voidReceipt") {
+  function open(which: "cancel" | "refund" | "void" | "receive" | "voidReceipt" | "reopen") {
     setError(null);
     if (which === "refund") {
       if (isReturn) {
@@ -296,6 +298,7 @@ export default function ExchangeMilestoneCard({
       setLoadFailed(false);
     }
     if (which === "voidReceipt") setVoidReason("");
+    if (which === "reopen") setReopenReason("");
     setDialog(which);
   }
 
@@ -391,6 +394,20 @@ export default function ExchangeMilestoneCard({
     });
   }
 
+  async function submitReopen() {
+    setError(null);
+    if (!reopenReason.trim()) {
+      setError(`A reason is required to reopen a completed ${noun}`);
+      return;
+    }
+    // Refresh before closing so the card never shows the pre-reopen
+    // state (same pattern as the refund dialog).
+    await submit(async () => {
+      await reopenSleepTrialAction(action.action_id, reopenReason.trim());
+      await onChanged();
+    });
+  }
+
   async function submitVoidReceipt() {
     setError(null);
     if (!voidReason.trim()) {
@@ -405,8 +422,13 @@ export default function ExchangeMilestoneCard({
   const canMarkReceived =
     action.status === "COMMITTED" && !action.original_received_on &&
     (callerCan.inspectReturns || callerIsWarehouseBased);
+  // 164: voiding a receipt uses the same rule as receiving it (the
+  // forward step must always be undoable by the same person), and the
+  // server only accepts it while the action is still COMMITTED.
   const canVoidThisReceipt =
-    !!action.original_received_on && callerCan.completeExchange;
+    action.status === "COMMITTED" &&
+    !!action.original_received_on &&
+    (callerCan.inspectReturns || callerIsWarehouseBased);
   const refundBlockReason = actionRefundBlockReason(action);
   // The refund completes the action only when it is the last open
   // blocker; any other open blocker is what still has to happen after
@@ -423,7 +445,13 @@ export default function ExchangeMilestoneCard({
     <div className="mt-1.5 rounded-md border border-teal-300 bg-white p-2.5">
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs font-semibold text-teal-800">
-          {isReturn ? "Return in progress" : "Exchange in progress"}
+          {action.status === "COMPLETED"
+            ? isReturn
+              ? "Return completed"
+              : "Exchange completed"
+            : isReturn
+              ? "Return in progress"
+              : "Exchange in progress"}
           {!isReturn && action.replacement_product_name
             ? ` — ${action.replacement_product_name}`
             : ""}
@@ -509,6 +537,7 @@ export default function ExchangeMilestoneCard({
         action.can_record_refund ||
         action.can_void_refund ||
         action.can_complete ||
+        action.can_reopen ||
         canMarkReceived ||
         canVoidThisReceipt) && (
         <div className="mt-2 flex flex-wrap items-start gap-2">
@@ -568,12 +597,25 @@ export default function ExchangeMilestoneCard({
               )}
             </div>
           )}
-          {!isReturn && action.can_void_refund && (
+          {/* 164: a COMPLETED action's correction is the Reopen button
+              (the void and the reopen are the same path), so the plain
+              Void refund button stays COMMITTED-only. */}
+          {!isReturn &&
+            action.can_void_refund &&
+            action.status !== "COMPLETED" && (
             <button
               onClick={() => open("void")}
               className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
             >
               Void refund
+            </button>
+          )}
+          {action.status === "COMPLETED" && action.can_reopen && (
+            <button
+              onClick={() => open("reopen")}
+              className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100"
+            >
+              Reopen
             </button>
           )}
           {action.can_complete &&
@@ -591,8 +633,73 @@ export default function ExchangeMilestoneCard({
             )}
         </div>
       )}
+      {/* 164: when the unit already left quarantine the server refuses
+          the reopen - the plain-language reason shows in place of the
+          button so the card explains itself. */}
+      {action.status === "COMPLETED" &&
+        !action.can_reopen &&
+        action.reopen_block_reason && (
+          <p className="mt-1.5 text-xs text-slate-500">
+            {action.reopen_block_reason}
+          </p>
+        )}
+
       {error && !dialog && (
         <p className="mt-1.5 text-xs font-medium text-red-700">{error}</p>
+      )}
+
+      {dialog === "reopen" && (
+        <Modal
+          onClose={() => setDialog(null)}
+          saving={saving}
+          dirty={reopenReason.trim() !== ""}
+        >
+          <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
+            <h3 className="text-sm font-semibold text-slate-900">
+              {isReturn ? "Reopen completed return" : "Reopen completed exchange"}
+            </h3>
+            <p className="mt-2 text-sm text-slate-700">
+              {refundRecorded
+                ? "Reopening voids the recorded refund and holds that amount again. The returned mattress stays received. You can then record the correct refund."
+                : `Reopening puts this ${noun} back in progress so its remaining steps can be corrected.`}
+            </p>
+            {!isReturn && (
+              <p className="mt-1.5 text-xs text-slate-500">
+                The replacement order is not changed and the exchange
+                cannot be cancelled after the original was received.
+              </p>
+            )}
+            <label className="mt-3 block text-xs font-medium text-slate-700">
+              Why is it being reopened? (required)
+            </label>
+            <textarea
+              value={reopenReason}
+              onChange={(e) => setReopenReason(e.target.value)}
+              rows={3}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-brand-500 focus:outline-none"
+            />
+            {error && (
+              <p className="mt-1.5 text-xs font-medium text-red-700">
+                {error}
+              </p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setDialog(null)}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Keep completed
+              </button>
+              <button
+                onClick={submitReopen}
+                disabled={saving}
+                className="rounded-md bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+              >
+                {saving ? "Reopening…" : "Reopen"}
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {dialog === "cancel" && (

@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/client";
 
 // Exchange Builder EB-1 (docs/exchange-builder-spec.md Section 14).
 // Typed wrappers for the three client-facing RPCs from migration 087.
-// No UI calls these yet — the Exchange Builder panel ships in EB-3.
+// No UI calls these yet  -  the Exchange Builder panel ships in EB-3.
 
 export type SleepTrialActionKind = "EXCHANGE" | "RETURN";
 
@@ -137,7 +137,7 @@ export async function updateExchangeDraft(
 
 /** Commits a DRAFT exchange: creates the linked child journey with its
  *  flagged lines, moves the trial item to EXCHANGE_IN_PROGRESS and locks
- *  the evaluation, fee and money on the action. Idempotent — a COMMITTED
+ *  the evaluation, fee and money on the action. Idempotent  -  a COMMITTED
  *  action returns its existing child journey id. */
 export async function commitSleepTrialAction(
   actionId: string
@@ -176,7 +176,7 @@ export type ExchangeRefundMethod =
 
 /** Documents the refund owed to the customer (complete_exchange holder,
  *  COMMITTED only). Amount must equal refund_owed_cents unless a different
- *  settled amount is being documented — then a reference is required. */
+ *  settled amount is being documented  -  then a reference is required. */
 export async function recordExchangeRefund(
   actionId: string,
   method: ExchangeRefundMethod,
@@ -282,7 +282,7 @@ export type ExchangeActionRead = {
   child_has_succeeded_payment: boolean;
   /** 093: positive when the customer has paid more than the child price
    *  (e.g. an add-on was removed after payment). 0 otherwise, and absent on
-   *  pre-093 payloads — callers should use ?? 0. */
+   *  pre-093 payloads  -  callers should use ?? 0. */
   child_overpaid_cents?: number;
   /** 093: sum of the child's ordinary (non-exchange-flagged) add-on lines. */
   add_ons_total_cents?: number;
@@ -294,10 +294,16 @@ export type ExchangeActionRead = {
   can_void_refund: boolean;
   can_complete: boolean;
   complete_blockers: string[];
+  /** 164: caller has sleep_trial.reopen_action and the action is
+   *  COMPLETED  -  the only status a reopen applies to. */
+  can_reopen: boolean;
+  /** 164: plain-language quarantine refusal for a COMPLETED action
+   *  (unit moved/sold/inspected); null when reopen may proceed. */
+  reopen_block_reason: string | null;
 };
 
 /** One action row, with names resolved. Visibility-checked like the quote
- *  RPC — raises "Not authorized for this journey" for other companies. */
+ *  RPC  -  raises "Not authorized for this journey" for other companies. */
 export async function getExchangeAction(
   actionId: string
 ): Promise<ExchangeActionRead> {
@@ -386,7 +392,7 @@ export type ExchangeParentLink = {
 
 export type JourneyExchangeInfo = {
   /** The open (DRAFT) or COMMITTED action for each trial item on the
-   *  journey — history (CANCELLED/COMPLETED) is not returned. */
+   *  journey  -  history (CANCELLED/COMPLETED) is not returned. */
   actions: JourneyExchangeAction[];
   /** Set only when this journey is itself an exchange child. */
   parent: ExchangeParentLink | null;
@@ -482,6 +488,64 @@ export async function voidReturnedReceipt(
     p_reason: reason,
   });
   if (error) throw new Error(error.message);
+}
+
+/** 164: reopen a COMPLETED return/exchange back to COMMITTED. The
+ *  recorded refund is voided into refund_history and held again, the
+ *  trial item goes back to its in-progress state, and the journey
+ *  derives back to Sleep Trial through the sleep_trial_action_reopened
+ *  event. Reason is required; sleep_trial.reopen_action enforced
+ *  server-side. */
+export async function reopenSleepTrialAction(
+  actionId: string,
+  reason: string
+): Promise<void> {
+  const supabase = createClient();
+  const { error } = await supabase.rpc("reopen_sleep_trial_action", {
+    p_action_id: actionId,
+    p_reason: reason,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** 164: completed actions are not returned by get_journey_exchange_actions
+ *  ("history, not UI state"), so they are discovered the way they left a
+ *  trail: journey_interactions rows stamped source_domain
+ *  'sleep_trial_action' carry the action id in source_record_id, and a
+ *  linked refund's payment_refunded event carries it in event_data. Each
+ *  candidate is read in full and kept only when it is COMPLETED. */
+export async function fetchJourneyCompletedActions(
+  journeyId: string
+): Promise<ExchangeActionRead[]> {
+  const supabase = createClient();
+  const [{ data: interactions }, { data: refundEvents }] =
+    await Promise.all([
+      supabase
+        .from("journey_interactions")
+        .select("source_record_id")
+        .eq("journey_id", journeyId)
+        .eq("source_domain", "sleep_trial_action"),
+      supabase
+        .from("journey_events")
+        .select("event_data")
+        .eq("journey_id", journeyId)
+        .eq("event_type", "payment_refunded"),
+    ]);
+  const ids = new Set<string>();
+  for (const i of (interactions ?? []) as { source_record_id: string | null }[]) {
+    if (i.source_record_id) ids.add(i.source_record_id);
+  }
+  for (const e of (refundEvents ?? []) as { event_data: unknown }[]) {
+    const actionId = (e.event_data as { action_id?: unknown } | null)
+      ?.action_id;
+    if (typeof actionId === "string") ids.add(actionId);
+  }
+  const reads = await Promise.all(
+    Array.from(ids).map((id) => getExchangeAction(id).catch(() => null))
+  );
+  return reads.filter(
+    (r): r is ExchangeActionRead => r !== null && r.status === "COMPLETED"
+  );
 }
 
 /** EB-4a: owner/admin one-click quarantine provisioning for a location. */

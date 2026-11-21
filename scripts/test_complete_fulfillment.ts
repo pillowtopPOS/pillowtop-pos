@@ -37,7 +37,10 @@ import {
   remainingUnits,
   STOCK_TAG_LABEL,
 } from "../lib/journeys/completion";
-import { STATE_TRANSITIONS, transitionAppliesToFulfillment } from "../lib/journeys/state";
+import { STATE_TRANSITIONS, transitionAppliesToFulfillment, needsTrialCompleted } from "../lib/journeys/state";
+import { ALL_PERMISSIONS } from "../lib/sleepTrial/permissions";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import {
   pickRefundPayment,
   refundablePaymentEvents,
@@ -1262,6 +1265,48 @@ check("held action money and the unlinked refund cap",
     unlinkedRefundCapCents(120000, 50000) === 70000 &&
     unlinkedRefundCapCents(40000, 50000) === 0 &&
     unlinkedRefundCapCents(120000, 0) === 120000);
+
+check("164: trial_completed dedupe ignores events older than the reopen",
+  needsTrialCompleted(null, null) &&
+    needsTrialCompleted("2026-01-10T10:00:00Z", null) === false &&
+    needsTrialCompleted("2026-01-10T10:00:00Z", "2026-01-12T10:00:00Z") &&
+    needsTrialCompleted("2026-01-12T10:00:00Z", "2026-01-12T10:00:00Z") &&
+    needsTrialCompleted("2026-01-13T10:00:00Z", "2026-01-12T10:00:00Z") === false &&
+    needsTrialCompleted(undefined, undefined));
+
+// 164: same drift check as scripts/check_permission_keys.mjs - every key
+// the latest is_valid_permission_key accepts must be in ALL_PERMISSIONS
+// (including the new sleep_trial.reopen_action) and vice versa.
+{
+  const migDir = "supabase/migrations";
+  const files = readdirSync(migDir).filter((f) => f.endsWith(".sql")).sort();
+  let latest: string | null = null;
+  for (const f of files) {
+    const sql = readFileSync(join(migDir, f), "utf8");
+    if (/create or replace function public\.is_valid_permission_key/.test(sql)) {
+      latest = sql;
+    }
+  }
+  const start = latest
+    ? latest.search(/create or replace function public\.is_valid_permission_key/)
+    : -1;
+  const end = latest ? latest.indexOf("$$;", start) : -1;
+  const dbKeys = new Set(
+    latest
+      ? Array.from(latest.slice(start, end === -1 ? undefined : end).matchAll(/'([a-z_]+\.[a-z_]+)'/g)).map((m) => m[1])
+      : []
+  );
+  const uiKeys = new Set(ALL_PERMISSIONS.map((p) => p.key));
+  const missingInUi = Array.from(dbKeys).filter((k) => !uiKeys.has(k));
+  const missingInDb = Array.from(uiKeys).filter((k) => !dbKeys.has(k));
+  check("164: ALL_PERMISSIONS matches is_valid_permission_key (incl. reopen_action)",
+    latest !== null &&
+      dbKeys.has("sleep_trial.reopen_action") &&
+      uiKeys.has("sleep_trial.reopen_action") &&
+      missingInUi.length === 0 &&
+      missingInDb.length === 0,
+    missingInUi.concat(missingInDb).join(", "));
+}
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`);
 process.exit(failures === 0 ? 0 : 1);
