@@ -29,11 +29,13 @@ import {
   type ExchangeRefundMethod,
 } from "@/lib/journeys/exchange";
 import {
+  fetchJourneyById,
   fetchJourneyEvents,
   fetchStores,
   type JourneyEvent,
   type Store,
 } from "@/lib/journeys/queries";
+import { originalHandoverLocationDefault } from "@/lib/journeys/completion";
 import {
   pickRefundPayment,
   refundablePaymentEvents,
@@ -343,13 +345,35 @@ export default function ExchangeMilestoneCard({
         (action.original_pickup_outcome as OriginalPickupOutcome) ?? null
       );
       setPickupReason(action.original_pickup_reason ?? "");
-      setPickupLocationId(
-        action.original_pickup_location_id ?? callerStoreId ?? ""
-      );
+      setPickupLocationId(action.original_pickup_location_id ?? "");
       // The handover picker lists every company location - handovers
-      // are not limited to warehouses.
+      // are not limited to warehouses. With no recorded location the
+      // default walks the same chain as the Mark picked up dialog: the
+      // order store's assigned warehouse, then the oldest warehouse,
+      // then the order's store.
       fetchStores(true)
-        .then((all) => setPickupLocations(all.filter((l) => l.is_active)))
+        .then(async (all) => {
+          const active = all.filter((l) => l.is_active);
+          setPickupLocations(active);
+          if (action.original_pickup_location_id) return;
+          const j = await fetchJourneyById(action.journey_id).catch(
+            () => null
+          );
+          const orderStoreId = j?.store_id ?? null;
+          setPickupLocationId((cur) =>
+            cur ||
+            (originalHandoverLocationDefault({
+              pickupLocationIds: [],
+              assignedWarehouseId: active.find(
+                (l) => l.id === orderStoreId
+              )?.assigned_warehouse_id,
+              warehouses: active.filter(
+                (l) => l.location_type === "WAREHOUSE"
+              ),
+              orderStoreId,
+            }) ?? "")
+          );
+        })
         .catch(() => setPickupLocations([]));
     }
     if (which === "voidPickup") setPickupReason("");
