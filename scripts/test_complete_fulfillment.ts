@@ -36,6 +36,7 @@ import {
   pickupLocationNote,
   remainingUnits,
   STOCK_TAG_LABEL,
+  originalPickupOutcomeForMethod,
 } from "../lib/journeys/completion";
 import { STATE_TRANSITIONS, transitionAppliesToFulfillment, needsTrialCompleted } from "../lib/journeys/state";
 import { ALL_PERMISSIONS } from "../lib/sleepTrial/permissions";
@@ -57,6 +58,11 @@ import {
   REFUND_COMPLETE_BLOCKER,
   returnChipStep,
   visibleWorkCount,
+  originalPickupCustody,
+  originalPickupCustodyLine,
+  workReceiveCustodyLabel,
+  cancelWarningFor,
+  originalPickupActionForJourney,
 } from "../lib/journeys/exchange";
 import {
   actionRefundBlockReason,
@@ -1306,6 +1312,73 @@ check("164: trial_completed dedupe ignores events older than the reopen",
       missingInUi.length === 0 &&
       missingInDb.length === 0,
     missingInUi.concat(missingInDb).join(", "));
+}
+
+// 165: original-mattress custody. The client derivation mirrors the
+// server (a set original_received_on always wins), the custody line
+// reads the recorded answer, and the completion dialogs ask the
+// question only for the COMMITTED exchange behind the order being
+// completed.
+{
+  const base = { original_received_on: null as string | null, original_pickup_outcome: null as string | null };
+  check("165: originalPickupCustody derives all four states",
+    originalPickupCustody(base) === "not_yet" &&
+    originalPickupCustody({ ...base, original_pickup_outcome: "PICKED_UP" }) === "with_driver" &&
+    originalPickupCustody({ ...base, original_pickup_outcome: "HANDED_OVER" }) === "waiting_to_receive" &&
+    originalPickupCustody({ ...base, original_received_on: "2026-01-10", original_pickup_outcome: "PICKED_UP" }) === "received" &&
+    originalPickupCustody({ ...base, original_pickup_outcome: "NOT_PICKED_UP" }) === "not_yet");
+  check("165: custody line carries date, location, and reason",
+    originalPickupCustodyLine({
+      original_pickup_outcome: "PICKED_UP",
+      original_pickup_on: "2026-01-21",
+      original_pickup_by_name: "Sam",
+    }) === "with the driver since Jan 21 (picked up by Sam)" &&
+    originalPickupCustodyLine({
+      original_pickup_outcome: "HANDED_OVER",
+      original_pickup_on: "2026-01-21",
+      original_pickup_location_name: "Main Warehouse",
+    }) === "handed over at Main Warehouse Jan 21, waiting to be received" &&
+    originalPickupCustodyLine({
+      original_pickup_outcome: "NOT_PICKED_UP",
+      original_pickup_reason: "customer was not home",
+    }) === "Not picked up: customer was not home" &&
+    originalPickupCustodyLine({ original_pickup_outcome: null }) === null);
+  check("165: worklist receive label uses custody for moved originals only",
+    workReceiveCustodyLabel({
+      original_pickup_outcome: "PICKED_UP",
+      original_pickup_on: "2026-01-21",
+    }) === "Picked up by the driver Jan 21, waiting at the warehouse" &&
+    workReceiveCustodyLabel({
+      original_pickup_outcome: "HANDED_OVER",
+      original_pickup_location_name: "Downtown",
+    }) === "Handed over at Downtown, waiting to be received" &&
+    workReceiveCustodyLabel({ original_pickup_outcome: "NOT_HANDED_OVER" }) === null &&
+    workReceiveCustodyLabel({ original_pickup_outcome: null }) === null);
+  const childExchange = {
+    action: "EXCHANGE",
+    child_journey_id: "child-1",
+    original_received_on: null as string | null,
+  };
+  check("165: ask-the-question condition needs an unreceived exchange child",
+    originalPickupActionForJourney([childExchange], "child-1") === childExchange &&
+    originalPickupActionForJourney([childExchange], "other") === null &&
+    originalPickupActionForJourney(
+      [{ ...childExchange, original_received_on: "2026-01-20" }],
+      "child-1"
+    ) === null &&
+    originalPickupActionForJourney(
+      [{ ...childExchange, action: "RETURN" }],
+      "child-1"
+    ) === null);
+  check("165: method maps to the matching outcome pair",
+    originalPickupOutcomeForMethod("delivery", true) === "PICKED_UP" &&
+    originalPickupOutcomeForMethod("delivery", false) === "NOT_PICKED_UP" &&
+    originalPickupOutcomeForMethod("pickup", true) === "HANDED_OVER" &&
+    originalPickupOutcomeForMethod("pickup", false) === "NOT_HANDED_OVER");
+  check("165: cancel warning shows whenever the server sets it",
+    cancelWarningFor({ cancel_warning: "The old mattress was picked up on Jan 21. It has to go back to the customer." }) !== null &&
+    cancelWarningFor({ cancel_warning: null }) === null &&
+    cancelWarningFor({}) === null);
 }
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) FAILED.`);

@@ -560,3 +560,17 @@ export function completionTransitionFor(journey: {
     ) ?? null
   );
 }
+
+// 165: the old-mattress question in the completion dialogs maps the
+// order's own fulfillment method to the exchange action's custody
+// outcome - a delivery stop yields a driver pickup, a pickup stop
+// yields a customer handover.
+export function originalPickupOutcomeForMethod(
+  method: "delivery" | "pickup",
+  broughtBack: boolean
+): "PICKED_UP" | "HANDED_OVER" | "NOT_PICKED_UP" | "NOT_HANDED_OVER" {
+  if (method === "delivery") {
+    return broughtBack ? "PICKED_UP" : "NOT_PICKED_UP";
+  }
+  return broughtBack ? "HANDED_OVER" : "NOT_HANDED_OVER";
+}

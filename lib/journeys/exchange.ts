@@ -300,6 +300,20 @@ export type ExchangeActionRead = {
   /** 164: plain-language quarantine refusal for a COMPLETED action
    *  (unit moved/sold/inspected); null when reopen may proceed. */
   reopen_block_reason: string | null;
+  /** 165: original-mattress custody. outcome is the last recorded
+   *  answer (PICKED_UP / HANDED_OVER / NOT_PICKED_UP / NOT_HANDED_OVER);
+   *  custody is the server's derived state. */
+  original_pickup_outcome: OriginalPickupOutcome | null;
+  original_pickup_on: string | null;
+  original_pickup_location_id: string | null;
+  original_pickup_location_name: string | null;
+  original_pickup_by: string | null;
+  original_pickup_by_name: string | null;
+  original_pickup_reason: string | null;
+  original_pickup_custody: OriginalPickupCustody;
+  /** 165: non-blocking note for the cancel dialog when the original is
+   *  recorded picked up or handed over but not yet received. */
+  cancel_warning: string | null;
 };
 
 /** One action row, with names resolved. Visibility-checked like the quote
@@ -612,6 +626,158 @@ export function refundIsFinalBlocker(
 // ---------------------------------------------------------------------------
 // Open trial-action worklist (163)
 
+export type OriginalPickupOutcome =
+  | "PICKED_UP"
+  | "HANDED_OVER"
+  | "NOT_PICKED_UP"
+  | "NOT_HANDED_OVER";
+
+export type OriginalPickupCustody =
+  | "not_yet"
+  | "with_driver"
+  | "waiting_to_receive"
+  | "received";
+
+/** 165: record the custody answer for the original mattress (driver
+ *  pickup at the replacement stop, or handover at the pickup location).
+ *  Calling again overwrites; the server keeps the displaced answer in
+ *  history. Errors surface verbatim. */
+export async function recordOriginalHandover(
+  actionId: string,
+  outcome: OriginalPickupOutcome,
+  locationId: string | null,
+  reason: string | null
+): Promise<void> {
+  const supabase = createClient();
+  const { error } = await supabase.rpc("record_original_handover", {
+    p_action_id: actionId,
+    p_outcome: outcome,
+    p_location_id: locationId,
+    p_reason: reason,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** 165: reasoned correction for a pickup or handover recorded by
+ *  mistake. Works only before the original is received; afterwards the
+ *  receipt void is the path. */
+export async function voidOriginalHandover(
+  actionId: string,
+  reason: string
+): Promise<void> {
+  const supabase = createClient();
+  const { error } = await supabase.rpc("void_original_handover", {
+    p_action_id: actionId,
+    p_reason: reason,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** 165: the client mirror of the server's custody derivation - a set
+ *  original_received_on always wins over every pickup answer. */
+export function originalPickupCustody(a: {
+  original_received_on: string | null;
+  original_pickup_outcome?: string | null;
+}): OriginalPickupCustody {
+  if (a.original_received_on != null) return "received";
+  if (a.original_pickup_outcome === "PICKED_UP") return "with_driver";
+  if (a.original_pickup_outcome === "HANDED_OVER") {
+    return "waiting_to_receive";
+  }
+  return "not_yet";
+}
+
+function shortPickupDate(on: string | null | undefined): string | null {
+  if (!on) return null;
+  const d = new Date(`${on}T00:00:00`);
+  return Number.isNaN(d.getTime())
+    ? null
+    : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** 165: the human custody line for the exchange card and the day plan.
+ *  Returns null when the original is already received or nothing is
+ *  recorded yet (callers show their own not-yet text there). */
+export function originalPickupCustodyLine(a: {
+  original_pickup_outcome?: string | null;
+  original_pickup_on?: string | null;
+  original_pickup_location_name?: string | null;
+  original_pickup_by_name?: string | null;
+  original_pickup_reason?: string | null;
+}): string | null {
+  const on = shortPickupDate(a.original_pickup_on);
+  switch (a.original_pickup_outcome) {
+    case "PICKED_UP":
+      return `with the driver${on ? ` since ${on}` : ""}${
+        a.original_pickup_by_name
+          ? ` (picked up by ${a.original_pickup_by_name})`
+          : ""
+      }`;
+    case "HANDED_OVER":
+      return `handed over at ${
+        a.original_pickup_location_name ?? "the pickup location"
+      }${on ? ` ${on}` : ""}, waiting to be received`;
+    case "NOT_PICKED_UP":
+      return `Not picked up${a.original_pickup_reason
+        ? `: ${a.original_pickup_reason}`
+        : ""}`;
+    case "NOT_HANDED_OVER":
+      return `Not handed over${a.original_pickup_reason
+        ? `: ${a.original_pickup_reason}`
+        : ""}`;
+    default:
+      return null;
+  }
+}
+
+/** 165: the COMMITTED exchange action behind the order being completed
+ *  (the action's child journey) whose original is still out. This is
+ *  the "ask the question" condition for the completion dialogs. */
+export function originalPickupActionForJourney<
+  T extends {
+    action: string;
+    child_journey_id: string | null;
+    original_received_on: string | null;
+  }
+>(actions: T[] | null | undefined, journeyId: string): T | null {
+  return (
+    (actions ?? []).find(
+      (a) =>
+        a.action === "EXCHANGE" &&
+        a.child_journey_id === journeyId &&
+        a.original_received_on == null
+    ) ?? null
+  );
+}
+
+/** 165: the receive step's custody-aware text for the worklists.
+ *  Returns null for not-yet / NOT_ outcomes, which keep the plain
+ *  waiting label. */
+export function workReceiveCustodyLabel(a: {
+  original_pickup_outcome?: string | null;
+  original_pickup_on?: string | null;
+  original_pickup_location_name?: string | null;
+}): string | null {
+  const on = shortPickupDate(a.original_pickup_on);
+  if (a.original_pickup_outcome === "PICKED_UP") {
+    return `Picked up by the driver${on ? ` ${on}` : ""}, waiting at the warehouse`;
+  }
+  if (a.original_pickup_outcome === "HANDED_OVER") {
+    return `Handed over at ${
+      a.original_pickup_location_name ?? "the pickup location"
+    }${on ? ` ${on}` : ""}, waiting to be received`;
+  }
+  return null;
+}
+
+/** 165: the cancel dialog shows the server warning whenever one is
+ *  set - it informs, it never blocks. */
+export function cancelWarningFor(action: {
+  cancel_warning?: string | null;
+}): string | null {
+  return action.cancel_warning ?? null;
+}
+
 export type OpenTrialAction = {
   action_id: string;
   action: SleepTrialActionKind;
@@ -633,6 +799,13 @@ export type OpenTrialAction = {
   refund_owed_cents: number | null;
   refund_recorded_at: string | null;
   is_stalled: boolean;
+  original_pickup_outcome: OriginalPickupOutcome | null;
+  original_pickup_on: string | null;
+  original_pickup_location_id: string | null;
+  original_pickup_location_name: string | null;
+  original_pickup_by_name: string | null;
+  original_pickup_reason: string | null;
+  original_pickup_custody: OriginalPickupCustody;
 };
 
 /** Every COMMITTED return/exchange the caller can see (one batched read

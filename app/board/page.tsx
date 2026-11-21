@@ -80,6 +80,9 @@ import {
   hiddenByInProgressAction,
   oldestOpenReturn,
   returnChipStep,
+  recordOriginalHandover,
+  receiveReturnedUnit,
+  originalPickupActionForJourney,
   type ExchangeActionRead,
   type OpenTrialAction,
 } from "@/lib/journeys/exchange";
@@ -123,6 +126,7 @@ import {
   remainingUnits,
   STOCK_TAG_LABEL,
   type CompletionStepperLine,
+  originalPickupOutcomeForMethod,
 } from "@/lib/journeys/completion";
 import { effectiveShipTo, formatShipToLine } from "@/lib/customers/shipTo";
 import type { JourneyLineItem } from "@/lib/journeys/queries";
@@ -280,6 +284,18 @@ function BoardContent() {
   // Set when the RPC reports the order went straight to Completed (no
   // live sleep trial item). The panel shows a short green note.
   const [completionDoneFor, setCompletionDoneFor] = useState<string | null>(null);
+  // 165: the exchange action behind the order being completed, plus the
+  // caller's answer to the old-mattress question. An unanswered question
+  // never blocks completion.
+  const [completionExchangeAction, setCompletionExchangeAction] =
+    useState<OpenTrialAction | null>(null);
+  const [oldMattressAnswer, setOldMattressAnswer] = useState<
+    "" | "brought" | "kept"
+  >("");
+  const [oldMattressReason, setOldMattressReason] = useState("");
+  const [oldMattressLocationId, setOldMattressLocationId] = useState("");
+  const [completionCanReceive, setCompletionCanReceive] = useState(false);
+  const completionFulfillmentSaved = useRef<string | null>(null);
   // What the open panel reports about completion: the gated decision
   // (button/note/hidden) and the state the order will land in. The
   // dialog reads this so its note and destination match the panel.
@@ -579,14 +595,58 @@ function BoardContent() {
       setCompletionHandover(null);
       setDialogTrialStatuses(null);
       setCompletionReturns(null);
+      setCompletionExchangeAction(null);
+      setOldMattressAnswer("");
+      setOldMattressReason("");
+      setOldMattressLocationId("");
       // The dialog is closed (or is not a completion): an in-flight
       // flag from an unmounted attempt can never be relevant again.
       completionInFlight.current = false;
+      completionFulfillmentSaved.current = null;
       return;
     }
     const journeyId = pendingTransition.journey.id;
     let alive = true;
     setCompletionReturns(null);
+    // 165: when this order is an exchange replacement, the completion
+    // dialog asks what happened to the old mattress.
+    fetchOpenTrialActions()
+      .then((rows) => {
+        if (!alive) return;
+        const a = originalPickupActionForJourney(rows, journeyId);
+        setCompletionExchangeAction(a);
+        if (a?.original_pickup_outcome === "PICKED_UP" ||
+            a?.original_pickup_outcome === "HANDED_OVER") {
+          setOldMattressAnswer("brought");
+        } else if (a?.original_pickup_outcome) {
+          setOldMattressAnswer("kept");
+        }
+      })
+      .catch(() => {});
+    const supa = createClient();
+    supa
+      .rpc("has_permission", { p_key: "inventory.inspect_returns" })
+      .then(({ data }) => {
+        if (data) {
+          if (alive) setCompletionCanReceive(true);
+          return;
+        }
+        supa.auth.getUser().then(({ data: u }) => {
+          if (!u.user) return;
+          supa
+            .from("employees")
+            .select("home_store_id")
+            .eq("auth_user_id", u.user.id)
+            .eq("is_active", true)
+            .maybeSingle()
+            .then(({ data: emp }) => {
+              const t = stores.find(
+                (st) => st.id === (emp as any)?.home_store_id
+              )?.location_type;
+              if (alive && t === "WAREHOUSE") setCompletionCanReceive(true);
+            });
+        });
+      });
     fetchJourneyEvents(journeyId)
       .then((evs) => fetchJourneyReturnActions(journeyId, evs))
       .then((actions) => {
@@ -817,6 +877,18 @@ function BoardContent() {
         setModalError("This order is already being recorded. Give it a moment.");
         return;
       }
+      if (
+        completionExchangeAction &&
+        oldMattressAnswer === "kept" &&
+        !oldMattressReason.trim()
+      ) {
+        setModalError(
+          `Say why the old mattress was ${
+            completionMethod === "pickup" ? "not handed over" : "not picked up"
+          }.`
+        );
+        return;
+      }
       const request = buildCompletionRequest({
         canBackdate: canBackdateFulfillment,
         completedOn: fieldValues.completed_on,
@@ -830,25 +902,84 @@ function BoardContent() {
       setModalError(null);
       setBoardBusy(true);
       try {
-        const result = await Promise.race([
-          fulfillmentLines
-            ? recordJourneyFulfillment(journey.id, fulfillmentLines, {
-                completedOn: request.completedOn,
-                reason: request.reason,
-              })
-            : completeJourneyFulfillment(journey.id, {
-                completedOn: request.completedOn,
-                reason: request.reason,
-              }),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("rpc timed out")), 30000)
-          ),
-        ]);
-        // m149: an order with no live sleep trial item lands on
-        // Completed, off the board. The panel shows a short green note.
-        setCompletionDoneFor(
-          result?.state === "Completed" ? journey.id : null
-        );
+        // A retry after a failed handover save must not record the
+        // fulfillment twice - it stays recorded no matter what.
+        if (completionFulfillmentSaved.current !== journey.id) {
+          const result = await Promise.race([
+            fulfillmentLines
+              ? recordJourneyFulfillment(journey.id, fulfillmentLines, {
+                  completedOn: request.completedOn,
+                  reason: request.reason,
+                })
+              : completeJourneyFulfillment(journey.id, {
+                  completedOn: request.completedOn,
+                  reason: request.reason,
+                }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("rpc timed out")), 30000)
+            ),
+          ]);
+          completionFulfillmentSaved.current = journey.id;
+          // m149: an order with no live sleep trial item lands on
+          // Completed, off the board. The panel shows a short green note.
+          setCompletionDoneFor(
+            result?.state === "Completed" ? journey.id : null
+          );
+        }
+        // 165: the old-mattress answer saves after the fulfillment and
+        // can never roll it back. A handed-over unit at a location with
+        // a quarantine area is received in the same step when the caller
+        // may receive.
+        if (completionExchangeAction && oldMattressAnswer !== "") {
+          const outcome = originalPickupOutcomeForMethod(
+            completionMethod ?? "delivery",
+            oldMattressAnswer === "brought"
+          );
+          const handoverLoc =
+            outcome === "HANDED_OVER"
+              ? oldMattressLocationId || journey.store_id
+              : null;
+          try {
+            await recordOriginalHandover(
+              completionExchangeAction.action_id,
+              outcome,
+              handoverLoc,
+              oldMattressAnswer === "kept"
+                ? oldMattressReason.trim()
+                : null
+            );
+          } catch {
+            setModalError(
+              `${
+                completionMethod === "delivery" ? "Delivered" : "Picked up"
+              }, but the old mattress answer was not saved. Record it from the exchange card.`
+            );
+            return;
+          }
+          if (
+            outcome === "HANDED_OVER" &&
+            handoverLoc &&
+            completionCanReceive &&
+            stores.some(
+              (st) =>
+                st.location_type === "WAREHOUSE_QUARANTINE" &&
+                st.parent_location_id === handoverLoc
+            )
+          ) {
+            try {
+              await receiveReturnedUnit(
+                completionExchangeAction.action_id,
+                handoverLoc,
+                localTodayISO()
+              );
+            } catch {
+              setModalError(
+                "Handed over, but not marked received. Mark it received from the exchange card."
+              );
+              return;
+            }
+          }
+        }
         setPendingTransition(null);
         setPendingFieldValues({});
         await handleReassigned(journey.id);
@@ -1859,6 +1990,92 @@ function BoardContent() {
                 </div>
               );
             })()}
+            {completionExchangeAction &&
+              pendingTransition.transition.event === "delivery_completed" && (
+              <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-700">
+                  Old mattress
+                </p>
+                <p className="mb-2 text-xs text-slate-600">
+                  {completionMethod === "delivery"
+                    ? `Pick up ${
+                        completionExchangeAction.product_name ??
+                        "the old mattress"
+                      } for the exchange?`
+                    : `Did the customer hand over ${
+                        completionExchangeAction.product_name ??
+                        "the old mattress"
+                      }?`}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setOldMattressAnswer("brought")}
+                    className={`rounded-md border px-3 py-1.5 text-xs font-medium ${
+                      oldMattressAnswer === "brought"
+                        ? "border-amber-500 bg-amber-100 text-amber-900"
+                        : "border-slate-300 bg-white text-slate-700"
+                    }`}
+                  >
+                    {completionMethod === "delivery"
+                      ? "Picked up"
+                      : "Handed over"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOldMattressAnswer("kept")}
+                    className={`rounded-md border px-3 py-1.5 text-xs font-medium ${
+                      oldMattressAnswer === "kept"
+                        ? "border-amber-500 bg-amber-100 text-amber-900"
+                        : "border-slate-300 bg-white text-slate-700"
+                    }`}
+                  >
+                    {completionMethod === "delivery"
+                      ? "Not picked up"
+                      : "Not handed over"}
+                  </button>
+                </div>
+                {oldMattressAnswer === "brought" &&
+                  completionMethod === "pickup" && (
+                  <select
+                    value={
+                      oldMattressLocationId ||
+                      pendingTransition.journey.store_id
+                    }
+                    onChange={(e) =>
+                      setOldMattressLocationId(e.target.value)
+                    }
+                    className="mt-2 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700"
+                  >
+                    {stores
+                      .filter((st) => st.is_active)
+                      .map((st) => (
+                        <option key={st.id} value={st.id}>
+                          {st.name}
+                        </option>
+                      ))}
+                  </select>
+                )}
+                {oldMattressAnswer === "kept" && (
+                  <input
+                    type="text"
+                    value={oldMattressReason}
+                    onChange={(e) => setOldMattressReason(e.target.value)}
+                    placeholder={
+                      completionMethod === "delivery"
+                        ? "Why was it not picked up?"
+                        : "Why was it not handed over?"
+                    }
+                    className="mt-2 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700"
+                  />
+                )}
+                {oldMattressAnswer === "" && (
+                  <p className="mt-2 text-xs text-slate-500">
+                    The old mattress is still outstanding.
+                  </p>
+                )}
+              </div>
+            )}
             {modalError && (
               <p key="modal-error" role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                 {modalError}

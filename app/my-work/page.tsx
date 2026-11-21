@@ -11,6 +11,7 @@ import {
   partitionWork,
   visibleWorkCount,
   workStepLabel,
+  workReceiveCustodyLabel,
   type OpenTrialAction,
   type TrialActionStep,
 } from "@/lib/journeys/exchange";
@@ -535,7 +536,10 @@ export default function MyWorkPage() {
                             a.is_stalled ? "text-red-700" : "text-teal-700"
                           }`}
                         >
-                          {workStepLabel(step)}
+                          {step === "receive"
+                            ? workReceiveCustodyLabel(a) ??
+                              workStepLabel(step)
+                            : workStepLabel(step)}
                         </span>
                       </p>
                       <p className="mt-0.5 text-xs text-slate-600">
@@ -625,6 +629,9 @@ export default function MyWorkPage() {
                           {` · waiting ${a.days_committed} day${
                             a.days_committed === 1 ? "" : "s"
                           }`}
+                          {workReceiveCustodyLabel(a)
+                            ? ` · ${workReceiveCustodyLabel(a)}`
+                            : ""}
                         </p>
                       </div>
                       <Link

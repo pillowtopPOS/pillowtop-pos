@@ -15,10 +15,15 @@ import {
   dollarsToCents,
   recordExchangeRefund,
   receiveReturnedUnit,
+  recordOriginalHandover,
+  voidOriginalHandover,
+  originalPickupCustodyLine,
+  cancelWarningFor,
   reopenSleepTrialAction,
   voidExchangeRefund,
   voidReturnedReceipt,
   type ExchangeActionRead,
+  type OriginalPickupOutcome,
   type ExchangeMilestone,
   type ExchangeMilestones,
   type ExchangeRefundMethod,
@@ -106,7 +111,15 @@ export default function ExchangeMilestoneCard({
 }) {
   const router = useRouter();
   const [dialog, setDialog] = useState<
-    "cancel" | "refund" | "void" | "receive" | "voidReceipt" | "reopen" | null
+    | "cancel"
+    | "refund"
+    | "void"
+    | "receive"
+    | "voidReceipt"
+    | "reopen"
+    | "pickup"
+    | "voidPickup"
+    | null
   >(null);
   const submitGuard = useRef(false);
   const [saving, setSaving] = useState(false);
@@ -119,6 +132,15 @@ export default function ExchangeMilestoneCard({
   const [refundReference, setRefundReference] = useState("");
   const [voidReason, setVoidReason] = useState("");
   const [reopenReason, setReopenReason] = useState("");
+  // 165: old-mattress custody dialog state
+  const [pickupOutcome, setPickupOutcome] =
+    useState<OriginalPickupOutcome | null>(null);
+  const [pickupReason, setPickupReason] = useState("");
+  const [pickupLocationId, setPickupLocationId] = useState("");
+  const [pickupLocations, setPickupLocations] = useState<Store[]>([]);
+  const [callerEmployeeId, setCallerEmployeeId] = useState<string | null>(
+    null
+  );
   // EB-4a: receive + void-receipt state
   const [receiveDate, setReceiveDate] = useState("");
   const [receiveLocationId, setReceiveLocationId] = useState("");
@@ -129,6 +151,8 @@ export default function ExchangeMilestoneCard({
     recordRefund: false,
     adjustRefund: false,
     inspectReturns: false,
+    markFulfilled: false,
+    canFinalizeDelivery: false,
   });
   const [receivedLine, setReceivedLine] = useState<string | null>(null);
   const [callerIsWarehouseBased, setCallerIsWarehouseBased] =
@@ -159,7 +183,9 @@ export default function ExchangeMilestoneCard({
       supabase.rpc("has_permission", { p_key: "payments.record_refund" }),
       supabase.rpc("has_permission", { p_key: "payments.adjust_refund_amount" }),
       supabase.rpc("has_permission", { p_key: "inventory.inspect_returns" }),
-    ]).then(([a, b, c, d, e]) =>
+      supabase.rpc("has_permission", { p_key: "orders.mark_fulfilled" }),
+      supabase.rpc("can_finalize_delivery"),
+    ]).then(([a, b, c, d, e, f, g]) =>
       setCallerCan((prev) => ({
         ...prev,
         startExchange: !!a.data,
@@ -167,6 +193,8 @@ export default function ExchangeMilestoneCard({
         recordRefund: !!c.data,
         adjustRefund: !!d.data,
         inspectReturns: !!e.data,
+        markFulfilled: !!f.data,
+        canFinalizeDelivery: !!g.data,
       }))
     );
     // Warehouse-based employees may receive without the inspect_returns
@@ -175,7 +203,7 @@ export default function ExchangeMilestoneCard({
       if (!u.user) return;
       supabase
         .from("employees")
-        .select("home_store_id, role, stores(location_type)")
+        .select("id, home_store_id, role, stores(location_type)")
         .eq("auth_user_id", u.user.id)
         .eq("is_active", true)
         .maybeSingle()
@@ -183,6 +211,7 @@ export default function ExchangeMilestoneCard({
           const t = (emp as any)?.stores?.location_type;
           setCallerIsWarehouseBased(t === "WAREHOUSE");
           setCallerStoreId((emp as any)?.home_store_id ?? null);
+          setCallerEmployeeId((emp as any)?.id ?? null);
         });
     });
   }, []);
@@ -264,7 +293,17 @@ export default function ExchangeMilestoneCard({
   const refundRecorded = action.refund_recorded_at != null;
   const history = action.refund_history ?? [];
 
-  function open(which: "cancel" | "refund" | "void" | "receive" | "voidReceipt" | "reopen") {
+  function open(
+    which:
+      | "cancel"
+      | "refund"
+      | "void"
+      | "receive"
+      | "voidReceipt"
+      | "reopen"
+      | "pickup"
+      | "voidPickup"
+  ) {
     setError(null);
     if (which === "refund") {
       if (isReturn) {
@@ -299,6 +338,21 @@ export default function ExchangeMilestoneCard({
     }
     if (which === "voidReceipt") setVoidReason("");
     if (which === "reopen") setReopenReason("");
+    if (which === "pickup") {
+      setPickupOutcome(
+        (action.original_pickup_outcome as OriginalPickupOutcome) ?? null
+      );
+      setPickupReason(action.original_pickup_reason ?? "");
+      setPickupLocationId(
+        action.original_pickup_location_id ?? callerStoreId ?? ""
+      );
+      // The handover picker lists every company location - handovers
+      // are not limited to warehouses.
+      fetchStores(true)
+        .then((all) => setPickupLocations(all.filter((l) => l.is_active)))
+        .catch(() => setPickupLocations([]));
+    }
+    if (which === "voidPickup") setPickupReason("");
     setDialog(which);
   }
 
@@ -327,6 +381,74 @@ export default function ExchangeMilestoneCard({
       return;
     }
     await submit(() => cancelSleepTrialAction(action.action_id, cancelReason));
+  }
+
+  async function submitPickup() {
+    setError(null);
+    if (!pickupOutcome) {
+      setError("Choose what happened to the old mattress.");
+      return;
+    }
+    if (
+      (pickupOutcome === "NOT_PICKED_UP" ||
+        pickupOutcome === "NOT_HANDED_OVER") &&
+      !pickupReason.trim()
+    ) {
+      setError("A reason is required.");
+      return;
+    }
+    const handoverLoc =
+      pickupOutcome === "HANDED_OVER" ? pickupLocationId || null : null;
+    if (pickupOutcome === "HANDED_OVER" && !handoverLoc) {
+      setError("Choose where the mattress was handed over.");
+      return;
+    }
+    // A handover at a location with a quarantine area is received in
+    // the same step when the caller may receive - nobody presses a
+    // second button. A failed receive keeps the handover; the error
+    // says exactly where to finish it.
+    await submit(async () => {
+      await recordOriginalHandover(
+        action.action_id,
+        pickupOutcome,
+        handoverLoc,
+        pickupReason.trim() || null
+      );
+      if (
+        pickupOutcome === "HANDED_OVER" &&
+        handoverLoc &&
+        (callerCan.inspectReturns || callerIsWarehouseBased) &&
+        pickupLocations.some(
+          (l) =>
+            l.location_type === "WAREHOUSE_QUARANTINE" &&
+            (l as Store & { parent_location_id?: string })
+              .parent_location_id === handoverLoc
+        )
+      ) {
+        try {
+          await receiveReturnedUnit(
+            action.action_id,
+            handoverLoc,
+            localDateString()
+          );
+        } catch {
+          throw new Error(
+            "Handed over, but not marked received. Mark it received from this card."
+          );
+        }
+      }
+    });
+  }
+
+  async function submitVoidPickup() {
+    setError(null);
+    if (!pickupReason.trim()) {
+      setError("A reason is required to undo the pickup record.");
+      return;
+    }
+    await submit(() =>
+      voidOriginalHandover(action.action_id, pickupReason.trim())
+    );
   }
 
   async function submitRefund() {
@@ -429,6 +551,20 @@ export default function ExchangeMilestoneCard({
     action.status === "COMMITTED" &&
     !!action.original_received_on &&
     (callerCan.inspectReturns || callerIsWarehouseBased);
+  // 165: recording the custody answer needs the fulfillment gate
+  // (orders.mark_fulfilled or can_finalize_delivery); undoing it needs
+  // a manager or the recorder, the same rule the server applies.
+  const canRecordPickup =
+    action.status === "COMMITTED" &&
+    !action.original_received_on &&
+    (callerCan.markFulfilled || callerCan.canFinalizeDelivery);
+  const canVoidPickup =
+    action.status === "COMMITTED" &&
+    !action.original_received_on &&
+    action.original_pickup_outcome != null &&
+    (callerCan.completeExchange ||
+      (callerEmployeeId != null &&
+        action.original_pickup_by === callerEmployeeId));
   const refundBlockReason = actionRefundBlockReason(action);
   // The refund completes the action only when it is the last open
   // blocker; any other open blocker is what still has to happen after
@@ -480,6 +616,14 @@ export default function ExchangeMilestoneCard({
 
       {action.original_received_on && receivedLine && (
         <p className="mt-1 text-xs text-slate-500">{receivedLine}</p>
+      )}
+
+      {/* 165: where the old mattress is, while it is still out. */}
+      {action.status === "COMMITTED" && !action.original_received_on && (
+        <p className="mt-1 text-xs text-slate-600">
+          Old mattress:{" "}
+          {originalPickupCustodyLine(action) ?? "not yet picked up"}
+        </p>
       )}
 
       {action.status === "COMMITTED" && (
@@ -539,7 +683,9 @@ export default function ExchangeMilestoneCard({
         action.can_complete ||
         action.can_reopen ||
         canMarkReceived ||
-        canVoidThisReceipt) && (
+        canVoidThisReceipt ||
+        canRecordPickup ||
+        canVoidPickup) && (
         <div className="mt-2 flex flex-wrap items-start gap-2">
           {action.can_cancel && !action.original_received_on && (
             <button
@@ -608,6 +754,22 @@ export default function ExchangeMilestoneCard({
               className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
             >
               Void refund
+            </button>
+          )}
+          {canRecordPickup && (
+            <button
+              onClick={() => open("pickup")}
+              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Record old mattress pickup
+            </button>
+          )}
+          {canVoidPickup && (
+            <button
+              onClick={() => open("voidPickup")}
+              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Undo pickup
             </button>
           )}
           {action.status === "COMPLETED" && action.can_reopen && (
@@ -751,6 +913,11 @@ export default function ExchangeMilestoneCard({
                   {!isReturn &&
                     "The approved exception used for this exchange is used up and will NOT come back. If the customer wants another exchange, a new exception is needed."}
                 </p>
+                {cancelWarningFor(action) && (
+                  <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-800">
+                    {cancelWarningFor(action)}
+                  </p>
+                )}
                 <label className="mt-3 block text-xs font-medium text-slate-700">
                   Why is it being cancelled? (required)
                 </label>
@@ -1028,12 +1195,165 @@ export default function ExchangeMilestoneCard({
         </Modal>
       )}
 
+      {dialog === "pickup" && (
+        <Modal onClose={() => setDialog(null)} saving={saving}>
+          <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+            <h2 className="mb-2 text-lg font-semibold text-slate-900">
+              Record old mattress pickup
+            </h2>
+            <p className="mb-3 text-xs text-slate-500">
+              Recording a new answer replaces the old one. The previous
+              answer is kept in the history.
+            </p>
+            <div className="space-y-1.5">
+              {(
+                [
+                  ["PICKED_UP", "Picked up by the driver"],
+                  ["HANDED_OVER", "Handed over at a location"],
+                  ["NOT_PICKED_UP", "Not picked up"],
+                  ["NOT_HANDED_OVER", "Not handed over"],
+                ] as [OriginalPickupOutcome, string][]
+              ).map(([value, label]) => (
+                <label
+                  key={value}
+                  className="flex items-center gap-2 text-sm text-slate-700"
+                >
+                  <input
+                    type="radio"
+                    name="pickup-outcome"
+                    checked={pickupOutcome === value}
+                    onChange={() => {
+                      setPickupOutcome(value);
+                      setError(null);
+                    }}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+            {pickupOutcome === "HANDED_OVER" && (
+              <select
+                value={pickupLocationId}
+                onChange={(e) => {
+                  setPickupLocationId(e.target.value);
+                  setError(null);
+                }}
+                className="mt-2 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-700"
+              >
+                {pickupLocations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </select>
+            )}
+            {(pickupOutcome === "NOT_PICKED_UP" ||
+              pickupOutcome === "NOT_HANDED_OVER") && (
+              <input
+                type="text"
+                value={pickupReason}
+                onChange={(e) => {
+                  setPickupReason(e.target.value);
+                  setError(null);
+                }}
+                placeholder="Why? (required)"
+                className="mt-2 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-700"
+              />
+            )}
+            {error && (
+              <p className="mt-2 text-xs font-medium text-red-700">
+                {error}
+              </p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setDialog(null)}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitPickup}
+                disabled={saving}
+                className="rounded-md bg-slate-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+              >
+                {saving ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {dialog === "voidPickup" && (
+        <Modal onClose={() => setDialog(null)} saving={saving}>
+          <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+            <h2 className="mb-2 text-lg font-semibold text-slate-900">
+              Undo pickup record
+            </h2>
+            <p className="mb-3 text-xs text-slate-500">
+              This clears the recorded answer back to not-yet. The old
+              answer stays in the history.
+            </p>
+            <label className="block text-xs font-medium text-slate-700">
+              Why is it being undone? (required)
+            </label>
+            <textarea
+              value={pickupReason}
+              onChange={(e) => {
+                setPickupReason(e.target.value);
+                setError(null);
+              }}
+              rows={3}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            />
+            {error && (
+              <p className="mt-2 text-xs font-medium text-red-700">
+                {error}
+              </p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setDialog(null)}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Keep it
+              </button>
+              <button
+                onClick={submitVoidPickup}
+                disabled={saving}
+                className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {saving ? "Saving..." : "Undo record"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {dialog === "receive" && (
         <Modal onClose={() => setDialog(null)} saving={saving}>
           <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
             <h2 className="mb-2 text-lg font-semibold text-slate-900">
               Mark original received
             </h2>
+            {(action.original_pickup_outcome === "PICKED_UP" ||
+              action.original_pickup_outcome === "HANDED_OVER") &&
+              originalPickupCustodyLine(action) && (
+                <p className="mb-2 text-xs text-slate-500">
+                  {action.original_pickup_outcome === "PICKED_UP"
+                    ? `The driver picked it up${
+                        action.original_pickup_on
+                          ? ` ${new Date(
+                              `${action.original_pickup_on}T00:00:00`
+                            ).toLocaleDateString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                            })}`
+                          : ""
+                      }.`
+                    : originalPickupCustodyLine(action)}
+                </p>
+              )}
             {error && (
               <p key="receive-error" className="mt-3 text-sm text-red-600">
                 {error}

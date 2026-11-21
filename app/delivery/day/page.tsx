@@ -26,6 +26,11 @@ import {
   type DeliveryStopWindowInput,
 } from "@/lib/delivery/queries";
 import { confirmationDayLabel, formatPhoneDashed } from "@/lib/delivery/calls";
+import {
+  fetchOpenTrialActions,
+  originalPickupCustodyLine,
+  type OpenTrialAction,
+} from "@/lib/journeys/exchange";
 import { useUnsavedChangesGuard } from "@/lib/useUnsavedChangesGuard";
 import {
   fillMissingWindows,
@@ -159,6 +164,9 @@ function DeliveryDayInner() {
   const date = searchParams.get("date") ?? "";
 
   const [plan, setPlan] = useState<DeliveryDayPlan | null>(null);
+  const [exchangePickups, setExchangePickups] = useState<
+    Map<string, OpenTrialAction>
+  >(new Map());
   const [draft, setDraft] = useState<Draft | null>(null);
   const [canManage, setCanManage] = useState(false);
   const [canSetWindows, setCanSetWindows] = useState(false);
@@ -204,14 +212,26 @@ function DeliveryDayInner() {
       setConflict(false);
     }
     try {
-      const [p, perm, permWin, settings] = await Promise.all([
+      const [p, perm, permWin, settings, openActions] = await Promise.all([
         fetchDeliveryDayPlan(date),
         fetchDeliveryManageCalendar(),
         fetchDeliverySetWindows(),
         fetchDeliveryDaySettings(),
+        // 165: exchange actions keyed off the replacement order tell a
+        // stop whether the driver is also collecting the old mattress.
+        fetchOpenTrialActions().catch(() => [] as OpenTrialAction[]),
       ]);
       if (seq !== loadSeq.current) return;
       setPlan(p);
+      setExchangePickups(
+        new Map(
+          openActions
+            .filter(
+              (a) => a.action === "EXCHANGE" && a.child_journey_id != null
+            )
+            .map((a) => [a.child_journey_id as string, a])
+        )
+      );
       setDraft(buildDraft(p));
       setCanManage(perm);
       setCanSetWindows(permWin);
@@ -784,6 +804,37 @@ function DeliveryDayInner() {
             {s.phone ? ` · ${formatPhoneDashed(s.phone)}` : ""}
             {s.booked_by_name ? ` · booked by ${s.booked_by_name}` : ""}
           </div>
+          {(() => {
+            const a = exchangePickups.get(s.journey_id);
+            if (!a) return null;
+            if (a.original_received_on != null) {
+              return (
+                <div className="mt-0.5 text-xs text-slate-500">
+                  Old mattress received
+                </div>
+              );
+            }
+            const line = originalPickupCustodyLine(a);
+            if (a.original_pickup_outcome === "PICKED_UP") {
+              return (
+                <div className="mt-0.5 text-xs text-slate-500">
+                  Old mattress with the driver
+                </div>
+              );
+            }
+            if (line && a.original_pickup_outcome === "HANDED_OVER") {
+              return (
+                <div className="mt-0.5 text-xs text-slate-500">
+                  Old mattress {line}
+                </div>
+              );
+            }
+            return (
+              <div className="mt-0.5 text-xs font-medium text-amber-700">
+                Pick up: {a.product_name ?? "old mattress"}
+              </div>
+            );
+          })()}
           {showWindows &&
             (() => {
               const w = winValue(s);

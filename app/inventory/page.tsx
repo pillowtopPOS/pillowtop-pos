@@ -26,6 +26,7 @@ import {
 } from "@/lib/transfers/queries";
 import {
   fetchOpenTrialActions,
+  workReceiveCustodyLabel,
   type OpenTrialAction,
 } from "@/lib/journeys/exchange";
 
@@ -571,6 +572,9 @@ export default function InventoryPage() {
                       {` · waiting ${a.days_committed} day${
                         a.days_committed === 1 ? "" : "s"
                       }`}
+                      {workReceiveCustodyLabel(a)
+                        ? ` · ${workReceiveCustodyLabel(a)}`
+                        : ""}
                     </span>
                   </span>
                   <Link

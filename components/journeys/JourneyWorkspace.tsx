@@ -1264,6 +1264,24 @@ export default function JourneyWorkspace({
       : null;
 
   const storeOptions = stores.filter((s) => s.is_active && s.id !== journey.store_id);
+  // 165: an exchange child picks the old mattress up wherever the
+  // replacement is picked up, so pickup lines default to the company's
+  // main warehouse (the order store's assigned warehouse, else the
+  // oldest warehouse). The user can still pick a store.
+  const exchangePickupDefaultLocationId = useMemo(() => {
+    if (!journey.exchange_action_id) return null;
+    const assigned = stores.find(
+      (s) => s.id === journey.store_id
+    )?.assigned_warehouse_id;
+    if (assigned) return assigned;
+    return (
+      stores
+        .filter((s) => s.location_type === "WAREHOUSE" && s.is_active)
+        .sort((a, b) =>
+          (a.created_at ?? "").localeCompare(b.created_at ?? "")
+        )[0]?.id ?? null
+    );
+  }, [journey.exchange_action_id, journey.store_id, stores]);
   const employeeOptions = employees.filter(
     (e) => e.home_store_id === journey.store_id && e.id !== journey.assigned_employee_id
   );
@@ -1319,7 +1337,8 @@ export default function JourneyWorkspace({
             : stored);
         const payload = lineItemFulfillmentPayload({
           explicitChoice: explicit,
-          pickupLocationId: item.pickup_location_id,
+          pickupLocationId:
+            item.pickup_location_id ?? exchangePickupDefaultLocationId,
           orderFulfillment: value,
         });
         const unchanged =
@@ -2695,7 +2714,9 @@ export default function JourneyWorkspace({
                               }));
                               const payload = lineItemFulfillmentPayload({
                                 explicitChoice: choice,
-                                pickupLocationId: item.pickup_location_id,
+                                pickupLocationId:
+                                  item.pickup_location_id ??
+                                  exchangePickupDefaultLocationId,
                                 orderFulfillment: journey.fulfillment_type,
                               });
                               updateLineItem(item.id, {
@@ -2715,7 +2736,11 @@ export default function JourneyWorkspace({
                               skipped React's removeChild. Hidden and
                               disabled unless effectively pickup. */}
                           <select
-                            value={item.pickup_location_id ?? journey.store_id}
+                            value={
+                              item.pickup_location_id ??
+                              exchangePickupDefaultLocationId ??
+                              journey.store_id
+                            }
                             disabled={
                               (explicitLineChoices[item.id] ??
                                 item.fulfillment_type_override ??
