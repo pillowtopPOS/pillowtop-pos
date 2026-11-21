@@ -37,6 +37,7 @@ import {
   remainingUnits,
   STOCK_TAG_LABEL,
   originalPickupOutcomeForMethod,
+  originalHandoverLocationDefault,
 } from "../lib/journeys/completion";
 import { STATE_TRANSITIONS, transitionAppliesToFulfillment, needsTrialCompleted } from "../lib/journeys/state";
 import { ALL_PERMISSIONS } from "../lib/sleepTrial/permissions";
@@ -1375,6 +1376,34 @@ check("164: trial_completed dedupe ignores events older than the reopen",
     originalPickupOutcomeForMethod("delivery", false) === "NOT_PICKED_UP" &&
     originalPickupOutcomeForMethod("pickup", true) === "HANDED_OVER" &&
     originalPickupOutcomeForMethod("pickup", false) === "NOT_HANDED_OVER");
+  check("165: handover location default walks its fallback order",
+    originalHandoverLocationDefault({
+      pickupLocationIds: [null, "line-loc"],
+      assignedWarehouseId: "assigned-wh",
+      warehouses: [{ id: "oldest-wh", created_at: "2020-01-01" }],
+      orderStoreId: "store-1",
+    }) === "line-loc" &&
+    originalHandoverLocationDefault({
+      pickupLocationIds: [null],
+      assignedWarehouseId: "assigned-wh",
+      warehouses: [{ id: "oldest-wh", created_at: "2020-01-01" }],
+      orderStoreId: "store-1",
+    }) === "assigned-wh" &&
+    originalHandoverLocationDefault({
+      pickupLocationIds: [null],
+      assignedWarehouseId: null,
+      warehouses: [
+        { id: "newer-wh", created_at: "2021-01-01" },
+        { id: "oldest-wh", created_at: "2020-01-01" },
+      ],
+      orderStoreId: "store-1",
+    }) === "oldest-wh" &&
+    originalHandoverLocationDefault({
+      pickupLocationIds: [null],
+      assignedWarehouseId: null,
+      warehouses: [],
+      orderStoreId: "store-1",
+    }) === "store-1");
   check("165: cancel warning shows whenever the server sets it",
     cancelWarningFor({ cancel_warning: "The old mattress was picked up on Jan 21. It has to go back to the customer." }) !== null &&
     cancelWarningFor({ cancel_warning: null }) === null &&

@@ -574,3 +574,24 @@ export function originalPickupOutcomeForMethod(
   }
   return broughtBack ? "HANDED_OVER" : "NOT_HANDED_OVER";
 }
+
+// 165: where a handover happens when the order is picked up - the line's
+// own pickup location first, then the order store's assigned warehouse,
+// then the oldest active warehouse, and only then the order's store.
+export function originalHandoverLocationDefault(opts: {
+  pickupLocationIds: (string | null | undefined)[];
+  assignedWarehouseId?: string | null;
+  warehouses: { id: string; is_active?: boolean; created_at?: string | null }[];
+  orderStoreId: string | null;
+}): string | null {
+  const fromLine = (opts.pickupLocationIds ?? []).find(
+    (id): id is string => id != null
+  );
+  if (fromLine) return fromLine;
+  if (opts.assignedWarehouseId) return opts.assignedWarehouseId;
+  const oldest = (opts.warehouses ?? [])
+    .filter((w) => w.is_active !== false)
+    .sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""))[0];
+  if (oldest) return oldest.id;
+  return opts.orderStoreId;
+}

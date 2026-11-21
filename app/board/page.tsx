@@ -127,6 +127,7 @@ import {
   STOCK_TAG_LABEL,
   type CompletionStepperLine,
   originalPickupOutcomeForMethod,
+  originalHandoverLocationDefault,
 } from "@/lib/journeys/completion";
 import { effectiveShipTo, formatShipToLine } from "@/lib/customers/shipTo";
 import type { JourneyLineItem } from "@/lib/journeys/queries";
@@ -618,8 +619,14 @@ function BoardContent() {
         if (a?.original_pickup_outcome === "PICKED_UP" ||
             a?.original_pickup_outcome === "HANDED_OVER") {
           setOldMattressAnswer("brought");
+          if (a.original_pickup_outcome === "HANDED_OVER") {
+            setOldMattressLocationId(
+              a.original_pickup_location_id ?? ""
+            );
+          }
         } else if (a?.original_pickup_outcome) {
           setOldMattressAnswer("kept");
+          setOldMattressReason(a.original_pickup_reason ?? "");
         }
       })
       .catch(() => {});
@@ -937,7 +944,21 @@ function BoardContent() {
           );
           const handoverLoc =
             outcome === "HANDED_OVER"
-              ? oldMattressLocationId || journey.store_id
+              ? oldMattressLocationId ||
+                originalHandoverLocationDefault({
+                  pickupLocationIds: completionDialogLines.map(
+                    (li) =>
+                      (li as { pickup_location_id?: string | null })
+                        .pickup_location_id ?? null
+                  ),
+                  assignedWarehouseId: stores.find(
+                    (st) => st.id === journey.store_id
+                  )?.assigned_warehouse_id,
+                  warehouses: stores.filter(
+                    (st) => st.location_type === "WAREHOUSE"
+                  ),
+                  orderStoreId: journey.store_id,
+                })
               : null;
           try {
             await recordOriginalHandover(
@@ -2040,7 +2061,21 @@ function BoardContent() {
                   <select
                     value={
                       oldMattressLocationId ||
-                      pendingTransition.journey.store_id
+                      (originalHandoverLocationDefault({
+                        pickupLocationIds: completionDialogLines.map(
+                          (li) =>
+                            (li as { pickup_location_id?: string | null })
+                              .pickup_location_id ?? null
+                        ),
+                        assignedWarehouseId: stores.find(
+                          (st) =>
+                            st.id === pendingTransition.journey.store_id
+                        )?.assigned_warehouse_id,
+                        warehouses: stores.filter(
+                          (st) => st.location_type === "WAREHOUSE"
+                        ),
+                        orderStoreId: pendingTransition.journey.store_id,
+                      }) ?? "")
                     }
                     onChange={(e) =>
                       setOldMattressLocationId(e.target.value)
