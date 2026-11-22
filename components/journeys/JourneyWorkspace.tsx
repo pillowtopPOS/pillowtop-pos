@@ -1061,6 +1061,9 @@ export default function JourneyWorkspace({
   const [pickupDateReason, setPickupDateReason] = useState("");
   const [pickupDateSaving, setPickupDateSaving] = useState(false);
   const [pickupDateError, setPickupDateError] = useState<string | null>(null);
+  // Lets the editor's Cancel button run Modal's guarded close (asks
+  // "Discard changes?" when the date or reason was edited).
+  const pickupDateCloseRef = useRef<(() => void) | null>(null);
   const [lineAvailability, setLineAvailability] = useState<Record<string, number>>({});
   const [lineAvailabilityFailed, setLineAvailabilityFailed] = useState<Record<string, boolean>>({});
   // Inline quantity-floor message for the edit-order row that was last
@@ -3443,6 +3446,7 @@ export default function JourneyWorkspace({
               pickupDateReason.trim() !== ""
             }
             saving={pickupDateSaving}
+            closeRequestRef={pickupDateCloseRef}
           >
             <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
               {(() => {
@@ -3501,7 +3505,12 @@ export default function JourneyWorkspace({
                           {pickupDateSaving ? "Saving…" : "Save"}
                         </button>
                         <button
-                          onClick={() => setPickupDateOpen(false)}
+                          onClick={() =>
+                            (
+                              pickupDateCloseRef.current ??
+                              (() => setPickupDateOpen(false))
+                            )()
+                          }
                           className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700"
                         >
                           Cancel
