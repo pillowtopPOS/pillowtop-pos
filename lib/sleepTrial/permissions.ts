@@ -26,6 +26,10 @@ export const SLEEP_TRIAL_PERMISSIONS = [
       "Approve or deny sleep trial exceptions (incl. fee waivers, extensions)",
   },
   {
+    key: "sleep_trial.approve_return_exceptions",
+    label: "Approve return exceptions",
+  },
+  {
     key: "sleep_trial.approve_own_exceptions",
     label: "Approve their own exceptions",
   },

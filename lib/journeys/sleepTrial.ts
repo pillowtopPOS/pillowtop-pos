@@ -390,6 +390,7 @@ export const EXCEPTION_TYPE_LABELS: Record<string, string> = {
   RETURN_NOT_ALLOWED: "Return exception",
   RETURN_APPROVAL: "Return approval",
   EXPIRED_RETURN: "Expired-trial return",
+  RETURN_EXCEPTION: "Return exception",
   PROTECTOR_OVERRIDE: "Protector override",
   EXTEND_TRIAL: "Trial extension",
   REPLACEMENT_TRIAL: "Replacement trial",
@@ -424,6 +425,13 @@ export const EXCEPTION_EDITABLE_TERMS: Record<string, string[]> = {
     "refund_method",
   ],
   EXPIRED_RETURN: ["fee_percent_bp", "fee_flat_cents", "fee_amount_cents"],
+  RETURN_EXCEPTION: [
+    "fee_percent_bp",
+    "fee_flat_cents",
+    "fee_amount_cents",
+    "refund_method",
+    "exchange_only",
+  ],
   EXTEND_TRIAL: ["extension_nights"],
 };
 
@@ -521,12 +529,16 @@ export type ExceptionApprover = {
  *  per context: request button excludes the caller, a pending request's
  *  "can be approved by" excludes its requester. */
 export async function fetchExceptionApprovers(
-  journeyId: string
+  journeyId: string,
+  exceptionType?: string | null
 ): Promise<ExceptionApprover[]> {
   const supabase = createClient();
   const { data, error } = await supabase.rpc("stv_exception_approvers", {
     p_journey_id: journeyId,
     p_exclude_employee_id: null,
+    // 168: the RPC is type-aware; null keeps the old approve_exceptions
+    // listing for callers that do not know the type.
+    p_exception_type: exceptionType ?? null,
   });
   if (error) {
     console.error("stv_exception_approvers error", error);
@@ -578,6 +590,7 @@ export async function fetchMySleepTrialPermissions(
     return new Set([
       "sleep_trial.request_exceptions",
       "sleep_trial.approve_exceptions",
+      "sleep_trial.approve_return_exceptions",
       "sleep_trial.approve_own_exceptions",
       "sleep_trial.override_protector",
       "sleep_trial.start_exchange",

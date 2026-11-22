@@ -171,6 +171,15 @@ const REQUEST_ACTIONS = new Set([
 const NO_APPROVER_MESSAGE =
   "No one in your company can approve this. Ask an admin to update Sleep Trial approvals.";
 
+// 168: one RETURN_EXCEPTION covers every return blocker. The evaluator
+// still emits the older return request actions by reason_code, so the bar
+// normalizes all of them to the single new request.
+const RETURN_REQUEST_ACTIONS = new Set([
+  "REQUEST_RETURN_EXCEPTION",
+  "REQUEST_EXPIRED_RETURN_EXCEPTION",
+  "REQUEST_RETURN_APPROVAL",
+]);
+
 // Which action result a REQUEST_* action reads its offered exception_type
 // from (spec 15.1: the evaluator names the type, the UI never picks one).
 // FEE reads whichever action carries a fee; TRIAL is the fixed EXTEND_TRIAL.
@@ -232,6 +241,9 @@ export default function SleepTrialSection({
     useState<SleepTrialEvaluation | null>(null);
   const [itemExceptions, setItemExceptions] = useState<TrialItemException[]>([]);
   const [approvers, setApprovers] = useState<ExceptionApprover[]>([]);
+  const [returnApprovers, setReturnApprovers] = useState<
+    ExceptionApprover[]
+  >([]);
   const [permKeys, setPermKeys] = useState<Set<string>>(new Set());
   const [decideException, setDecideException] =
     useState<TrialItemException | null>(null);
@@ -266,7 +278,7 @@ export default function SleepTrialSection({
   const load = async () => {
     const evalMap = await evaluateSleepTrialItems([journey.id]);
     setEvals(evalMap.get(journey.id) ?? []);
-    const [c, ex, corr, ct, iex, appr, pk, xinfo] = await Promise.all([
+    const [c, ex, corr, ct, iex, appr, pk, rappr, xinfo] = await Promise.all([
       fetchSleepConcerns(journey.id),
       fetchSleepTrialExceptions(journey.id),
       fetchTrialStartCorrections(journey.id),
@@ -274,6 +286,7 @@ export default function SleepTrialSection({
       fetchTrialItemExceptions(journey.id),
       fetchExceptionApprovers(journey.id),
       fetchMySleepTrialPermissions(currentEmployee?.role),
+      fetchExceptionApprovers(journey.id, "RETURN_EXCEPTION"),
       getJourneyExchangeActions(journey.id).catch(() => null),
     ]);
     setConcerns(c);
@@ -283,6 +296,7 @@ export default function SleepTrialSection({
     setItemExceptions(iex);
     setApprovers(appr);
     setPermKeys(pk);
+    setReturnApprovers(rappr);
     await reloadActions(xinfo);
     setIssues(await fetchSleepConcernIssues(c.map((x) => x.id)));
     // Entries load upfront (one fetch per concern) so the collapsed
@@ -399,9 +413,17 @@ export default function SleepTrialSection({
   const canSelfAuthorize =
     permKeys.has("sleep_trial.approve_exceptions") &&
     permKeys.has("sleep_trial.approve_own_exceptions");
+  // 168: RETURN_EXCEPTION self-approval and its approver set use the new
+  // approve_return_exceptions key (owner, admin; not manager).
+  const canSelfAuthorizeReturn =
+    permKeys.has("sleep_trial.approve_return_exceptions") &&
+    permKeys.has("sleep_trial.approve_own_exceptions");
   const noApproverForRequest =
     !canSelfAuthorize &&
     !approvers.some((a) => a.employee_id !== currentEmployee?.id);
+  const noApproverForReturnRequest =
+    !canSelfAuthorizeReturn &&
+    !returnApprovers.some((a) => a.employee_id !== currentEmployee?.id);
   // "Customer wants an exchange" is enabled when any live item's exchange
   // action evaluates ELIGIBLE (an approved exception already folds into
   // ELIGIBLE inside the evaluator).
@@ -525,6 +547,7 @@ export default function SleepTrialSection({
             evaluation={orderedEvals[0]}
             onAction={(a) => handleAction(orderedEvals[0], a)}
             noApproverRequests={noApproverForRequest}
+            noApproverReturnRequests={noApproverForReturnRequest}
             corrections={corrections.filter(
               (c) =>
                 c.trial_item_id === orderedEvals[0].trial_item_id ||
@@ -546,6 +569,7 @@ export default function SleepTrialSection({
                     evaluation={e}
                     onAction={(a) => handleAction(e, a)}
                     noApproverRequests={noApproverForRequest}
+                    noApproverReturnRequests={noApproverForReturnRequest}
                     // Corrections are item-scoped (086); legacy
                     // journey-level rows (trial_item_id null) show only on
                     // the first card — repeating them per mattress is noise.
@@ -641,12 +665,21 @@ export default function SleepTrialSection({
       {/* Exception requests — VIEW_EXCEPTION_REQUEST scrolls here */}
       <div ref={exceptionRef}>
       {pendingItemExceptions.map((ex) => {
-        const eligible = approvers.filter(
+        // 168: RETURN_EXCEPTION rows are decided only by holders of
+        // sleep_trial.approve_return_exceptions (the typed approver set);
+        // every other type uses the generic list.
+        const typeApprovers =
+          ex.exception_type === "RETURN_EXCEPTION"
+            ? returnApprovers
+            : approvers;
+        const eligible = typeApprovers.filter(
           (a) => a.employee_id !== ex.requester_employee_id
         );
-        const canDecide = eligible.some(
-          (a) => a.employee_id === currentEmployee?.id
-        );
+        const canDecide =
+          eligible.some((a) => a.employee_id === currentEmployee?.id) &&
+          (ex.exception_type === "RETURN_EXCEPTION"
+            ? permKeys.has("sleep_trial.approve_return_exceptions")
+            : permKeys.has("sleep_trial.approve_exceptions"));
         return (
           <div
             key={ex.id}
@@ -861,7 +894,11 @@ export default function SleepTrialSection({
           evaluation={requestDraft.evaluation}
           exceptionType={requestDraft.exceptionType}
           action={requestDraft.action}
-          canSelfAuth={canSelfAuthorize}
+          canSelfAuth={
+            requestDraft.exceptionType === "RETURN_EXCEPTION"
+              ? canSelfAuthorizeReturn
+              : canSelfAuthorize
+          }
           onClose={() => setRequestDraft(null)}
           onSaved={() => {
             setRequestDraft(null);
@@ -955,6 +992,7 @@ function TrialHeroCard({
   evaluation: e,
   onAction,
   noApproverRequests = false,
+  noApproverReturnRequests = false,
   corrections,
   canCorrectStart,
   onCorrectStart,
@@ -965,6 +1003,7 @@ function TrialHeroCard({
   evaluation: SleepTrialEvaluation;
   onAction: (action: string) => void;
   noApproverRequests?: boolean;
+  noApproverReturnRequests?: boolean;
   corrections: TrialStartCorrection[];
   canCorrectStart: boolean;
   onCorrectStart: () => void;
@@ -1291,6 +1330,7 @@ function TrialHeroCard({
         evaluation={e}
         onAction={onAction}
         noApprovers={noApproverRequests}
+        noApproversForReturn={noApproverReturnRequests}
         canStartReturn={canStartReturn}
       />
     </div>
@@ -1443,19 +1483,29 @@ function NextActionBar({
   evaluation: e,
   onAction,
   noApprovers = false,
+  noApproversForReturn = false,
   canStartReturn = false,
 }: {
   evaluation: SleepTrialEvaluation;
   onAction: (action: string) => void;
   noApprovers?: boolean;
+  noApproversForReturn?: boolean;
   canStartReturn?: boolean;
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
   // ADD_SLEEP_CONCERN has its own home in the Sleep Concerns header —
-  // never render it in the action bar.
-  const allowed = (e.allowed_ui_actions ?? []).filter(
-    (a) => a !== "ADD_SLEEP_CONCERN"
-  );
+  // never render it in the action bar. 168: when the return result offers
+  // RETURN_EXCEPTION, every older per-blocker return request action folds
+  // into the single REQUEST_RETURN_EXCEPTION button.
+  const returnOffersNewType =
+    e.actions?.RETURN?.exception_type === "RETURN_EXCEPTION";
+  const allowed = (e.allowed_ui_actions ?? [])
+    .filter((a) => a !== "ADD_SLEEP_CONCERN")
+    .map((a) =>
+      returnOffersNewType && RETURN_REQUEST_ACTIONS.has(a)
+        ? "REQUEST_RETURN_EXCEPTION"
+        : a
+    );
   const ordered = ACTION_PRIORITY.filter((a) => allowed.includes(a)).concat(
     allowed.filter((a) => !ACTION_PRIORITY.includes(a))
   );
@@ -1463,7 +1513,9 @@ function NextActionBar({
 
   // Spec 15.5: request actions are replaced (disabled + message) when
   // nobody can approve and the caller can't self-authorize.
-  const requestBlocked = (a: string) => noApprovers && REQUEST_ACTIONS.has(a);
+  const requestBlocked = (a: string) =>
+    (RETURN_REQUEST_ACTIONS.has(a) ? noApproversForReturn : noApprovers) &&
+    REQUEST_ACTIONS.has(a);
   const actionTitle = (a: string, comingSoon: boolean) =>
     comingSoon
       ? "Coming soon"
@@ -2816,13 +2868,15 @@ function ExceptionRequestModal({
           Request {exceptionPhrase(exceptionType)}
         </h2>
         <p className="mb-3 text-sm text-slate-600">
-          {res?.explanation ??
-            (exceptionType === "EXTEND_TRIAL"
-              ? `Extends the trial while it's active — currently night ${
-                  evaluation.display?.night ?? "—"
-                } of ${(evaluation.display?.length_nights ?? 0) +
-                  (evaluation.display?.extension_nights ?? 0)}.`
-              : "")}{" "}
+          {exceptionType === "RETURN_EXCEPTION"
+            ? "Owner or admin approval is needed for this return."
+            : res?.explanation ??
+              (exceptionType === "EXTEND_TRIAL"
+                ? `Extends the trial while it's active — currently night ${
+                    evaluation.display?.night ?? "—"
+                  } of ${(evaluation.display?.length_nights ?? 0) +
+                    (evaluation.display?.extension_nights ?? 0)}.`
+                : "")}{" "}
           {canSelfAuth
             ? "You can self-authorize — this is approved immediately and audited."
             : "An approver must approve this. Approval grants authority to proceed but does not start anything."}
