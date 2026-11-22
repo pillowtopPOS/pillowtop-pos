@@ -28,6 +28,8 @@ export type ExchangeQuote = {
   } | null;
   locked_fee_cents: number;
   original_credit_cents: number | null;
+  list_credit_cents?: number | null;
+  credit_capped?: boolean;
   replacement_product_id: string | null;
   replacement_price_cents: number | null;
   net_cents: number;

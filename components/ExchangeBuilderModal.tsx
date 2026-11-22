@@ -570,6 +570,13 @@ export default function ExchangeBuilderModal({
                     {formatMoney(creditCents)}
                   </span>
                 </div>
+                {quote?.credit_capped === true && (
+                  <p className="text-xs text-amber-700">
+                    Credit limited to what the customer paid for this
+                    mattress ({formatMoney(creditCents)}). The line price was{" "}
+                    {formatMoney(quote.list_credit_cents ?? 0)}.
+                  </p>
+                )}
                 <div className="flex justify-between">
                   <span className="text-slate-500">Exchange fee</span>
                   <span className="font-medium text-slate-900">

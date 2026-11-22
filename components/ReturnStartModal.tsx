@@ -126,6 +126,13 @@ export default function ReturnStartModal({
                   {money(quote.original_credit_cents)}
                 </dd>
               </div>
+              {quote.credit_capped === true && (
+                <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  Credit limited to what the customer paid for this mattress
+                  ({money(quote.original_credit_cents)}). The line price was{" "}
+                  {money(quote.list_credit_cents ?? 0)}.
+                </p>
+              )}
               <div className="flex justify-between">
                 <dt className="text-slate-600">Restocking fee</dt>
                 <dd className="font-medium text-slate-900">
