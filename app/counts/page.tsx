@@ -265,7 +265,7 @@ export default function CountsPage() {
             Inventory Counts
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Blind physical counts — full or cycle — reconciled against the system.
+            Blind physical counts - full or cycle - reconciled against the system.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -328,10 +328,10 @@ export default function CountsPage() {
                 className="cursor-pointer hover:bg-slate-50"
               >
                 <td className="px-4 py-3 text-sm font-medium text-brand-700">
-                  {c.reference_code ?? "—"}
+                  {c.reference_code ?? "-"}
                 </td>
                 <td className="px-4 py-3 text-sm font-medium text-slate-900">
-                  {c.store?.name ?? "—"}
+                  {c.store?.name ?? "-"}
                 </td>
                 <td className="px-4 py-3 text-sm text-slate-600 capitalize">
                   {c.count_type}
@@ -344,13 +344,13 @@ export default function CountsPage() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-sm text-slate-600">
-                  {c.requester?.name ?? "—"}
+                  {c.requester?.name ?? "-"}
                 </td>
                 <td className="px-4 py-3 text-sm text-slate-600">
                   {new Date(c.created_at).toLocaleDateString()}
                 </td>
                 <td className="px-4 py-3 text-sm text-slate-600">
-                  {c.approver?.name ?? "—"}
+                  {c.approver?.name ?? "-"}
                 </td>
               </tr>
             ))}
@@ -402,13 +402,13 @@ export default function CountsPage() {
                 </select>
                 {storeOptions.length === 0 && (
                   <p className="mt-1 text-xs text-amber-700">
-                    Check in at a store first — count requests are made for the
+                    Check in at a store first - count requests are made for the
                     store you&apos;re working at today.
                   </p>
                 )}
                 {storeHasActiveCount && (
                   <p className="mt-1 text-xs text-amber-700">
-                    This store already has an active count — finish or cancel it
+                    This store already has an active count - finish or cancel it
                     before starting another.
                   </p>
                 )}
@@ -425,7 +425,7 @@ export default function CountsPage() {
                       checked={formType === "full"}
                       onChange={() => setFormType("full")}
                     />
-                    Full — everything with a footprint at this store
+                    Full - everything with a footprint at this store
                   </label>
                   <label className="flex items-center gap-2 text-sm text-slate-700">
                     <input
@@ -433,7 +433,7 @@ export default function CountsPage() {
                       checked={formType === "cycle"}
                       onChange={() => setFormType("cycle")}
                     />
-                    Cycle — selected products
+                    Cycle - selected products
                   </label>
                 </div>
               </div>
@@ -587,7 +587,7 @@ export default function CountsPage() {
 
               {!isAdmin && employee?.role !== "manager" && (
                 <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                  This will create a count request — an owner or admin must
+                  This will create a count request - an owner or admin must
                   approve it before counting can begin.
                 </p>
               )}

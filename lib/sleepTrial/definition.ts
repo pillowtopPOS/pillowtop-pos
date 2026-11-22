@@ -445,7 +445,7 @@ export const POLICY_TEMPLATES: PolicyTemplate[] = [
   {
     key: "scratch",
     name: "Start from scratch",
-    blurb: "All Section 5.3 defaults — adjust everything yourself.",
+    blurb: "All Section 5.3 defaults - adjust everything yourself.",
     build: () => cloneDefinition(DEFAULT_DEFINITION),
   },
 ];

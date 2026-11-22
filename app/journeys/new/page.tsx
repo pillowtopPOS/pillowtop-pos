@@ -54,9 +54,9 @@ const PAYMENT_METHODS = [
   "Check",
   "Financing",
   "Other",
-  "Simulated card — success",
-  "Simulated card — timeout",
-  "Simulated card — failure",
+  "Simulated card - success",
+  "Simulated card - timeout",
+  "Simulated card - failure",
 ];
 
 function paymentOutcomeForMethod(method: string): PaymentOutcome {
@@ -892,7 +892,7 @@ export default function NewJourneyPage() {
           {created.outcome === "UNKNOWN" && (
             <div className="mt-4 space-y-4">
               <p className="rounded-md bg-amber-50 p-3 text-sm text-amber-700">
-                Confirming payment — please wait. This payment is unresolved, so
+                Confirming payment - please wait. This payment is unresolved, so
                 no new payment can be submitted for this order until it is
                 reconciled.
               </p>
@@ -1842,7 +1842,7 @@ export default function NewJourneyPage() {
 
             {paid > 0 && paid < total && (
               <div className="rounded-md bg-amber-50 p-3 text-sm text-amber-700">
-                Balance due: <strong>${balance.toFixed(2)}</strong>. This is a deposit — the journey will land in Quoted. Set a follow-up date:
+                Balance due: <strong>${balance.toFixed(2)}</strong>. This is a deposit - the journey will land in Quoted. Set a follow-up date:
                 <input
                   type="datetime-local"
                   value={purchase.followUpDueAt}

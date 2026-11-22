@@ -42,7 +42,7 @@ function dayLabel(iso: string): string {
 }
 
 function money(n: number | null | undefined): string {
-  if (n === null || n === undefined) return "—";
+  if (n === null || n === undefined) return "-";
   return `$${n.toFixed(2)}`;
 }
 
@@ -246,7 +246,7 @@ export default function JourneyPeek({
                       {it.item_name} × {it.quantity}
                       <span className="text-slate-500">
                         {" "}
-                        — {money(it.unit_price)} each
+                        - {money(it.unit_price)} each
                       </span>
                     </li>
                   ))}

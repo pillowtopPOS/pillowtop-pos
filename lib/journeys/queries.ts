@@ -510,7 +510,7 @@ export async function updateStore(id: string, updates: Partial<Store>) {
     .maybeSingle();
 
   if (error) throw new Error(error.message);
-  if (!data) throw new Error("Store update failed — row not found or not authorized.");
+  if (!data) throw new Error("Store update failed - row not found or not authorized.");
 }
 
 export async function countActiveJourneysForStore(storeId: string): Promise<number> {
@@ -617,7 +617,7 @@ export async function updateEmployee(
 
   if (error) throw new Error(error.message);
   if (!data) {
-    throw new Error("Employee update failed — row not found or not authorized.");
+    throw new Error("Employee update failed - row not found or not authorized.");
   }
 }
 
@@ -718,7 +718,7 @@ export async function fetchCurrentEmployee(): Promise<Employee | null> {
 
 /** Live (not CLOSED/VOIDED) sleep-trial item statuses for journeys that
  *  have at least one item parked in an exchange/return. Two queries so no
- *  .in() list ever grows with board size — the first selects only the
+ *  .in() list ever grows with board size - the first selects only the
  *  affected journey ids (inherently a small set), the second fetches
  *  their live items. On any error: logs and returns an empty map, so
  *  callers keep showing every journey instead of hiding wrongly. */

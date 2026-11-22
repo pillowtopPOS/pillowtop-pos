@@ -92,7 +92,7 @@ export default function CountSheetPage() {
         </h1>
         <div className="mt-2 flex justify-between text-sm">
           <span>
-            Store: <strong>{count.store?.name ?? "—"}</strong>
+            Store: <strong>{count.store?.name ?? "-"}</strong>
           </span>
           <span>
             Type: <strong>{count.count_type === "full" ? "Full" : "Cycle"}</strong>
@@ -128,7 +128,7 @@ export default function CountSheetPage() {
                   )}
                 </td>
                 <td className="border-b border-slate-200 py-2.5 pr-2 text-slate-600">
-                  {p?.sku ?? "—"}
+                  {p?.sku ?? "-"}
                 </td>
                 <td className="border-b border-slate-200 py-2.5">
                   <span className="inline-block h-6 w-24 border-b border-slate-400" />

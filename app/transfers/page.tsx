@@ -2027,7 +2027,7 @@ export default function TransfersPage() {
           <p className="mb-4 text-sm text-slate-600">
             These warehouses currently hold more ATS than their target quantity.
             Consider creating a Purchase Order to move excess to another
-            warehouse or to a vendor — nothing is auto-created here.
+            warehouse or to a vendor - nothing is auto-created here.
           </p>
           {overstock.length === 0 ? (
             <p className="text-slate-500">No overstock suggestions right now.</p>
@@ -2082,7 +2082,7 @@ export default function TransfersPage() {
                     className="rounded-md border border-amber-200 bg-amber-50/60 p-4"
                   >
                     <h3 className="mb-2 text-sm font-semibold text-amber-900">
-                      {group[0]?.store_name ?? storeId} — {group.length} product
+                      {group[0]?.store_name ?? storeId} - {group.length} product
                       {group.length === 1 ? "" : "s"}
                     </h3>
                     <div className="rounded-md border border-amber-200 bg-white">
@@ -2771,10 +2771,10 @@ export default function TransfersPage() {
                       <div className="mt-0.5 text-xs text-amber-700">
                         Store reported {line.reported_quantity_received} received
                         {line.reported_reason
-                          ? ` — ${RECEIPT_REASON_LABELS[line.reported_reason] ?? line.reported_reason}`
+                          ? ` - ${RECEIPT_REASON_LABELS[line.reported_reason] ?? line.reported_reason}`
                           : ""}
                         {line.reported_note ? ` (${line.reported_note})` : ""}
-                        {line.reporter?.name ? ` — ${line.reporter.name}` : ""}
+                        {line.reporter?.name ? ` - ${line.reporter.name}` : ""}
                       </div>
                     )}
                   </div>
@@ -2832,7 +2832,7 @@ export default function TransfersPage() {
               {confirming.origin?.name} → {confirming.destination?.name}
             </p>
             <p className="mb-4 text-xs text-slate-500">
-              Report what actually arrived. This does not move inventory — the
+              Report what actually arrived. This does not move inventory - the
               warehouse finalizes the transfer against the truck.
             </p>
             {pageError && (

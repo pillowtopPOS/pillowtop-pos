@@ -611,7 +611,7 @@ export default function SleepTrialSection({
         </>
       ) : (
         <p className="text-sm font-medium text-teal-800">
-          Can&apos;t determine eligibility — no trial items on this order
+          Can&apos;t determine eligibility - no trial items on this order
         </p>
       )}
 
@@ -701,7 +701,7 @@ export default function SleepTrialSection({
             className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs"
           >
             <p className="font-medium text-amber-800">
-              {exceptionPhrase(ex.exception_type)} — waiting for
+              {exceptionPhrase(ex.exception_type)} - waiting for
               approval
             </p>
             <p className="text-amber-700">
@@ -739,7 +739,7 @@ export default function SleepTrialSection({
             Requested by {pendingException.requester?.name ?? "Unknown"} on{" "}
             {new Date(pendingException.requested_at).toLocaleDateString()} · night{" "}
             {pendingException.current_trial_night ?? "?"} · normal eligibility{" "}
-            {pendingException.normal_eligibility_date ?? "—"}
+            {pendingException.normal_eligibility_date ?? "-"}
           </p>
           <p className="mt-0.5 text-amber-700">{pendingException.reason}</p>
           {isManager &&
@@ -755,7 +755,7 @@ export default function SleepTrialSection({
                       );
                       if (result === "expired") {
                         setPageError(
-                          "This request had already expired — the trial reached normal eligibility."
+                          "This request had already expired - the trial reached normal eligibility."
                         );
                       }
                       refresh();
@@ -777,7 +777,7 @@ export default function SleepTrialSection({
                       );
                       if (result === "expired") {
                         setPageError(
-                          "This request had already expired — the trial reached normal eligibility."
+                          "This request had already expired - the trial reached normal eligibility."
                         );
                       }
                       refresh();
@@ -800,7 +800,7 @@ export default function SleepTrialSection({
           {approvedException.decided_at
             ? ` on ${new Date(approvedException.decided_at).toLocaleDateString()}`
             : ""}
-          . Approval grants authority only — it does not start an exchange.
+          . Approval grants authority only - it does not start an exchange.
         </p>
       )}
       {decidedExceptions.length + decidedItemExceptions.length > 0 && (
@@ -1336,7 +1336,7 @@ function TrialHeroCard({
                           {c.previous_started_at ?? "unset"} →{" "}
                           {c.new_started_at} by{" "}
                           {c.corrected_by?.name ?? "Unknown"} on{" "}
-                          {new Date(c.created_at).toLocaleDateString()} —{" "}
+                          {new Date(c.created_at).toLocaleDateString()} -{" "}
                           {c.reason}
                         </p>
                       );
@@ -1653,7 +1653,7 @@ function NextActionBar({
                         {ACTION_LABELS[a] ?? a}
                         {comingSoon && (
                           <span className="ml-1 text-slate-400">
-                            — coming soon
+                            - coming soon
                           </span>
                         )}
                         {blocked && (
@@ -1698,7 +1698,7 @@ function humanizeTermKey(key: string): string {
     section.charAt(0).toUpperCase() + section.slice(1).replace(/_/g, " ");
   const field = rest.join(" ").replace(/_/g, " ");
   return field
-    ? `${sectionLabel} — ${field.charAt(0).toUpperCase()}${field.slice(1)}`
+    ? `${sectionLabel} - ${field.charAt(0).toUpperCase()}${field.slice(1)}`
     : sectionLabel;
 }
 
@@ -1722,7 +1722,7 @@ function termValue(terms: Record<string, unknown>, key: string): unknown {
 }
 
 function formatTermValue(key: string, value: unknown): string {
-  if (value == null) return "—";
+  if (value == null) return "-";
   if (typeof value === "boolean") return value ? "On" : "Off";
   if (typeof value === "number") {
     if (key.endsWith("_nights")) return `${value} nights`;
@@ -1761,7 +1761,7 @@ function PolicyWhyPanel({ evaluation: e }: { evaluation: SleepTrialEvaluation })
     <div>
       <p className="text-xs text-slate-500">
         Policy details
-        {e.policy?.version_label ? ` — ${e.policy.version_label}` : ""}
+        {e.policy?.version_label ? ` - ${e.policy.version_label}` : ""}
         {keys.length > 0 && (
           <>
             {" · "}
@@ -1842,13 +1842,13 @@ function ProtectorOverrideModal({
         <p className="mb-3 text-sm text-slate-600">
           No qualifying mattress protector is on this order. Overriding treats
           the protector requirement as satisfied for{" "}
-          {e.item?.product_name ?? "this mattress"} going forward — permanent,
+          {e.item?.product_name ?? "this mattress"} going forward - permanent,
           and recorded with your name and reason.
         </p>
         <textarea
           value={reason}
           onChange={(ev) => setReason(ev.target.value)}
-          placeholder="Reason for the override (required) — e.g. protector purchased on a different order"
+          placeholder="Reason for the override (required) - e.g. protector purchased on a different order"
           rows={3}
           className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
         />
@@ -2008,7 +2008,7 @@ function ConcernCard({
             {CONCERN_STATUS_LABELS[concern.status]} Sleep Concern
           </p>
           <p className="mt-0.5 text-sm font-medium text-slate-800">
-            {issues.map((i) => i.issue_name).join(" · ") || "—"}
+            {issues.map((i) => i.issue_name).join(" · ") || "-"}
           </p>
           <p className="text-xs text-slate-500">
             Opened {activityShortDate(concern.opened_at)}
@@ -2048,7 +2048,7 @@ function ConcernCard({
           )}
           {concern.status === "exchange_requested" && (
             <p className="mt-0.5 text-xs font-medium text-purple-700">
-              Customer wants an exchange. No exchange workflow exists yet —
+              Customer wants an exchange. No exchange workflow exists yet -
               process it through your normal exchange procedure.
             </p>
           )}
@@ -2297,7 +2297,7 @@ function ConcernFormModal({
 
         {existingOpen && !allowDuplicate && (
           <p className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800">
-            A concern is already open for this journey — consider adding an
+            A concern is already open for this journey - consider adding an
             update to it instead of starting a new episode.
           </p>
         )}
@@ -2419,7 +2419,7 @@ function ConcernFormModal({
               {contacts.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
-                  {c.role_label ? ` — ${c.role_label}` : ""}
+                  {c.role_label ? ` - ${c.role_label}` : ""}
                 </option>
               ))}
             </select>
@@ -2623,7 +2623,7 @@ function ConcernEntryModal({
               {contacts.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
-                  {c.role_label ? ` — ${c.role_label}` : ""}
+                  {c.role_label ? ` - ${c.role_label}` : ""}
                 </option>
               ))}
             </select>
@@ -2747,7 +2747,7 @@ function TrialStartCorrectionModal({
           Correct trial start date
         </h2>
         <p className="mb-3 text-sm text-slate-600">
-          {title} — current start: {currentStart || "—"}. The date you enter
+          {title} - current start: {currentStart || "-"}. The date you enter
           is this mattress&rsquo;s New Night 1 (first night of the trial).
           The correction applies to this mattress only; it is preserved in
           history and recalculates its trial dates.
@@ -2895,13 +2895,13 @@ function ExceptionRequestModal({
             ? "Owner or admin approval is needed for this return."
             : res?.explanation ??
               (exceptionType === "EXTEND_TRIAL"
-                ? `Extends the trial while it's active — currently night ${
-                    evaluation.display?.night ?? "—"
+                ? `Extends the trial while it's active - currently night ${
+                    evaluation.display?.night ?? "-"
                   } of ${(evaluation.display?.length_nights ?? 0) +
                     (evaluation.display?.extension_nights ?? 0)}.`
                 : "")}{" "}
           {canSelfAuth
-            ? "You can self-authorize — this is approved immediately and audited."
+            ? "You can self-authorize - this is approved immediately and audited."
             : "An approver must approve this. Approval grants authority to proceed but does not start anything."}
         </p>
 
@@ -3090,7 +3090,7 @@ function ExceptionDecisionModal({
         note: note.trim() || null,
       });
       if (r.status === "CONSUMED") {
-        setResult("Approved and applied — the trial was extended.");
+        setResult("Approved and applied - the trial was extended.");
       } else if (r.status === "APPROVED") {
         setResult(
           `Approved by ${r.approver_name ?? "you"}${
@@ -3114,7 +3114,7 @@ function ExceptionDecisionModal({
   const requestedSummary =
     exception.exception_type === "EXTEND_TRIAL"
       ? `${(exception.requested_terms as any)?.extension_nights ?? "?"} nights`
-      : exception.reason?.label ?? null;
+      : null;
 
   return (
     <Modal onClose={onClose} dirty saving={saving}>
@@ -3267,7 +3267,7 @@ function ExceptionDecisionModal({
                   }
                   className="mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
                 >
-                  <option value="">— unchanged —</option>
+                  <option value="">- unchanged -</option>
                   <option value="ORIGINAL_TENDER">Original tender</option>
                   <option value="STORE_CREDIT">Store credit</option>
                   <option value="OTHER">Other</option>

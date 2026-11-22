@@ -1601,8 +1601,8 @@ function BoardContent() {
                       ? `${j.customer.first_name} ${j.customer.last_name}`
                       : "Unknown"}
                   </td>
-                  <td className="px-4 py-2">{j.customer?.phone ? formatPhone(j.customer.phone) : "—"}</td>
-                  <td className="px-4 py-2">{j.product_summary ?? "—"}</td>
+                  <td className="px-4 py-2">{j.customer?.phone ? formatPhone(j.customer.phone) : "-"}</td>
+                  <td className="px-4 py-2">{j.product_summary ?? "-"}</td>
                   <td className="px-4 py-2">
                     {j.cancelled_at ? "Cancelled" : j.current_state}
                     {j.sale_kind === "EXCHANGE" && (
@@ -1611,8 +1611,8 @@ function BoardContent() {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-2">{j.store?.name ?? "—"}</td>
-                  <td className="px-4 py-2">{j.employee?.name ?? "—"}</td>
+                  <td className="px-4 py-2">{j.store?.name ?? "-"}</td>
+                  <td className="px-4 py-2">{j.employee?.name ?? "-"}</td>
                   <td className="px-4 py-2">{j.cancelled_at ? "Yes" : "No"}</td>
                 </tr>
               ))}
@@ -2287,7 +2287,7 @@ function BoardContent() {
             </h2>
             <p className="mb-4 text-sm text-slate-600">
               {pendingReconcile.outcome === "UNKNOWN"
-                ? "Confirming payment — please wait. This payment is unresolved and no new payment can be submitted for this order until it is reconciled."
+                ? "Confirming payment - please wait. This payment is unresolved and no new payment can be submitted for this order until it is reconciled."
                 : "The payment was recorded as failed. No money was collected."}
             </p>
             {modalError && (
@@ -2668,7 +2668,7 @@ function JourneyCard({
         </p>
       )}
       <p className="truncate text-[10px] leading-tight text-slate-500">
-        {journey.customer?.phone ? formatPhone(journey.customer.phone) : "—"}
+        {journey.customer?.phone ? formatPhone(journey.customer.phone) : "-"}
       </p>
       {journey.product_summary && (
         <p className="truncate text-[10px] leading-tight text-slate-600">

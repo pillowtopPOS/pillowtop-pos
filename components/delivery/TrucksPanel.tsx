@@ -43,7 +43,7 @@ function WeekdayToggles({
             type="button"
             disabled={disabled}
             onClick={() => onToggle(num)}
-            title={`${WEEKDAY_NAMES[num - 1]}${on ? " — runs" : " — off"}`}
+            title={`${WEEKDAY_NAMES[num - 1]}${on ? " - runs" : " - off"}`}
             className={`flex h-7 w-7 items-center justify-center rounded border text-xs font-medium ${
               on
                 ? "border-brand-600 bg-brand-600 text-white"

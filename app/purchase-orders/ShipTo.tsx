@@ -41,7 +41,7 @@ export default function ShipTo({
           ? po.journey?.customer
             ? `${po.journey.customer.first_name} ${po.journey.customer.last_name}`
             : "Customer"
-          : (destination?.name ?? "—")}
+          : (destination?.name ?? "-")}
       </p>
       {visible.length > 0 ? (
         visible.map((l, i) => (

@@ -52,7 +52,7 @@ export function createClient() {
 /**
  * Ends the Supabase session and clears per-user state. The active-store
  * claim lives in user_metadata and survives sign-out, so it is cleared
- * first while the session is still valid — a same-day re-login would
+ * first while the session is still valid - a same-day re-login would
  * otherwise silently restore it. In-memory state (cached employee, etc.)
  * is dropped by the full navigation callers perform after this resolves.
  */

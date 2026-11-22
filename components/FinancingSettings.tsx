@@ -320,7 +320,7 @@ function TierBuilder({ companyId }: { companyId: string }) {
                   />
                 )}
                 <p className="mt-1 text-xs text-slate-400">
-                  Starts at ${Number.isFinite(startingPrice) ? startingPrice.toLocaleString() : "—"}
+                  Starts at ${Number.isFinite(startingPrice) ? startingPrice.toLocaleString() : "-"}
                   {!isHighestTier && "; next tier starts at this amount"}
                 </p>
               </div>

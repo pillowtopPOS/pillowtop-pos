@@ -211,7 +211,7 @@ export function sortEvaluationsByUrgency(
 
 /**
  * Which action result produced the headline. The evaluator picks EXCHANGE
- * unless the policy doesn't offer exchanges — detectable via an
+ * unless the policy doesn't offer exchanges - detectable via an
  * EXCHANGES_NOT_OFFERED blocker anywhere in the EXCHANGE result (not just
  * the headline: a missing protector now outranks it).
  */
@@ -243,7 +243,7 @@ export function formatMoney(cents: number | null | undefined): string {
 
 /**
  * One-line status label for a headline/action result. The "not yet eligible"
- * label deliberately names the eligible date (spec 11.2 — the old "at
+ * label deliberately names the eligible date (spec 11.2 - the old "at
  * Night 30" wording implied Night 30 itself was eligible, which is wrong).
  */
 export function trialStatusLabel(e: SleepTrialEvaluation): string {
@@ -265,7 +265,7 @@ export function trialStatusLabel(e: SleepTrialEvaluation): string {
     case "APPROVAL_REQUIRED":
       return "Needs approval";
     case "BLOCKED":
-      return `Blocked — ${sleepTrialReasonLabel(code)}`;
+      return `Blocked - ${sleepTrialReasonLabel(code)}`;
     case "EXPIRED":
       return `Trial ended ${formatTrialDate(d?.end_date)}`;
     case "NOT_ELIGIBLE":
@@ -488,7 +488,7 @@ export async function fetchExceptionReasons(): Promise<ExceptionReason[]> {
 
 /**
  * File an exception request (074). The caller passes the exception_type
- * the EVALUATOR offered for the current blocker — employees never pick a
+ * the EVALUATOR offered for the current blocker - employees never pick a
  * type (spec 15.1). `action` is only sent for FEE_WAIVER (the type has no
  * fixed action); every other type derives its own.
  */
@@ -660,7 +660,7 @@ export async function fetchTrialStartCorrections(
 }
 
 /** Correct one mattress's trial start (086). newStartedAt is the new
- *  Night 1 for that item — not the journey's delivery date. */
+ *  Night 1 for that item - not the journey's delivery date. */
 export async function correctTrialStart(
   journeyId: string,
   trialItemId: string,

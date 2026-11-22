@@ -66,7 +66,7 @@ export default function OpportunitiesPage() {
                     {o.status}
                   </span>
                 </p>
-                <p className="text-xs text-slate-500">{o.source ?? "—"}</p>
+                <p className="text-xs text-slate-500">{o.source ?? "-"}</p>
               </div>
               <div className="mt-1 text-xs text-slate-500">
                 {formatPhone(o.phone)} · {o.email}

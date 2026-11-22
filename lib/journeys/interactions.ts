@@ -155,10 +155,10 @@ export const CUSTOMER_REQUEST_CATEGORIES = [
 // employee picks "Called Customer".
 export const CALL_ATTEMPT_OUTCOMES = [
   { label: "Spoke with customer", outcome: "resolved" as InteractionOutcome, summaryPrefix: "" },
-  { label: "No answer", outcome: "no_response" as InteractionOutcome, summaryPrefix: "Called customer — no answer." },
-  { label: "Left voicemail", outcome: "no_response" as InteractionOutcome, summaryPrefix: "Called customer — left voicemail." },
-  { label: "No voicemail", outcome: "no_response" as InteractionOutcome, summaryPrefix: "Called customer — no answer, no voicemail left." },
-  { label: "Wrong number", outcome: "no_response" as InteractionOutcome, summaryPrefix: "Called customer — wrong number." },
+  { label: "No answer", outcome: "no_response" as InteractionOutcome, summaryPrefix: "Called customer - no answer." },
+  { label: "Left voicemail", outcome: "no_response" as InteractionOutcome, summaryPrefix: "Called customer - left voicemail." },
+  { label: "No voicemail", outcome: "no_response" as InteractionOutcome, summaryPrefix: "Called customer - no answer, no voicemail left." },
+  { label: "Wrong number", outcome: "no_response" as InteractionOutcome, summaryPrefix: "Called customer - wrong number." },
 ];
 
 // State-aware quick topic options (source doc §11). These are

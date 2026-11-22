@@ -483,8 +483,8 @@ function DeliveryDayInner() {
     if (moved > 0) setDirty(true);
     setSuggestMsg(
       moved > 0
-        ? "Rough grouping by zip — review it before saving."
-        : "No unrouted stops fit on the trucks — nothing changed."
+        ? "Rough grouping by zip - review it before saving."
+        : "No unrouted stops fit on the trucks - nothing changed."
     );
   };
 
@@ -1093,7 +1093,7 @@ function DeliveryDayInner() {
               data-testid="delivery-day-readonly"
               className="mb-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600"
             >
-              This is a past day — it is read only.
+              This is a past day - it is read only.
             </p>
           )}
           {isClosed && (

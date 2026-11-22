@@ -401,7 +401,7 @@ export default function MyWorkPage() {
                     </p>
                     <p className="text-xs text-slate-500">
                       {a.reason_label ?? "No reason"}
-                      {a.reason_note ? ` — ${a.reason_note}` : ""}
+                      {a.reason_note ? ` - ${a.reason_note}` : ""}
                     </p>
                   </div>
                   <Link
@@ -428,7 +428,7 @@ export default function MyWorkPage() {
                       {o.status}
                     </span>
                   </p>
-                  <p className="text-xs text-slate-500">{o.product_summary ?? "—"}</p>
+                  <p className="text-xs text-slate-500">{o.product_summary ?? "-"}</p>
                 </div>
                 <div className="text-right text-xs text-slate-500">
                   {formatPhone(o.phone)}

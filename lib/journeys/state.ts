@@ -52,9 +52,9 @@ export const PAYMENT_METHOD_OPTIONS = [
   "Check",
   "Financing",
   "Other",
-  "Simulated card — success",
-  "Simulated card — timeout",
-  "Simulated card — failure",
+  "Simulated card - success",
+  "Simulated card - timeout",
+  "Simulated card - failure",
 ];
 
 export const STATE_TRANSITIONS: Record<SleepJourneyState, StateTransition[]> = {

@@ -139,7 +139,7 @@ export default function SleepTrialPermissionsGrid({
                         type="button"
                         role="checkbox"
                         aria-checked={granted}
-                        aria-label={`${p.label} — ${r.label}`}
+                        aria-label={`${p.label} - ${r.label}`}
                         disabled={disabled}
                         onClick={() => toggle(r.value, p.key, !granted)}
                         title={
@@ -177,7 +177,7 @@ export default function SleepTrialPermissionsGrid({
       <p className="mt-4 text-xs text-slate-400">
         &ldquo;Approve their own exceptions&rdquo; only takes effect when
         &ldquo;Approve or deny sleep trial exceptions&rdquo; is also checked.
-        Employee is a legacy role — it is no longer assignable but is kept for
+        Employee is a legacy role - it is no longer assignable but is kept for
         existing employees.
       </p>
     </div>

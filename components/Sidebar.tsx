@@ -277,7 +277,7 @@ export default function Sidebar({
                 Active store
               </p>
               <p className="text-sm font-medium text-slate-800">
-                {activeStore?.name ?? (loading ? "Loading…" : "—")}
+                {activeStore?.name ?? (loading ? "Loading…" : "-")}
               </p>
               {employee && (
                 <p className="text-xs text-slate-500">

@@ -102,6 +102,7 @@ import {
   type CompletionButtonDecision,
 } from "@/lib/journeys/completion";
 import {
+  fetchTrialItemExceptions,
   mostUrgentEvaluation,
   type SleepTrialEvaluation,
 } from "@/lib/journeys/sleepTrial";
@@ -319,7 +320,7 @@ function JourneyWorkspaceHeader({
           )}
         </div>
         <p className="mt-0.5 truncate text-xs text-slate-500">
-          {journey.store?.name ?? "—"}
+          {journey.store?.name ?? "-"}
           {journey.employee ? ` · Owner: ${journey.employee.name}` : ""}
         </p>
         {exchangeParent && (
@@ -349,7 +350,7 @@ function JourneyWorkspaceHeader({
                 : "Original mattress not yet received"}
               {exchangeAction.refund_recorded_at != null
                 ? ` · Refund recorded: ${
-                    exchangeAction.refund_method ?? "—"
+                    exchangeAction.refund_method ?? "-"
                   }, ${shortDate(exchangeAction.refund_recorded_at)}`
                 : (exchangeAction.refund_owed_cents ?? 0) > 0
                 ? ` · Refund owed to customer: $${(
@@ -388,7 +389,7 @@ function SummaryCell({ label, children }: { label: string; children?: React.Reac
       {children ? (
         <div className="mt-0.5 text-sm font-medium text-slate-800">{children}</div>
       ) : (
-        <div className="mt-0.5 text-sm text-slate-400">—</div>
+        <div className="mt-0.5 text-sm text-slate-400">-</div>
       )}
     </div>
   );
@@ -473,7 +474,7 @@ function JourneyStateSummaryBar({
       </SummaryCell>
       <SummaryCell label="Next Action">
         {/* Keyed branches: span↔button swaps at one JSX position made React
-            remove a bare node mid-commit — keys force whole-subtree swaps. */}
+            remove a bare node mid-commit - keys force whole-subtree swaps. */}
         {journey.cancelled_at ? (
           <span key="na-none" className="font-normal text-slate-400">No action needed</span>
         ) : exchangeAwaitingPayment ? (
@@ -683,6 +684,26 @@ export default function JourneyWorkspace({
       alive = false;
     };
   }, [journey.id, journey.current_state, trialReadSeq, eventSignal]);
+
+  // Pending exception types by id, for the attention strip label - a
+  // RETURN_EXCEPTION is owner/admin-only, everything else manager.
+  // Same refresh discipline as liveTrialStatuses.
+  const [pendingExcTypes, setPendingExcTypes] = useState<
+    Record<string, string>
+  >({});
+  useEffect(() => {
+    let alive = true;
+    fetchTrialItemExceptions(journey.id).then((rows) => {
+      if (!alive) return;
+      const map: Record<string, string> = {};
+      for (const r of rows)
+        if (r.status === "PENDING") map[r.id] = r.exception_type;
+      setPendingExcTypes(map);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [journey.id, trialReadSeq, eventSignal]);
 
   // Slice 2a: per-unit handover status, same refresh discipline as
   // liveTrialStatuses (journey/state change, every panel refresh, and any
@@ -1954,7 +1975,15 @@ export default function JourneyWorkspace({
   if (events.some((e) => e.outcome === "UNKNOWN"))
     attentionItems.push({ text: "Payment outcome unknown", tone: "red" });
   if (trialStatus === "APPROVAL_REQUIRED" || urgentTrial?.item?.pending_exception_id)
-    attentionItems.push({ text: "Manager approval required", tone: "amber" });
+    attentionItems.push({
+      text:
+        urgentTrial?.item?.pending_exception_id != null &&
+        pendingExcTypes[urgentTrial.item.pending_exception_id] ===
+          "RETURN_EXCEPTION"
+          ? "Owner or admin approval required"
+          : "Manager approval required",
+      tone: "amber",
+    });
   if (daysToTrialEnd !== null && daysToTrialEnd >= 0 && daysToTrialEnd <= 7)
     attentionItems.push({
       text: `Trial ends ${shortDate(urgentTrial!.display.end_date!)}`,
@@ -2007,7 +2036,7 @@ export default function JourneyWorkspace({
     if (row.status === "consolidated" && row.transfers) {
       return {
         kind: "scheduled" as const,
-        text: `Transfer scheduled ${shortDate(row.transfers.scheduled_date)} — ${
+        text: `Transfer scheduled ${shortDate(row.transfers.scheduled_date)} - ${
           origin?.name ?? "?"
         } to ${dest?.name ?? "?"}`,
         requestId: row.id,
@@ -2597,7 +2626,7 @@ export default function JourneyWorkspace({
                       <div className="leading-snug text-slate-900">{item.item_name}</div>
                       {(item.exchange_line_role || item.exchange_action_id) && (
                         <div className="mt-0.5 text-slate-500">
-                          Part of the exchange — change or cancel the exchange instead.
+                          Part of the exchange - change or cancel the exchange instead.
                         </div>
                       )}
                       {!(item.exchange_line_role || item.exchange_action_id) && item.product_id && (() => {
@@ -2809,8 +2838,8 @@ export default function JourneyWorkspace({
                         : isExchangeChild
                         ? exchangeAction?.refund_recorded_at
                           ? "A refund was already recorded. Void it first if the order needs to change."
-                          : "This exchange is closed — its order lines can't be changed."
-                        : "Delivered — use Start Exchange to change items."}
+                          : "This exchange is closed - its order lines can't be changed."
+                        : "Delivered - use Start Exchange to change items."}
                     </span>
                   )}
                 </span>
@@ -2993,7 +3022,7 @@ export default function JourneyWorkspace({
               </p>
               <div className="mt-1 text-sm text-slate-600">
                 {/* Keyed wrappers: on lock/unlock React removes the whole
-                    span, never a bare <select> or text node — a bare
+                    span, never a bare <select> or text node - a bare
                     select/text swap here crashed the reconciler. */}
                 {canReassign && !orderLocked ? (
                   <span key="fulfillment-edit">
@@ -3041,8 +3070,8 @@ export default function JourneyWorkspace({
             </RailCard>
 
             <RailCard title="Ownership">
-              <RailRow label="Store">{journey.store?.name ?? "—"}</RailRow>
-              <RailRow label="Assigned">{journey.employee?.name ?? "—"}</RailRow>
+              <RailRow label="Store">{journey.store?.name ?? "-"}</RailRow>
+              <RailRow label="Assigned">{journey.employee?.name ?? "-"}</RailRow>
 
               {canReassign && !journey.cancelled_at && reassignMode === null && (
                 <button
@@ -3154,8 +3183,8 @@ export default function JourneyWorkspace({
                         <p className="font-medium text-slate-700">
                           {r.to_store_id ? "Store" : "Employee"}:{" "}
                           {r.to_store_id
-                            ? `${r.from_store?.name ?? "—"} → ${r.to_store?.name ?? "—"}`
-                            : `${r.from_employee?.name ?? "Unassigned"} → ${r.to_employee?.name ?? "—"}`}
+                            ? `${r.from_store?.name ?? "-"} → ${r.to_store?.name ?? "-"}`
+                            : `${r.from_employee?.name ?? "Unassigned"} → ${r.to_employee?.name ?? "-"}`}
                         </p>
                         {r.reason && <p className="text-xs text-slate-500">{r.reason}</p>}
                         <p className="text-xs text-slate-400">

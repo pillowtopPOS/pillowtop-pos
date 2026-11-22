@@ -561,7 +561,7 @@ export default function JourneyActivity({
       {lastCustomerContact && (
         <p className="mb-2 text-xs text-slate-500">
           Last customer contact:{" "}
-          {new Date(lastCustomerContact.occurred_at).toLocaleDateString()} —{" "}
+          {new Date(lastCustomerContact.occurred_at).toLocaleDateString()} -{" "}
           {INTERACTION_TYPE_LABELS[lastCustomerContact.interaction_type] ??
             lastCustomerContact.interaction_type}
           {lastCustomerContact.topic_label
@@ -579,7 +579,7 @@ export default function JourneyActivity({
               key={i.id}
               className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
             >
-              <span className="font-semibold uppercase">Important</span> —{" "}
+              <span className="font-semibold uppercase">Important</span> -{" "}
               {interactionSummaryText(i)}
               {i.pinned_until && (
                 <span className="ml-1 font-normal">
@@ -731,10 +731,10 @@ export default function JourneyActivity({
                     ? "Follow-up"
                     : `${FOLLOW_UP_TYPE_LABELS[f.type] ?? f.type} follow-up`}
                   {f.completed_at
-                    ? " — completed"
+                    ? " - completed"
                     : overdue
-                    ? " — overdue"
-                    : " — due"}
+                    ? " - overdue"
+                    : " - due"}
                 </p>
                 {f.notes && <p className="text-xs">{f.notes}</p>}
                 <p className="text-xs text-slate-500">
@@ -1481,7 +1481,7 @@ function AddUpdateModal({
               ))}
             </select>
             <p className="mt-1 text-xs text-slate-500">
-              Record what the customer asked for here — then make the actual
+              Record what the customer asked for here - then make the actual
               change through the delivery, address, or order actions.
             </p>
           </div>
@@ -1506,7 +1506,7 @@ function AddUpdateModal({
                 {localContacts.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
-                    {c.role_label ? ` — ${c.role_label}` : ""}
+                    {c.role_label ? ` - ${c.role_label}` : ""}
                   </option>
                 ))}
               </select>
@@ -1642,7 +1642,7 @@ function AddUpdateModal({
               }}
               className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
             >
-              <option value="">—</option>
+              <option value="">-</option>
               {OUTCOME_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
@@ -1659,7 +1659,7 @@ function AddUpdateModal({
               }
               className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
             >
-              <option value="">—</option>
+              <option value="">-</option>
               {WAITING_ON_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}

@@ -218,7 +218,7 @@ export function confirmedStamp(occurredAt: string | null | undefined): string | 
 /**
  * The day the "Earliest" badge belongs on: the first loaded day on
  * or after the earliest bookable date that still has an open slot.
- * The earliest date itself can be Full, Closed or "No delivery" —
+ * The earliest date itself can be Full, Closed or "No delivery" -
  * the badge then moves to the next day a customer could actually
  * book. Null when nothing in the loaded days qualifies.
  */

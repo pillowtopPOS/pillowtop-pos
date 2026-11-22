@@ -248,7 +248,7 @@ export default function PurchaseOrderDetailPage() {
     const label = name ?? "line item";
     switch (ev.event_type) {
       case "line_added":
-        return `Added ${label} — qty ${d.quantity_ordered} @ $${d.unit_cost}`;
+        return `Added ${label} - qty ${d.quantity_ordered} @ $${d.unit_cost}`;
       case "line_removed":
         return `Removed ${label} (was qty ${d.quantity_ordered})`;
       case "line_modified": {
@@ -262,10 +262,10 @@ export default function PurchaseOrderDetailPage() {
       case "partially_received":
         return `Received ${d.quantity} × ${label}`;
       case "received":
-        return `Received ${d.quantity} × ${label} — order complete`;
+        return `Received ${d.quantity} × ${label} - order complete`;
       case "shipped":
         return `Marked shipped to customer${
-          d.tracking_number ? ` — tracking ${d.tracking_number}` : ""
+          d.tracking_number ? ` - tracking ${d.tracking_number}` : ""
         }`;
       default:
         return ev.event_type.replace(/_/g, " ");
@@ -382,7 +382,7 @@ export default function PurchaseOrderDetailPage() {
         <p className="mt-1 text-sm text-slate-500">
           {isDropShip ? "Attributed to " : ""}
           {stores.find((s) => s.id === po.destination_location_id)?.name ??
-            "—"}{" "}
+            "-"}{" "}
           · Created {new Date(po.created_at).toLocaleDateString()}
           {po.shipped_at &&
             ` · Shipped ${new Date(po.shipped_at).toLocaleDateString()}`}
@@ -455,7 +455,7 @@ export default function PurchaseOrderDetailPage() {
           {editable && (
             <div className="mt-3">
               <ProductSearch
-                placeholder="Add product to this order — search…"
+                placeholder="Add product to this order - search…"
                 excludeIds={po.lines.map((l) => l.variant_id)}
                 onSelect={(p) => void addLine(p)}
               />

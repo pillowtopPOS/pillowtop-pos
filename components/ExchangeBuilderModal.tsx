@@ -53,7 +53,7 @@ const STEPS: { key: Step; label: string }[] = [
 function friendlyError(e: unknown): string {
   const msg = (e as Error)?.message ?? "Something went wrong";
   if (msg === "Failed to fetch" || msg.includes("fetch failed")) {
-    return "Couldn't reach the server — check your connection and try again.";
+    return "Couldn't reach the server - check your connection and try again.";
   }
   return msg;
 }
@@ -103,6 +103,10 @@ export default function ExchangeBuilderModal({
   const createdHereRef = useRef(false);
   // One idempotency key per builder session — a retry of "Next" replays to
   // the same action id instead of duplicating drafts.
+  // Every real input - picking a product, editing a field, creating or
+  // updating the draft - marks this; viewing and resuming do not.
+  const [userDirty, setUserDirty] = useState(false);
+  const markDirty = () => setUserDirty(true);
   const idempotencyKey = useMemo(
     () => `eb-${trialItemId}-${crypto.randomUUID()}`,
     [trialItemId]
@@ -234,6 +238,7 @@ export default function ExchangeBuilderModal({
   }
 
   async function selectReplacement(sel: ProductSelection) {
+    markDirty();
     setSelection(sel);
     setPriceInput(null);
     setPriceReason("");
@@ -254,6 +259,7 @@ export default function ExchangeBuilderModal({
       await updateExchangeDraft(actionId, {
         replacementProductId: selection?.productId ?? null,
       });
+      setUserDirty(true);
       return actionId;
     }
     const id = await createExchangeDraft(
@@ -266,6 +272,7 @@ export default function ExchangeBuilderModal({
     );
     setActionId(id);
     createdHereRef.current = true;
+    setUserDirty(true);
     return id;
   }
 
@@ -341,14 +348,10 @@ export default function ExchangeBuilderModal({
   }
 
   // Modal's `dirty` asks "Discard changes?" before onClose runs; a draft
-  // this session created is then cancelled server-side. Anything touched
-  // counts as dirty so the confirm also guards unsaved input.
-  const dirty =
-    !committedRef.current &&
-    (actionId !== null ||
-      selection !== null ||
-      otherFeesInput !== "0.00" ||
-      taxInput !== "0.00");
+  // this session created is then cancelled server-side. The prompt only
+  // fires on a real change - resuming a draft or just looking around
+  // never counts.
+  const dirty = !committedRef.current && userDirty;
 
   async function handleClose() {
     if (createdHereRef.current && actionId && !committedRef.current) {
@@ -390,7 +393,7 @@ export default function ExchangeBuilderModal({
     <Modal onClose={() => void handleClose()} dirty={dirty} saving={busy}>
       <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
         <h2 className="text-lg font-semibold text-slate-900">
-          Exchange — {itemTitle}
+          Exchange - {itemTitle}
         </h2>
 
         {resuming && existingAction ? (
@@ -509,7 +512,7 @@ export default function ExchangeBuilderModal({
                           : null,
                       ]
                         .filter(Boolean)
-                        .map((t) => ` — ${t}`)
+                        .map((t) => ` - ${t}`)
                         .join("");
                     })()}
                   </p>
@@ -517,7 +520,7 @@ export default function ExchangeBuilderModal({
                 <p className="text-slate-600">
                   {quote.applicable_exception
                     ? "An approved exception will be applied to this exchange."
-                    : "No exception applied — policy rules used as-is."}
+                    : "No exception applied - policy rules used as-is."}
                 </p>
               </div>
             )}
@@ -537,7 +540,7 @@ export default function ExchangeBuilderModal({
                     <span className="font-medium text-slate-800">
                       {selection.productSummary}
                     </span>
-                    {" — "}
+                    {" - "}
                     {formatMoney(replacementCents)}
                   </p>
                 )}
@@ -556,7 +559,7 @@ export default function ExchangeBuilderModal({
                   >
                     {rule === "NONE"
                       ? "The replacement starts no new sleep trial (rule NONE)."
-                      : `Policy gives the replacement a new sleep trial (rule ${rule}) — not supported yet; this exchange can't be committed.`}
+                      : `Policy gives the replacement a new sleep trial (rule ${rule}) - not supported yet; this exchange can't be committed.`}
                   </p>
                 )}
               </div>
@@ -592,7 +595,10 @@ export default function ExchangeBuilderModal({
                         type="text"
                         inputMode="decimal"
                         value={priceInput ?? ""}
-                        onChange={(e) => setPriceInput(e.target.value)}
+                        onChange={(e) => {
+                        setPriceInput(e.target.value);
+                        markDirty();
+                      }}
                         className="w-24 rounded-md border border-slate-300 px-2 py-1 text-right text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                       />
                     </span>
@@ -606,7 +612,10 @@ export default function ExchangeBuilderModal({
                   <input
                     type="text"
                     value={priceReason}
-                    onChange={(e) => setPriceReason(e.target.value)}
+                    onChange={(e) => {
+                      setPriceReason(e.target.value);
+                      markDirty();
+                    }}
                     placeholder="Reason for price override (required)"
                     className="w-full rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
@@ -619,7 +628,10 @@ export default function ExchangeBuilderModal({
                       type="text"
                       inputMode="decimal"
                       value={otherFeesInput}
-                      onChange={(e) => setOtherFeesInput(e.target.value)}
+                      onChange={(e) => {
+                        setOtherFeesInput(e.target.value);
+                        markDirty();
+                      }}
                       className="w-24 rounded-md border border-slate-300 px-2 py-1 text-right text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                     />
                   </span>
@@ -637,7 +649,10 @@ export default function ExchangeBuilderModal({
                       type="text"
                       inputMode="decimal"
                       value={taxInput}
-                      onChange={(e) => setTaxInput(e.target.value)}
+                      onChange={(e) => {
+                        setTaxInput(e.target.value);
+                        markDirty();
+                      }}
                       className="w-24 rounded-md border border-slate-300 px-2 py-1 text-right text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                     />
                   </span>
@@ -654,7 +669,7 @@ export default function ExchangeBuilderModal({
                     </p>
                   ) : (
                     <p className="font-semibold text-slate-900">
-                      $0 — no payment needed
+                      $0 - no payment needed
                     </p>
                   )}
                   {(taxCents ?? 0) > 0 && (
@@ -696,14 +711,17 @@ export default function ExchangeBuilderModal({
                       name="fulfillment"
                       checked={fulfillment === m}
                       disabled={m === "delivery" && !hasDeliveryAddress}
-                      onChange={() => setFulfillment(m)}
+                      onChange={() => {
+                        setFulfillment(m);
+                        markDirty();
+                      }}
                     />
                     <span className="capitalize">{m}</span>
                   </label>
                 ))}
                 {!hasDeliveryAddress && (
                   <p className="text-xs text-amber-700">
-                    The customer has no street address — add one on the journey
+                    The customer has no street address - add one on the journey
                     or choose pickup.
                   </p>
                 )}
@@ -714,11 +732,11 @@ export default function ExchangeBuilderModal({
               <div className="mt-3 space-y-2 text-sm">
                 <div className="rounded-md bg-slate-50 p-3 text-sm">
                   <p className="text-slate-700">
-                    Return: {itemTitle} — credit {formatMoney(creditCents)}
+                    Return: {itemTitle} - credit {formatMoney(creditCents)}
                   </p>
                   <p className="text-slate-700">
                     Replacement:{" "}
-                    {selection?.productSummary ?? "—"} —{" "}
+                    {selection?.productSummary ?? "-"} -{" "}
                     {formatMoney(replacementCents)}
                     {feeCents > 0 ? ` + fee ${formatMoney(feeCents)}` : ""}
                     {(otherFeesCents ?? 0) > 0
@@ -730,7 +748,7 @@ export default function ExchangeBuilderModal({
                       ? `Customer owes ${formatMoney(netCents)}`
                       : netCents < 0
                       ? `Refund owed ${formatMoney(-netCents)}`
-                      : "$0 — no payment needed"}
+                      : "$0 - no payment needed"}
                     {" · "}
                     <span className="capitalize">{fulfillment}</span>
                   </p>
@@ -759,7 +777,7 @@ export default function ExchangeBuilderModal({
                 {ruleBlocks && (
                   <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800">
                     This mattress&apos;s trial policy gives the replacement a
-                    new sleep trial (rule {rule}), which is not supported yet —
+                    new sleep trial (rule {rule}), which is not supported yet -
                     this exchange cannot be committed.
                   </p>
                 )}

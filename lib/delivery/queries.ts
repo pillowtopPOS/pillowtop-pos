@@ -74,7 +74,7 @@ export async function fetchDeliveryCalendar(
 
 /** The caller's business "today" in their home store's timezone
  *  (stores.timezone -> companies.business_timezone), same source the
- *  rest of the app uses. Returns null when unavailable — callers fall
+ *  rest of the app uses. Returns null when unavailable - callers fall
  *  back to the browser date. */
 export async function fetchDeliveryBusinessToday(): Promise<string | null> {
   const employee = await fetchCurrentEmployee();
@@ -201,7 +201,7 @@ export async function setCompanyWeekStart(day: number): Promise<void> {
 }
 
 /** Whether the signed-in employee may manage trucks / the calendar.
- *  False on error — the UI simply hides editing affordances. */
+ *  False on error - the UI simply hides editing affordances. */
 export async function fetchDeliveryManageTrucks(): Promise<boolean> {
   const supabase = createClient();
   const { data, error } = await supabase.rpc("has_permission", {
@@ -455,7 +455,7 @@ export async function fetchDeliveryCutoffContext(): Promise<{
 /** The company-wide last-call reminder time (m140 column). Read with
  *  a direct companies select like fetchDeliveryCutoffContext so any
  *  active employee can read it. Returns null when the column does not
- *  exist yet or the company cannot be resolved — callers treat that
+ *  exist yet or the company cannot be resolved - callers treat that
  *  as "feature off" and must not break. */
 export async function fetchDeliveryLastCallTime(): Promise<{
   last_call_time: string | null;

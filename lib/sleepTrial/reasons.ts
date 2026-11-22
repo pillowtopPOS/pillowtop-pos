@@ -19,19 +19,19 @@ export interface SleepTrialReason {
 export const SLEEP_TRIAL_REASONS: Record<string, SleepTrialReason> = {
   TRIAL_NOT_STARTED: {
     label: "Trial not started",
-    template: "The trial has not started — record the delivery or pickup first.",
+    template: "The trial has not started - record the delivery or pickup first.",
   },
   TRIAL_STARTS_TOMORROW: {
     label: "Starts tomorrow",
-    template: "Delivered today — Night 1 is {started_on}.",
+    template: "Delivered today - Night 1 is {started_on}.",
   },
   TRIAL_CLOSED_EXCHANGED: {
     label: "Exchanged",
-    template: "This trial ended — the mattress was exchanged.",
+    template: "This trial ended - the mattress was exchanged.",
   },
   TRIAL_CLOSED_RETURNED: {
     label: "Returned",
-    template: "This trial ended — the mattress was returned.",
+    template: "This trial ended - the mattress was returned.",
   },
   TRIAL_CLOSED_COMPLETED: {
     label: "Completed",
@@ -39,15 +39,15 @@ export const SLEEP_TRIAL_REASONS: Record<string, SleepTrialReason> = {
   },
   TRIAL_CLOSED_WARRANTY: {
     label: "Warranty",
-    template: "This trial ended — the mattress was replaced under warranty.",
+    template: "This trial ended - the mattress was replaced under warranty.",
   },
   TRIAL_CLOSED_NO_REPLACEMENT_TRIAL: {
     label: "Trial ended",
-    template: "This trial ended — no replacement trial was started.",
+    template: "This trial ended - no replacement trial was started.",
   },
   TRIAL_CLOSED_VOIDED: {
     label: "Voided",
-    template: "This trial was voided — the line was removed or the order cancelled.",
+    template: "This trial was voided - the line was removed or the order cancelled.",
   },
   ACTION_IN_PROGRESS: {
     label: "In progress",
@@ -87,7 +87,7 @@ export const SLEEP_TRIAL_REASONS: Record<string, SleepTrialReason> = {
   SLEEP_CONCERN_REQUIRED: {
     label: "Sleep concern required",
     template:
-      "A documented sleep concern is required before an exchange — log a sleep concern first.",
+      "A documented sleep concern is required before an exchange - log a sleep concern first.",
   },
   PROTECTOR_MISSING: {
     label: "No protector",
@@ -120,12 +120,12 @@ export const SLEEP_TRIAL_REASONS: Record<string, SleepTrialReason> = {
   MISSING_FEE_BASIS: {
     label: "Can't determine",
     template:
-      "Can't determine eligibility — the sale price for this unit was not captured.",
+      "Can't determine eligibility - the sale price for this unit was not captured.",
   },
   MISSING_START_DATE: {
     label: "Can't determine",
     template:
-      "Can't determine eligibility — the trial start date is missing.",
+      "Can't determine eligibility - the trial start date is missing.",
   },
   // Internal codes used by the evaluator's failure contract — not in the
   // Section 10.6 list but required so a broken evaluation never reads as
@@ -133,20 +133,20 @@ export const SLEEP_TRIAL_REASONS: Record<string, SleepTrialReason> = {
   MISSING_POLICY_TERMS: {
     label: "Can't determine",
     template:
-      "Can't determine eligibility — the bound policy terms are missing.",
+      "Can't determine eligibility - the bound policy terms are missing.",
   },
   MISSING_FEE_SCHEDULE: {
     label: "Can't determine",
     template:
-      "Can't determine eligibility — the policy's fee schedule is missing.",
+      "Can't determine eligibility - the policy's fee schedule is missing.",
   },
   MISSING_ITEM: {
     label: "Can't determine",
-    template: "Can't determine eligibility — the trial item was not found.",
+    template: "Can't determine eligibility - the trial item was not found.",
   },
   EVALUATION_ERROR: {
     label: "Can't determine",
-    template: "Can't determine eligibility right now — {error}",
+    template: "Can't determine eligibility right now - {error}",
   },
 };
 

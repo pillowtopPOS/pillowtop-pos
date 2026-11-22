@@ -218,7 +218,7 @@ export default function NewPurchaseOrderPage() {
           </div>
           {fulfillment === "drop_ship" && (
             <p className="mt-1 text-xs text-slate-500">
-              Destination is the store this sale is attributed to — goods ship
+              Destination is the store this sale is attributed to - goods ship
               directly to the customer.
             </p>
           )}
@@ -232,7 +232,7 @@ export default function NewPurchaseOrderPage() {
                 <input
                   value={journeyQuery}
                   onChange={(e) => setJourneyQuery(e.target.value)}
-                  placeholder="Link a customer journey (optional) — search by name or SJ number…"
+                  placeholder="Link a customer journey (optional) - search by name or SJ number…"
                   className="w-full rounded border px-3 py-2 text-sm"
                 />
                 {journeyQuery.trim() && journeyOptions.length > 0 && (

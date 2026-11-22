@@ -390,7 +390,7 @@ export function OverviewSection({
         </div>
       ) : (
         <p className="text-sm text-slate-500">
-          No sleep trial policy yet. Start from a template below — it creates a
+          No sleep trial policy yet. Start from a template below - it creates a
           draft, nothing goes live until you publish.
         </p>
       )}
@@ -407,7 +407,7 @@ export function OverviewSection({
           Start from a template
         </h3>
         <p className="mt-0.5 text-xs text-slate-500">
-          Choosing a template fills the draft — nothing is live until you
+          Choosing a template fills the draft - nothing is live until you
           publish.
         </p>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -1107,7 +1107,7 @@ export function FeesSection(props: SectionProps) {
     <div>
       <SectionHeading
         title="Fees"
-        description="Comfort exchange and restocking fees. No fee is charged by default."
+        description="Set exchange and restocking fees. No fee is charged unless you turn one on."
       />
       <IssueLines
         errors={[...fe(props, "fees"), ...fe(props, "fees.tiered")]}
@@ -1116,7 +1116,7 @@ export function FeesSection(props: SectionProps) {
       {f.tiered ? (
         <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
           This policy uses a tiered fee schedule. The schedule builder is coming
-          in a later update — until then the tiered schedule is preserved as-is.
+          in a later update - until then the tiered schedule is preserved as-is.
         </p>
       ) : (
         <div className="space-y-4">
@@ -1203,7 +1203,7 @@ function CategoryPick({
   if (options.length === 0) {
     return (
       <p className="text-sm text-slate-500">
-        No product categories yet — add them under Products first.
+        No product categories yet - add them under Products first.
       </p>
     );
   }
@@ -1373,7 +1373,7 @@ export function ProtectorSection(
             </Field>
             <Field
               label="Also count these specific products"
-              help="Optional — for protectors that aren't in a qualifying category."
+              help="Optional - for protectors that aren't in a qualifying category."
               future={future}
               errors={fe(props, "protector.qualifying_product_ids")}
               warnings={fw(props, "protector.qualifying_product_ids")}
@@ -1409,7 +1409,7 @@ export function ProtectorSection(
                 options={[
                   {
                     value: "BLOCK_WITH_OVERRIDE" as const,
-                    label: "Block — only permitted roles can override",
+                    label: "Block - only permitted roles can override",
                   },
                   {
                     value: "APPROVAL_REQUIRED" as const,
@@ -1476,7 +1476,7 @@ export function ExceptionRulesSection(props: SectionProps) {
     <div className="mt-8 border-t border-slate-200 pt-6">
       <h3 className="text-base font-semibold text-slate-900">Exception rules</h3>
       <p className="mt-1 text-sm text-slate-500">
-        Part of the policy definition — changes go into the draft and apply to
+        Part of the policy definition - changes go into the draft and apply to
         future sales only.
       </p>
       <div className="mt-4 space-y-4">

@@ -134,7 +134,7 @@ export default function PurchaseOrdersPage() {
                       href={`/purchase-orders/${o.id}`}
                       className="text-brand-700 hover:underline"
                     >
-                      {o.reference_code ?? "—"}
+                      {o.reference_code ?? "-"}
                     </Link>
                   </td>
                   <td className="px-4 py-3 text-sm font-medium text-slate-900">
@@ -142,7 +142,7 @@ export default function PurchaseOrdersPage() {
                   </td>
                   <td className="px-4 py-3 text-sm text-slate-700">
                     {stores.find((s) => s.id === o.destination_location_id)
-                      ?.name ?? "—"}
+                      ?.name ?? "-"}
                   </td>
                   <td className="px-4 py-3">
                     <span

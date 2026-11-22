@@ -6,7 +6,7 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /** One-line readable form of a Supabase/PostgREST error (or anything
- *  else) for console output — plain objects otherwise log as "Object". */
+ *  else) for console output - plain objects otherwise log as "Object". */
 export function describeError(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (error && typeof error === "object") {

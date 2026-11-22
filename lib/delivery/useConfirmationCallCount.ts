@@ -35,7 +35,7 @@ const EMPTY: ConfirmationCallCount = { count: 0, date: null };
  * Shared "customers to call" count for the My Work banner and the
  * sidebar pill, so the two can never disagree. Counts items from
  * get_delivery_confirmation_list(null, 'store') whose status is not
- * 'confirmed' — the active store's customers (m141). Shows nothing
+ * 'confirmed' - the active store's customers (m141). Shows nothing
  * without delivery.log_confirmation_calls
  * or before the company cutoff (company timezone); with no cutoff
  * configured it stays hidden. Refreshes on mount, on tab focus /

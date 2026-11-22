@@ -104,7 +104,7 @@ export function activityEventTitle(e: JourneyEvent, pickupName?: string | null):
       return completedText ?? "Delivery completed";
     }
     case "journey_cancelled":
-      return `Journey cancelled${data.reason ? ` — ${data.reason}` : ""}`;
+      return `Journey cancelled${data.reason ? ` - ${data.reason}` : ""}`;
     case "trial_completed":
       return "Sleep trial completed";
     case "sleep_trial_action_reopened":
@@ -296,7 +296,7 @@ export function unitActivitySentence(
   if (e.to_status === "RESERVED" && e.from_status !== "RESERVED") {
     return ctx.forJourney
       ? `${n} reserved for this order${at(e.to_location_id)}`
-      : `Reserved for order ${ctx.orderLabel ?? "—"}${at(e.to_location_id)}`;
+      : `Reserved for order ${ctx.orderLabel ?? "-"}${at(e.to_location_id)}`;
   }
   if (e.to_status === "STOCK" && e.from_status === "RESERVED") {
     return `Released back to stock`;

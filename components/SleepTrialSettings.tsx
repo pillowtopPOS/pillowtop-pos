@@ -367,7 +367,7 @@ export default function SleepTrialSettings() {
             ) : !working ? (
               <div className="flex h-full items-center justify-center">
                 <p className="text-sm text-slate-400">
-                  No draft yet — start from a template on the Overview tab.
+                  No draft yet - start from a template on the Overview tab.
                 </p>
               </div>
             ) : (

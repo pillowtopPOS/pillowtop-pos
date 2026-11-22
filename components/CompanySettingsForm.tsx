@@ -569,7 +569,7 @@ export default function CompanySettingsForm() {
                 <p className="mt-1 text-xs text-red-600">{weekStartError}</p>
               )}
               <p className="mt-1 text-xs text-slate-500">
-                Which day the company week begins on — calendars, reports,
+                Which day the company week begins on - calendars, reports,
                 and commissions all follow it.
                 {!canEditPermissions && " Only owners and admins can change this."}
               </p>

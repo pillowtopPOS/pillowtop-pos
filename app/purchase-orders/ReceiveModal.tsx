@@ -112,7 +112,7 @@ export default function ReceiveModal({
     >
       <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-6 shadow-xl">
         <h3 className="text-lg font-semibold">
-          Receive — {po.vendor_name}
+          Receive - {po.vendor_name}
           {po.reference_code && (
             <span className="ml-2 rounded bg-brand-50 px-1.5 py-0.5 text-xs font-semibold text-brand-700">
               {po.reference_code}

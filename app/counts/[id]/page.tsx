@@ -273,7 +273,7 @@ export default function CountDetailPage() {
     try {
       await finalizeInventoryCount(countId, counts);
       setFinalizeOpen(false);
-      setNotice("Count approved — inventory updated.");
+      setNotice("Count approved - inventory updated.");
       await load();
     } catch (err) {
       setFinalizeError(err instanceof Error ? err.message : "Finalize failed");
@@ -327,7 +327,7 @@ export default function CountDetailPage() {
               </span>
             )}
             <h1 className="text-2xl font-semibold text-slate-900">
-              {count.count_type === "full" ? "Full count" : "Cycle count"} —{" "}
+              {count.count_type === "full" ? "Full count" : "Cycle count"} -{" "}
               {count.store?.name ?? "Store"}
             </h1>
             <span
@@ -337,7 +337,7 @@ export default function CountDetailPage() {
             </span>
           </div>
           <p className="mt-1 text-sm text-slate-500">
-            Requested by {count.requester?.name ?? "—"} ·{" "}
+            Requested by {count.requester?.name ?? "-"} ·{" "}
             {new Date(count.created_at).toLocaleString()}
             {count.starter && ` · Started by ${count.starter.name}`}
             {count.approver &&
@@ -385,7 +385,7 @@ export default function CountDetailPage() {
                   type="button"
                   disabled={acting}
                   onClick={() =>
-                    run(() => approveCountStart(count.id), "Count approved — counting can begin.")
+                    run(() => approveCountStart(count.id), "Count approved - counting can begin.")
                   }
                   className="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
                 >
@@ -410,7 +410,7 @@ export default function CountDetailPage() {
       {count.status === "in_progress" && (
         <div className="mb-4 rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
           Counting is in progress. Expected quantities are hidden until the
-          count is submitted or finalized — count what&apos;s physically there.
+          count is submitted or finalized - count what&apos;s physically there.
         </div>
       )}
 
@@ -503,7 +503,7 @@ export default function CountDetailPage() {
                       <span className="ml-2 text-xs text-slate-400">{p.brand}</span>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 text-sm text-slate-500">{p?.sku ?? "—"}</td>
+                  <td className="px-4 py-2.5 text-sm text-slate-500">{p?.sku ?? "-"}</td>
                   {expectedVisible && (
                     <td className="px-4 py-2.5 text-right text-sm text-slate-600">
                       {item.expected_quantity}
@@ -522,23 +522,23 @@ export default function CountDetailPage() {
                           }))
                         }
                         className="w-24 rounded-md border border-slate-300 px-2 py-1 text-right text-sm"
-                        placeholder="—"
+                        placeholder="-"
                       />
                     ) : (
                       <span className="text-sm text-slate-700">
-                        {item.submitted_quantity ?? "—"}
+                        {item.submitted_quantity ?? "-"}
                       </span>
                     )}
                   </td>
                   <td className="px-4 py-2.5 text-sm text-slate-500">
                     {item.submitted_by
-                      ? (employeeNames[item.submitted_by] ?? "—")
-                      : "—"}
+                      ? (employeeNames[item.submitted_by] ?? "-")
+                      : "-"}
                   </td>
                   {count.status === "approved" && (
                     <>
                       <td className="px-4 py-2.5 text-right text-sm font-medium text-slate-900">
-                        {item.counted_quantity ?? "—"}
+                        {item.counted_quantity ?? "-"}
                       </td>
                       <td
                         className={`px-4 py-2.5 text-right text-sm font-medium ${
@@ -550,7 +550,7 @@ export default function CountDetailPage() {
                         }`}
                       >
                         {variance === null
-                          ? "—"
+                          ? "-"
                           : variance > 0
                             ? `+${variance}`
                             : variance}
@@ -730,7 +730,7 @@ export default function CountDetailPage() {
                         {r.expected_quantity}
                       </td>
                       <td className="px-4 py-2 text-right text-sm text-slate-600">
-                        {r.submitted_quantity ?? "—"}
+                        {r.submitted_quantity ?? "-"}
                         {r.submitted_by_name && (
                           <span className="ml-1 text-xs text-slate-400">
                             ({r.submitted_by_name})

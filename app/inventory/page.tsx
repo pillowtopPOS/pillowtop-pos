@@ -758,10 +758,10 @@ export default function InventoryPage() {
                   )}
                   <td className="px-4 py-2">{p.sku}</td>
                   <td className="px-4 py-2 font-medium text-slate-900">{p.item_name}</td>
-                  <td className="px-4 py-2">{p.brand ?? "—"}</td>
-                  <td className="px-4 py-2">{p.cost?.toFixed(2) ?? "—"}</td>
-                  <td className="px-4 py-2">{p.price?.toFixed(2) ?? "—"}</td>
-                  <td className="px-4 py-2">{p.sale_price?.toFixed(2) ?? "—"}</td>
+                  <td className="px-4 py-2">{p.brand ?? "-"}</td>
+                  <td className="px-4 py-2">{p.cost?.toFixed(2) ?? "-"}</td>
+                  <td className="px-4 py-2">{p.price?.toFixed(2) ?? "-"}</td>
+                  <td className="px-4 py-2">{p.sale_price?.toFixed(2) ?? "-"}</td>
                   {canViewPhysical && (
                     <td className="px-4 py-2">
                       {canAdjustInventory ? (
@@ -774,7 +774,7 @@ export default function InventoryPage() {
                           className="w-20 rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                         />
                       ) : (
-                        <span className="text-slate-700">{p.physical ?? "—"}</span>
+                        <span className="text-slate-700">{p.physical ?? "-"}</span>
                       )}
                     </td>
                   )}
@@ -938,7 +938,7 @@ export default function InventoryPage() {
                         }
                         className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                       >
-                        <option value="">—</option>
+                        <option value="">-</option>
                         {headers.map((h, idx) => (
                           <option key={idx} value={idx}>
                             {h}
@@ -976,7 +976,7 @@ export default function InventoryPage() {
                       {mappedRows().slice(0, 10).map((row, idx) => (
                         <tr key={idx} className="border-b border-slate-100">
                           {ALL_FIELDS.map((f) => (
-                            <td key={f} className="px-3 py-2">{String(row[f] ?? "—")}</td>
+                            <td key={f} className="px-3 py-2">{String(row[f] ?? "-")}</td>
                           ))}
                         </tr>
                       ))}

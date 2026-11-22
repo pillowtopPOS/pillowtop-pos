@@ -139,7 +139,7 @@ export default function PurchaseOrderPrintPage() {
                   {p?.item_name ?? l.variant_id}
                 </td>
                 <td className="border-b border-slate-200 py-2.5 pr-2 text-slate-600">
-                  {p?.sku ?? "—"}
+                  {p?.sku ?? "-"}
                 </td>
                 <td className="border-b border-slate-200 py-2.5 pr-2 text-right">
                   {l.quantity_ordered}

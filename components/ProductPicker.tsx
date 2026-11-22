@@ -26,7 +26,7 @@ type ProductPickerProps = {
   allowCustom?: boolean;
   placeholder?: string;
   /** Names the location the stock count is read at (e.g. "Stock at
-   *  Downtown Warehouse: 3") — without it the bare number hides which
+   *  Downtown Warehouse: 3") - without it the bare number hides which
    *  location it refers to. */
   stockLabel?: string;
 };
@@ -124,7 +124,7 @@ export default function ProductPicker({ storeId, onSelect, filter, allowCustom =
     if (!onSale || product.price === null) {
       return (
         <span className="text-sm font-medium text-slate-900">
-          ${product.price?.toFixed(2) ?? "—"}
+          ${product.price?.toFixed(2) ?? "-"}
         </span>
       );
     }

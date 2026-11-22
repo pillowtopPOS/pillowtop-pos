@@ -508,7 +508,7 @@ export default function ExchangeMilestoneCard({
     }
     if (cents !== owed && !refundReference.trim()) {
       setError(
-        "The amount differs from the owed refund — a reference is required to document a different settled amount"
+        "The amount differs from the owed refund - a reference is required to document a different settled amount"
       );
       return;
     }
@@ -637,7 +637,7 @@ export default function ExchangeMilestoneCard({
               ? "Return in progress"
               : "Exchange in progress"}
           {!isReturn && action.replacement_product_name
-            ? ` — ${action.replacement_product_name}`
+            ? ` - ${action.replacement_product_name}`
             : ""}
         </p>
         {action.child_journey_id && (
@@ -696,7 +696,7 @@ export default function ExchangeMilestoneCard({
       )}
       {refundRecorded && (
         <p className="mt-1.5 text-xs font-medium text-green-800">
-          Refund recorded: {action.refund_method ?? "—"},{" "}
+          Refund recorded: {action.refund_method ?? "-"},{" "}
           {fmt(action.refund_amount_cents)}
           {action.refund_recorded_at
             ? ` on ${activityShortDate(action.refund_recorded_at)}`
@@ -715,13 +715,13 @@ export default function ExchangeMilestoneCard({
           <ul className="mt-0.5 space-y-0.5">
             {history.map((h, i) => (
               <li key={i} className="text-xs text-slate-500">
-                {h.refund_method ?? "—"} {fmt(h.refund_amount_cents)}
+                {h.refund_method ?? "-"} {fmt(h.refund_amount_cents)}
                 {h.refund_reference ? ` (ref ${h.refund_reference})` : ""}
                 {h.recorded_at
                   ? ` recorded ${activityShortDate(h.recorded_at)}`
                   : ""}
                 {h.recorded_by_name ? ` by ${h.recorded_by_name}` : ""}
-                {" — voided"}
+                {" - voided"}
                 {h.voided_at ? ` ${activityShortDate(h.voided_at)}` : ""}
                 {h.voided_by_name ? ` by ${h.voided_by_name}` : ""}
                 {h.void_reason ? `: ${h.void_reason}` : ""}
@@ -1199,7 +1199,7 @@ export default function ExchangeMilestoneCard({
               Void refund
             </h3>
             <p className="mt-2 text-sm text-slate-700">
-              Recorded refund: {action.refund_method ?? "—"},{" "}
+              Recorded refund: {action.refund_method ?? "-"},{" "}
               {fmt(action.refund_amount_cents)}
               {action.refund_reference
                 ? ` (ref ${action.refund_reference})`

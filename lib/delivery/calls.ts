@@ -128,7 +128,7 @@ export type LastCallInfo = {
 };
 
 /**
- * "Left voicemail, yesterday 4:50 PM (Sam)" — the last-call summary on
+ * "Left voicemail, yesterday 4:50 PM (Sam)" - the last-call summary on
  * a call-list row. Null when there is no recorded call.
  */
 export function lastCallText(
@@ -144,7 +144,7 @@ export function lastCallText(
 }
 
 /**
- * "Last call: Left voicemail by Sam yesterday 4:50 PM" — the
+ * "Last call: Left voicemail by Sam yesterday 4:50 PM" - the
  * who-logged-it line on a call-list row, so two reps in the same
  * store can see a coworker already called. Null when no call logged.
  */

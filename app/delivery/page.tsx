@@ -110,7 +110,7 @@ function Cell({
   if (!entry) {
     return (
       <td className={`${tdClass} text-slate-300`}>
-        <div className="px-3 py-2">—</div>
+        <div className="px-3 py-2">-</div>
       </td>
     );
   }
