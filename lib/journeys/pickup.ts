@@ -58,3 +58,28 @@ export async function setPickupDate(
   if (error) throw new Error(error.message);
   return data as SetPickupDateResult;
 }
+
+export type OverdueFulfillment = {
+  kind: "PICKUP" | "DELIVERY";
+  journey_id: string;
+  journey_number: string | null;
+  customer_name: string | null;
+  due_date: string;
+  days_overdue: number;
+  units_remaining: number | null;
+  store_id: string;
+};
+
+/** Overdue pickups and deliveries for one store (null lets the RPC fall
+ *  back to the caller's home store). Powers the My Work nag - warn only,
+ *  rows just open the order. */
+export async function fetchOverdueFulfillments(
+  storeId?: string | null
+): Promise<OverdueFulfillment[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("list_overdue_fulfillments", {
+    p_store_id: storeId ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return (data as OverdueFulfillment[] | null) ?? [];
+}

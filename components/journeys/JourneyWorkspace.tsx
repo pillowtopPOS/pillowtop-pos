@@ -111,6 +111,7 @@ import {
   setPickupDate,
   type PickupDateInfo,
 } from "@/lib/journeys/pickup";
+import { OVERDUE_FULFILLMENTS_CHANGED_EVENT } from "@/lib/pickup/useOverdueFulfillments";
 import Modal from "@/components/Modal";
 import ConfirmModal from "@/components/ConfirmModal";
 import RecordRefundModal from "@/components/RecordRefundModal";
@@ -1535,6 +1536,7 @@ export default function JourneyWorkspace({
       setPickupDateOpen(false);
       const map = await fetchPickupDates([journey.id]);
       setPickupInfo(map[journey.id] ?? null);
+      window.dispatchEvent(new Event(OVERDUE_FULFILLMENTS_CHANGED_EVENT));
       await handlePanelRefresh();
     } catch (e: any) {
       setPickupDateError(e?.message ?? "Failed to save the pickup date");

@@ -69,6 +69,7 @@ import {
   type SleepTrialEvaluation,
 } from "@/lib/journeys/sleepTrial";
 import { localTodayISO } from "@/lib/dates";
+import { OVERDUE_FULFILLMENTS_CHANGED_EVENT } from "@/lib/pickup/useOverdueFulfillments";
 import { computeNetPaid } from "@/lib/journeys/paid";
 import {
   effectivePrice,
@@ -930,6 +931,11 @@ function BoardContent() {
             ),
           ]);
           completionFulfillmentSaved.current = journey.id;
+          // A recorded pickup or delivery may clear an overdue nag row -
+          // refresh the My Work banner and sidebar badge immediately.
+          window.dispatchEvent(
+            new Event(OVERDUE_FULFILLMENTS_CHANGED_EVENT)
+          );
           // m149: an order with no live sleep trial item lands on
           // Completed, off the board. The panel shows a short green note.
           setCompletionDoneFor(

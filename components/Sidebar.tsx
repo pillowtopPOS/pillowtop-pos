@@ -28,6 +28,7 @@ import {
   type Store,
 } from "@/lib/journeys/queries";
 import { useConfirmationCallCount } from "@/lib/delivery/useConfirmationCallCount";
+import { useOverdueFulfillments } from "@/lib/pickup/useOverdueFulfillments";
 
 const HIDDEN_PATHS = ["/", "/login", "/logout", "/store-select"];
 
@@ -52,6 +53,8 @@ export default function Sidebar({
   const [stores, setStores] = useState<Store[]>([]);
   const [workCount, setWorkCount] = useState(0);
   const callCount = useConfirmationCallCount();
+  const overdue = useOverdueFulfillments();
+  const myWorkBadge = workCount + overdue.count;
   const [activeStoreId, setActiveStoreId] = useState<string | null>(null);
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
@@ -232,12 +235,12 @@ export default function Sidebar({
               >
                 <Icon className="h-5 w-5 shrink-0" />
                 {!collapsed && <span>{item.label}</span>}
-                {item.href === "/my-work" && workCount > 0 &&
+                {item.href === "/my-work" && myWorkBadge > 0 &&
                   (collapsed ? (
                     <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-brand-600" />
                   ) : (
                     <span className="ml-auto rounded-full bg-brand-600 px-2 py-0.5 text-xs font-semibold text-white">
-                      {workCount}
+                      {myWorkBadge}
                     </span>
                   ))}
                 {item.href === "/delivery" && callCount.count > 0 &&

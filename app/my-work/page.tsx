@@ -25,9 +25,23 @@ import { formatPhone } from "@/lib/format/phone";
 import { confirmationDayLabel } from "@/lib/delivery/calls";
 import { useConfirmationCallCount } from "@/lib/delivery/useConfirmationCallCount";
 import {
+  useOverdueFulfillments,
+} from "@/lib/pickup/useOverdueFulfillments";
+import {
   holdUntilDayLabel,
   myWorkContactLine,
 } from "@/lib/delivery/contacts";
+
+// "Mon Nov 24" - date-only values parse as local midnight so the day
+// can't slip back a timezone.
+function overdueDueLabel(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`);
+  return d.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
 
 export default function MyWorkPage() {
   const router = useRouter();
@@ -40,6 +54,9 @@ export default function MyWorkPage() {
   const [pageError, setPageError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const callCount = useConfirmationCallCount();
+  // Independent of the call-list gate: the overdue nag shows all day to
+  // everyone at the active store.
+  const overdue = useOverdueFulfillments();
   // 163: the committed-action worklist split into what the caller can
   // act on now vs the open actions they merely own or watch.
   const [workPartition, setWorkPartition] = useState<{
@@ -494,6 +511,51 @@ export default function MyWorkPage() {
           >
             Open call list
           </Link>
+        </div>
+      )}
+
+      {overdue.count > 0 && (
+        <div
+          data-testid="my-work-overdue-banner"
+          className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3"
+        >
+          <p className="mb-2 text-sm font-medium text-amber-900">
+            Overdue pickups and deliveries ({overdue.count})
+          </p>
+          <div className="space-y-1.5">
+            {overdue.items.slice(0, 10).map((o) => (
+              <Link
+                key={`${o.kind}-${o.journey_id}`}
+                href={`/board?journey=${o.journey_id}`}
+                className="flex flex-wrap items-center gap-x-3 gap-y-0.5 rounded-md border border-amber-200 bg-white px-3 py-2 text-sm text-amber-900 hover:bg-amber-100"
+              >
+                <span className="font-medium">
+                  {o.customer_name ?? "Unknown customer"}
+                </span>
+                {o.journey_number && (
+                  <span className="text-xs text-amber-700">
+                    {o.journey_number}
+                  </span>
+                )}
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                  {o.kind === "PICKUP" ? "Pickup" : "Delivery"}
+                </span>
+                <span className="text-xs text-amber-700">
+                  {overdueDueLabel(o.due_date)}
+                </span>
+                <span className="ml-auto text-xs font-semibold text-amber-800">
+                  {o.days_overdue === 1
+                    ? "1 day overdue"
+                    : `${o.days_overdue} days overdue`}
+                </span>
+              </Link>
+            ))}
+            {overdue.count > 10 && (
+              <p className="pt-1 text-xs text-amber-700">
+                and {overdue.count - 10} more
+              </p>
+            )}
+          </div>
         </div>
       )}
 
