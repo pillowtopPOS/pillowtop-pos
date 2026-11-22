@@ -109,9 +109,8 @@ export default function ReturnStartModal({
         <h2 className="mb-2 text-lg font-semibold text-slate-900">
           Start return
         </h2>
-        <p className="mb-3 text-sm text-slate-600">
-          {evaluation.item?.product_name ?? "This mattress"} comes back to
-          the warehouse for inspection and the trial ends.
+        <p className="mb-3 text-sm font-medium text-slate-900">
+          {evaluation.item?.product_name ?? "This mattress"}
         </p>
         {loadError && <p className="mb-3 text-sm text-red-600">{loadError}</p>}
         {!loadError && !quote && (
@@ -139,6 +138,9 @@ export default function ReturnStartModal({
                   {money(quote.locked_fee_cents)}
                 </dd>
               </div>
+              {quote.fee_source === "EXCEPTION" && (
+                <p className="text-xs text-slate-500">Set by the approver.</p>
+              )}
               <div className="flex justify-between border-t border-slate-100 pt-1">
                 <dt className="font-medium text-slate-700">
                   Refund to customer

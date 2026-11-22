@@ -87,6 +87,21 @@ function exceptionPhrase(type: string | null | undefined): string {
   return label.endsWith("exception") ? label : `${label} exception`;
 }
 
+// 169: one-line summary of an approver-entered restocking fee, for the
+// exception history card.
+function exceptionFeeSummary(
+  terms: Record<string, unknown> | null | undefined
+): string | null {
+  if (!terms) return null;
+  if (terms.fee_amount_cents != null)
+    return `restocking fee $${(Number(terms.fee_amount_cents) / 100).toFixed(2)}`;
+  if (terms.fee_flat_cents != null)
+    return `restocking fee $${(Number(terms.fee_flat_cents) / 100).toFixed(2)}`;
+  if (terms.fee_percent_bp != null)
+    return `restocking fee ${Number(terms.fee_percent_bp) / 100}%`;
+  return null;
+}
+
 // ============================================================
 // Next Action bar (spec 19.3 / 20). The evaluator returns
 // allowed_ui_actions already filtered by policy AND the caller's
@@ -839,6 +854,9 @@ export default function SleepTrialSection({
                           ? ` on ${new Date(ex.decided_at).toLocaleDateString()}`
                           : ""
                       }`}
+                  {exceptionFeeSummary(ex.approved_terms)
+                    ? ` · ${exceptionFeeSummary(ex.approved_terms)}`
+                    : ""}
                   .
                   {ex.status === "DENIED" && ex.decision_note
                     ? ` ${ex.decision_note}`
@@ -921,6 +939,11 @@ export default function SleepTrialSection({
       {decideException && (
         <ExceptionDecisionModal
           exception={decideException}
+          evaluation={
+            evals.find(
+              (e) => e.trial_item_id === decideException.trial_item_id
+            ) ?? null
+          }
           onClose={() => setDecideException(null)}
           onSaved={() => {
             setDecideException(null);
@@ -2972,15 +2995,27 @@ type DecisionMode = "APPROVED_AS_REQUESTED" | "APPROVED_MODIFIED" | "DENIED";
 
 function ExceptionDecisionModal({
   exception,
+  evaluation,
   onClose,
   onSaved,
 }: {
   exception: TrialItemException;
+  evaluation: SleepTrialEvaluation | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const editable = EXCEPTION_EDITABLE_TERMS[exception.exception_type] ?? [];
   const hasEditable = editable.length > 0;
+  // 169: a return exception exposes exactly two fee inputs - a percent
+  // (prefilled from the policy fee) or a flat amount - instead of the
+  // generic editable list. Typing one saves APPROVED_MODIFIED; leaving
+  // both blank approves as requested and the policy fee applies.
+  const isReturnException = exception.exception_type === "RETURN_EXCEPTION";
+  const returnPolicyFee = evaluation?.actions?.RETURN?.fee ?? null;
+  const returnPolicyPct =
+    returnPolicyFee && returnPolicyFee.percent_bp > 0
+      ? String(returnPolicyFee.percent_bp / 100)
+      : "";
   const [mode, setMode] = useState<DecisionMode>("APPROVED_AS_REQUESTED");
   const [terms, setTerms] = useState<Record<string, string | boolean>>({});
   const [denialReason, setDenialReason] = useState("");
@@ -2991,6 +3026,15 @@ function ExceptionDecisionModal({
 
   function buildApprovedTerms(): Record<string, unknown> {
     const out: Record<string, unknown> = {};
+    if (isReturnException) {
+      const pct = (terms.return_fee_pct as string) ?? "";
+      const flat = (terms.return_fee_flat as string) ?? "";
+      if (pct !== "")
+        out.fee_percent_bp = Math.round(Number(pct) * 100);
+      if (flat !== "")
+        out.fee_flat_cents = Math.round(Number(flat) * 100);
+      return out;
+    }
     if (editable.includes("fee_percent_bp") && terms.fee_percent_bp !== "" && terms.fee_percent_bp != null)
       out.fee_percent_bp = Math.round(Number(terms.fee_percent_bp) * 100);
     if (editable.includes("fee_flat_cents") && terms.fee_flat_cents !== "" && terms.fee_flat_cents != null)
@@ -3012,11 +3056,26 @@ function ExceptionDecisionModal({
     setError(null);
     setSaving(true);
     try {
+      let decision: DecisionMode = mode;
       const approvedTerms =
         mode === "APPROVED_MODIFIED" ? buildApprovedTerms() : null;
+      if (mode === "APPROVED_MODIFIED" && isReturnException) {
+        const pct = (terms.return_fee_pct as string) ?? "";
+        const flat = (terms.return_fee_flat as string) ?? "";
+        if (pct !== "" && flat !== "") {
+          setError("Enter either a percent or a flat amount, not both.");
+          return;
+        }
+      }
       if (mode === "APPROVED_MODIFIED" && Object.keys(approvedTerms ?? {}).length === 0) {
-        setError("Enter at least one changed term, or choose Approve as requested");
-        return;
+        if (isReturnException) {
+          // No fee typed: same as Approve as requested - the policy fee
+          // applies and no fee terms are stored on the approval.
+          decision = "APPROVED_AS_REQUESTED";
+        } else {
+          setError("Enter at least one changed term, or choose Approve as requested");
+          return;
+        }
       }
       if (mode === "DENIED" && !denialReason.trim()) {
         setError("A reason is required to deny");
@@ -3024,8 +3083,9 @@ function ExceptionDecisionModal({
       }
       const r = await decideTrialItemException({
         exceptionId: exception.id,
-        decision: mode,
-        approvedTerms,
+        decision,
+        approvedTerms:
+          decision === "APPROVED_MODIFIED" ? approvedTerms : null,
         denialReason: mode === "DENIED" ? denialReason.trim() : null,
         note: note.trim() || null,
       });
@@ -3105,7 +3165,40 @@ function ExceptionDecisionModal({
 
         {mode === "APPROVED_MODIFIED" && (
           <div className="mt-3 space-y-2">
-            {editable.includes("extension_nights") && (
+            {isReturnException && (
+              <>
+                <label className="block text-xs text-slate-600">
+                  Restocking fee %
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={
+                      (terms.return_fee_pct as string) ??
+                      (terms.return_fee_flat ? "" : returnPolicyPct)
+                    }
+                    onChange={(e) =>
+                      setTerms({ ...terms, return_fee_pct: e.target.value })
+                    }
+                    className="mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                  />
+                </label>
+                <label className="block text-xs text-slate-600">
+                  or flat amount ($)
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={(terms.return_fee_flat as string) ?? ""}
+                    onChange={(e) =>
+                      setTerms({ ...terms, return_fee_flat: e.target.value })
+                    }
+                    className="mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                  />
+                </label>
+              </>
+            )}
+            {!isReturnException && editable.includes("extension_nights") && (
               <label className="block text-xs text-slate-600">
                 Extension nights
                 <input
@@ -3119,7 +3212,7 @@ function ExceptionDecisionModal({
                 />
               </label>
             )}
-            {editable.includes("fee_percent_bp") && (
+            {!isReturnException && editable.includes("fee_percent_bp") && (
               <label className="block text-xs text-slate-600">
                 Fee % (e.g. 10 = 10%)
                 <input
@@ -3134,7 +3227,7 @@ function ExceptionDecisionModal({
                 />
               </label>
             )}
-            {editable.includes("fee_flat_cents") && (
+            {!isReturnException && editable.includes("fee_flat_cents") && (
               <label className="block text-xs text-slate-600">
                 Flat fee ($)
                 <input
@@ -3149,7 +3242,7 @@ function ExceptionDecisionModal({
                 />
               </label>
             )}
-            {editable.includes("fee_amount_cents") && (
+            {!isReturnException && editable.includes("fee_amount_cents") && (
               <label className="block text-xs text-slate-600">
                 Exact fee ($)
                 <input
@@ -3164,7 +3257,7 @@ function ExceptionDecisionModal({
                 />
               </label>
             )}
-            {editable.includes("refund_method") && (
+            {!isReturnException && editable.includes("refund_method") && (
               <label className="block text-xs text-slate-600">
                 Refund method
                 <select
@@ -3181,7 +3274,7 @@ function ExceptionDecisionModal({
                 </select>
               </label>
             )}
-            {editable.includes("exchange_only") && (
+            {!isReturnException && editable.includes("exchange_only") && (
               <label className="flex items-center gap-2 text-xs text-slate-600">
                 <input
                   type="checkbox"
@@ -3193,7 +3286,7 @@ function ExceptionDecisionModal({
                 Convert to exchange only (return denied)
               </label>
             )}
-            {editable.includes("deadline_date") && (
+            {!isReturnException && editable.includes("deadline_date") && (
               <label className="block text-xs text-slate-600">
                 Must complete by
                 <input

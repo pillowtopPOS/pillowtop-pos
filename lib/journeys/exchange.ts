@@ -27,6 +27,8 @@ export type ExchangeQuote = {
     [k: string]: unknown;
   } | null;
   locked_fee_cents: number;
+  /** 169: 'POLICY' or 'EXCEPTION' when an approver set the fee. */
+  fee_source?: string | null;
   original_credit_cents: number | null;
   list_credit_cents?: number | null;
   credit_capped?: boolean;
