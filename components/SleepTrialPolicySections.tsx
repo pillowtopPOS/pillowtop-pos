@@ -1028,26 +1028,31 @@ function SimpleFeeFields({
   const { def, disabled } = props;
   const fee = getSimpleFee(def, kind);
   const future = !disabled;
+  // The toggle is local state, not derived from the fee values: turning a
+  // fee on writes a visible 10% default, and typing 0 in both fields no
+  // longer collapses the inputs mid-edit. A saved 0/0 simply loads as off.
+  const [on, setOn] = useState(fee.enabled);
 
   return (
     <div className="space-y-3">
       <Toggle
         label={label}
-        checked={fee.enabled}
+        checked={on}
         disabled={disabled}
         future={future}
         errors={fe(props, anchor)}
         warnings={fw(props, anchor)}
-        onChange={(v) =>
+        onChange={(v) => {
+          setOn(v);
           props.update(
             setSimpleFee(def, kind, {
-              percent: v ? fee.percent || 0 : 0,
-              flatDollars: v ? fee.flatDollars || 0 : 0,
+              percent: v ? 10 : 0,
+              flatDollars: 0,
             })
-          )
-        }
+          );
+        }}
       />
-      {fee.enabled && (
+      {on && (
         <div className="flex flex-wrap items-end gap-4 pl-1">
           <NumField
             label="Percent"
