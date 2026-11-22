@@ -754,12 +754,15 @@ function BoardContent() {
       // The open panel's journey stays mounted until the panel closes —
       // unmounting its card mid-commit (a dnd-kit ref-detach inside the
       // same render as the panel's cancelled-state flip) crashed React's
-      // reconciler with removeChild-not-a-child.
+      // reconciler with removeChild-not-a-child. A hidden journey (for
+      // example an exchange-parked original) also stays while a search is
+      // active: it only reaches this list by matching the search.
       (j) =>
-        (!j.cancelled_at && !hiddenJourneyIds.has(j.id)) ||
-        j.id === selectedJourney?.id
+        j.id === selectedJourney?.id ||
+        (!j.cancelled_at &&
+          (!hiddenJourneyIds.has(j.id) || search.trim() !== ""))
     );
-  }, [journeys, hiddenJourneyIds, selectedJourney?.id]);
+  }, [journeys, hiddenJourneyIds, selectedJourney?.id, search]);
 
   const columns = useMemo(() => {
     return BOARD_STATES.map((state) => ({
