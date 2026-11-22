@@ -106,6 +106,11 @@ import {
   mostUrgentEvaluation,
   type SleepTrialEvaluation,
 } from "@/lib/journeys/sleepTrial";
+import {
+  fetchPickupDates,
+  setPickupDate,
+  type PickupDateInfo,
+} from "@/lib/journeys/pickup";
 import Modal from "@/components/Modal";
 import ConfirmModal from "@/components/ConfirmModal";
 import RecordRefundModal from "@/components/RecordRefundModal";
@@ -145,6 +150,17 @@ function shortDate(iso: string): string {
     month: "short",
     day: "numeric",
     ...(d.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
+  });
+}
+
+// "Tue Nov 25" - same local-midnight parsing as shortDate, plus weekday.
+// Used by the pickup-date row in the Fulfillment rail.
+function weekdayShortDate(iso: string): string {
+  const d = iso.includes("T") ? new Date(iso) : new Date(`${iso}T00:00:00`);
+  return d.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
   });
 }
 
@@ -705,6 +721,28 @@ export default function JourneyWorkspace({
     };
   }, [journey.id, trialReadSeq, eventSignal]);
 
+  // Pickup promise date (m170/171) for the Fulfillment rail row. Same
+  // refresh discipline as pendingExcTypes: journey change, panel refresh
+  // signal, and any new event (a fulfillment record bumps eventSignal).
+  const [pickupInfo, setPickupInfo] = useState<PickupDateInfo | null>(null);
+  useEffect(() => {
+    let alive = true;
+    if (journey.cancelled_at) {
+      setPickupInfo(null);
+      return;
+    }
+    fetchPickupDates([journey.id])
+      .then((map) => {
+        if (alive) setPickupInfo(map[journey.id] ?? null);
+      })
+      .catch(() => {
+        if (alive) setPickupInfo(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [journey.id, journey.current_state, journey.cancelled_at, trialReadSeq, eventSignal]);
+
   // Slice 2a: per-unit handover status, same refresh discipline as
   // liveTrialStatuses (journey/state change, every panel refresh, and any
   // new event). Quote-stage orders skip the read entirely. A failed read
@@ -1016,6 +1054,13 @@ export default function JourneyWorkspace({
   // Lets the chooser's Cancel button run Modal's guarded close (asks
   // "Discard changes?" when the new-address form has typed text).
   const shipToCloseRef = useRef<(() => void) | null>(null);
+  // Pickup promise date editor (m170/171): one date input plus a reason
+  // that only appears when the new date moves past the date in effect.
+  const [pickupDateOpen, setPickupDateOpen] = useState(false);
+  const [pickupDateInput, setPickupDateInput] = useState("");
+  const [pickupDateReason, setPickupDateReason] = useState("");
+  const [pickupDateSaving, setPickupDateSaving] = useState(false);
+  const [pickupDateError, setPickupDateError] = useState<string | null>(null);
   const [lineAvailability, setLineAvailability] = useState<Record<string, number>>({});
   const [lineAvailabilityFailed, setLineAvailabilityFailed] = useState<Record<string, boolean>>({});
   // Inline quantity-floor message for the edit-order row that was last
@@ -1464,6 +1509,34 @@ export default function JourneyWorkspace({
       setPanelError(e?.message ?? "Failed to update delivery address");
     } finally {
       setShipToSaving(false);
+    }
+  }
+
+  function openPickupDateEditor() {
+    setPickupDateInput(pickupInfo?.effective_date ?? "");
+    setPickupDateReason("");
+    setPickupDateError(null);
+    setPickupDateOpen(true);
+  }
+
+  async function savePickupDate() {
+    if (!pickupDateInput || pickupDateSaving) return;
+    setPickupDateSaving(true);
+    setPickupDateError(null);
+    try {
+      await setPickupDate(
+        journey.id,
+        pickupDateInput,
+        pickupDateReason.trim() || null
+      );
+      setPickupDateOpen(false);
+      const map = await fetchPickupDates([journey.id]);
+      setPickupInfo(map[journey.id] ?? null);
+      await handlePanelRefresh();
+    } catch (e: any) {
+      setPickupDateError(e?.message ?? "Failed to save the pickup date");
+    } finally {
+      setPickupDateSaving(false);
     }
   }
 
@@ -1952,6 +2025,7 @@ export default function JourneyWorkspace({
     reassignSaving ||
     fulfillmentSaving ||
     shipToSaving ||
+    pickupDateSaving ||
     activityState.saving;
 
   // Attention column: a short prioritized list of real signals, all
@@ -3059,6 +3133,38 @@ export default function JourneyWorkspace({
               {journey.fulfillment_type === "delivery" && customerAddress && (
                 <p className="mt-0.5 text-xs text-slate-500">{customerAddress}</p>
               )}
+              {pickupInfo != null &&
+                pickupInfo.units_remaining > 0 &&
+                !journey.cancelled_at && (
+                  <div className="mt-1.5 flex items-baseline justify-between gap-2 text-sm">
+                    <span className="text-slate-700">
+                      {pickupInfo.effective_date ? (
+                        <>
+                          Pickup by:{" "}
+                          <span className="font-medium text-slate-900">
+                            {weekdayShortDate(pickupInfo.effective_date)}
+                          </span>
+                          {pickupInfo.is_default && (
+                            <span className="ml-1 text-xs text-slate-400">
+                              (default)
+                            </span>
+                          )}
+                        </>
+                      ) : journey.current_state === "Waiting for Inventory" ? (
+                        "Pickup date: set when stock arrives"
+                      ) : (
+                        "No pickup date set"
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={openPickupDateEditor}
+                      className="shrink-0 text-xs font-medium text-brand-600 hover:text-brand-700"
+                    >
+                      {pickupInfo.expected_date ? "Change" : "Set date"}
+                    </button>
+                  </div>
+                )}
               <JourneyDelivery
                 journey={journey}
                 // Same path as every other panel action: refreshes the
@@ -3325,6 +3431,86 @@ export default function JourneyWorkspace({
                   </div>
                 </div>
               )}
+            </div>
+          </Modal>
+        )}
+
+        {pickupDateOpen && (
+          <Modal
+            onClose={() => setPickupDateOpen(false)}
+            dirty={
+              pickupDateInput !== (pickupInfo?.effective_date ?? "") ||
+              pickupDateReason.trim() !== ""
+            }
+            saving={pickupDateSaving}
+          >
+            <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-lg">
+              {(() => {
+                const movingOut =
+                  !!pickupInfo?.effective_date &&
+                  pickupDateInput > pickupInfo.effective_date;
+                return (
+                  <>
+                    <h2 className="mb-4 text-lg font-semibold text-slate-900">
+                      {movingOut ? "Move date out" : "Set pickup date"}
+                    </h2>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-slate-600">
+                          Expected pickup date
+                        </label>
+                        <input
+                          type="date"
+                          value={pickupDateInput}
+                          onChange={(e) => setPickupDateInput(e.target.value)}
+                          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                        />
+                      </div>
+                      {movingOut && (
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-slate-600">
+                            Why is it moving? (required)
+                          </label>
+                          <textarea
+                            value={pickupDateReason}
+                            onChange={(e) => setPickupDateReason(e.target.value)}
+                            rows={2}
+                            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                            placeholder="Customer asked for Friday instead"
+                          />
+                        </div>
+                      )}
+                      {pickupDateError && (
+                        <p
+                          role="alert"
+                          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+                        >
+                          {pickupDateError}
+                        </p>
+                      )}
+                      <div className="flex gap-2 pt-2">
+                        <button
+                          onClick={savePickupDate}
+                          disabled={
+                            pickupDateSaving ||
+                            !pickupDateInput ||
+                            (movingOut && pickupDateReason.trim() === "")
+                          }
+                          className="flex-1 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+                        >
+                          {pickupDateSaving ? "Saving…" : "Save"}
+                        </button>
+                        <button
+                          onClick={() => setPickupDateOpen(false)}
+                          className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </Modal>
         )}
