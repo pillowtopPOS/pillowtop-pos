@@ -50,6 +50,14 @@ export function useOverdueFulfillments(): OverdueFulfillmentsState {
         const storeId = await fetchConfirmationStoreId();
         const items = await fetchOverdueFulfillments(storeId);
         if (!alive) return;
+        // Most overdue first, then order number, so the banner and any
+        // future consumer see the same order. Journey numbers are
+        // zero-padded (SJ-XXX-00012) so lexical sort matches numeric.
+        items.sort(
+          (a, b) =>
+            b.days_overdue - a.days_overdue ||
+            (a.journey_number ?? "").localeCompare(b.journey_number ?? "")
+        );
         setState({ items, count: items.length, loading: false });
       } catch {
         // Keep the last known list on transient failures; only the

@@ -57,6 +57,7 @@ export default function MyWorkPage() {
   // Independent of the call-list gate: the overdue nag shows all day to
   // everyone at the active store.
   const overdue = useOverdueFulfillments();
+  const [showAllOverdue, setShowAllOverdue] = useState(false);
   // 163: the committed-action worklist split into what the caller can
   // act on now vs the open actions they merely own or watch.
   const [workPartition, setWorkPartition] = useState<{
@@ -523,7 +524,10 @@ export default function MyWorkPage() {
             Overdue pickups and deliveries ({overdue.count})
           </p>
           <div className="space-y-1.5">
-            {overdue.items.slice(0, 10).map((o) => (
+            {(showAllOverdue
+              ? overdue.items
+              : overdue.items.slice(0, 10)
+            ).map((o) => (
               <Link
                 key={`${o.kind}-${o.journey_id}`}
                 href={`/board?journey=${o.journey_id}`}
@@ -551,9 +555,15 @@ export default function MyWorkPage() {
               </Link>
             ))}
             {overdue.count > 10 && (
-              <p className="pt-1 text-xs text-amber-700">
-                and {overdue.count - 10} more
-              </p>
+              <button
+                type="button"
+                onClick={() => setShowAllOverdue((v) => !v)}
+                className="pt-1 text-xs font-medium text-amber-800 underline hover:text-amber-900"
+              >
+                {showAllOverdue
+                  ? "Show fewer"
+                  : `Show all ${overdue.count}`}
+              </button>
             )}
           </div>
         </div>
