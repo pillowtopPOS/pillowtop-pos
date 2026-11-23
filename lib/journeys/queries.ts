@@ -1189,7 +1189,9 @@ export async function fetchJourneyLineItems(
   const supabase = createClient();
   const { data, error } = await supabase
     .from("journey_line_items")
-    .select("*")
+    .select(
+      "id, journey_id, product_id, item_name, quantity, unit_price, fulfillment_type_override, pickup_location_id, pair_group_id, sold_condition, trial_ineligible_reason, exchange_action_id, exchange_line_role, created_at, updated_at"
+    )
     .eq("journey_id", journeyId)
     .order("created_at", { ascending: true });
 

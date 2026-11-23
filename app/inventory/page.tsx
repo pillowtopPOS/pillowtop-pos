@@ -35,6 +35,7 @@ type ImportMapping = {
   "Item Name": number | null;
   Brand: number | null;
   Cost: number | null;
+  "Commission Cost": number | null;
   Price: number | null;
   "Sale Price": number | null;
 };
@@ -45,6 +46,7 @@ const ALL_FIELDS = [
   "Item Name",
   "Brand",
   "Cost",
+  "Commission Cost",
   "Price",
   "Sale Price",
 ] as const;
@@ -105,6 +107,7 @@ export default function InventoryPage() {
     "Item Name": null,
     Brand: null,
     Cost: null,
+    "Commission Cost": null,
     Price: null,
     "Sale Price": null,
   });
@@ -290,7 +293,12 @@ export default function InventoryPage() {
         if (!guess.SKU && /\bsku\b/i.test(lower)) guess.SKU = idx;
         if (!guess["Item Name"] && /\b(item\s?name|product\s?name|name)\b/i.test(lower)) guess["Item Name"] = idx;
         if (!guess.Brand && /\bbrand\b/i.test(lower)) guess.Brand = idx;
-        if (!guess.Cost && /\bcost\b/i.test(lower)) guess.Cost = idx;
+        if (!guess.Cost && /\bcost\b/i.test(lower) && !/commission/i.test(lower)) guess.Cost = idx;
+        if (
+          !guess["Commission Cost"] &&
+          /^commissioncost$/i.test(lower.replace(/[\s_]/g, ""))
+        )
+          guess["Commission Cost"] = idx;
         if (!guess.Price && /\bprice\b/i.test(lower) && !/sale/i.test(lower)) guess.Price = idx;
         if (!guess["Sale Price"] && /\b(sale\s?price|sale)\b/i.test(lower)) guess["Sale Price"] = idx;
       });
@@ -353,12 +361,17 @@ export default function InventoryPage() {
 
       const brand = (row.Brand ?? "").toString().trim() || null;
       const cost = coerceMoney(row.Cost);
+      const commissionCost = coerceMoney(row["Commission Cost"]);
       const price = coerceMoney(row.Price);
       const salePrice = coerceMoney(row["Sale Price"]);
 
       if (row.Cost !== undefined && row.Cost !== null && row.Cost.toString().trim() !== "" && cost === null) {
         setPageError(null);
         skipped.push({ row: idx + 2, reason: "Cost is not a valid number" });
+        return;
+      }
+      if (row["Commission Cost"] !== undefined && row["Commission Cost"] !== null && row["Commission Cost"].toString().trim() !== "" && commissionCost === null) {
+        skipped.push({ row: idx + 2, reason: "Commission Cost is not a valid number" });
         return;
       }
       if (row.Price !== undefined && row.Price !== null && row.Price.toString().trim() !== "" && price === null) {
@@ -370,7 +383,7 @@ export default function InventoryPage() {
         return;
       }
 
-      records.push({
+      const rec: Partial<Product & { company_id: string }> = {
         company_id: companyId,
         sku,
         item_name: itemName,
@@ -378,17 +391,34 @@ export default function InventoryPage() {
         cost,
         price,
         sale_price: salePrice,
-      });
+      };
+      // When the file maps a Commission Cost column, a number sets it and a
+      // blank cell omits the key so the stored value is left alone. With no
+      // mapped column the key never appears in any record.
+      if (commissionCost !== null) {
+        rec.commission_cost = commissionCost;
+      }
+      records.push(rec);
     });
 
     const supabase = createClient();
-    const { error } = await supabase
-      .from("products")
-      .upsert(records, { onConflict: "company_id,sku", ignoreDuplicates: false });
-
-    if (error) {
-      setPageError(error.message);
-      return;
+    // PostgREST pads missing keys with null across a bulk upsert, so
+    // records that carry commission_cost go in their own call - a blank
+    // cell must never wipe a stored value. With no mapped column the
+    // first batch is every record, same single call as before.
+    const withCommission = records.filter((r) => "commission_cost" in r);
+    const withoutCommission = records.filter(
+      (r) => !("commission_cost" in r)
+    );
+    for (const batch of [withoutCommission, withCommission]) {
+      if (batch.length === 0) continue;
+      const { error } = await supabase
+        .from("products")
+        .upsert(batch, { onConflict: "company_id,sku", ignoreDuplicates: false });
+      if (error) {
+        setPageError(error.message);
+        return;
+      }
     }
 
     const created = records.length;
@@ -1057,12 +1087,40 @@ function ProductModal({
 }) {
   const [p, setP] = useState<Product>(product);
   const [categories, setCategories] = useState<ProductCategory[]>([]);
+  // commission_cost lives on products but not in products_public, so the
+  // list row that opened this modal never carries it. Editors are already
+  // the roles that may see cost, so a one-row direct read is safe.
+  const [loadedCommissionCost, setLoadedCommissionCost] = useState<
+    number | null | undefined
+  >(undefined);
+  const commissionCost =
+    p.commission_cost !== undefined ? p.commission_cost : loadedCommissionCost;
 
   useEffect(() => {
     if (companyId) {
       fetchProductCategories(companyId).then(setCategories);
     }
   }, [companyId]);
+
+  useEffect(() => {
+    if (!product.id) {
+      setLoadedCommissionCost(null);
+      return;
+    }
+    let alive = true;
+    const supabase = createClient();
+    supabase
+      .from("products")
+      .select("commission_cost")
+      .eq("id", product.id)
+      .single()
+      .then(({ data }) => {
+        if (alive) setLoadedCommissionCost(data?.commission_cost ?? null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [product.id]);
 
   return (
     <Modal
@@ -1176,6 +1234,24 @@ function ProductModal({
                 className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
             </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700">Commission cost</label>
+            <input
+              type="number"
+              value={commissionCost ?? ""}
+              onChange={(e) =>
+                setP((x) => ({
+                  ...x,
+                  commission_cost:
+                    e.target.value === "" ? null : Number(e.target.value),
+                }))
+              }
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            />
+            <p className="mt-1 text-xs text-slate-500">
+              Leave blank to use Cost. Used only for commission.
+            </p>
           </div>
         </div>
         <div className="mt-4 flex gap-2">

@@ -7,6 +7,10 @@ export type Product = {
   item_name: string;
   brand: string | null;
   cost: number | null;
+  // 173: optional override for the cost basis used in commission math.
+  // Null/undefined means "use cost". Not in products_public; editors load
+  // it with a direct read when the product form opens.
+  commission_cost?: number | null;
   price: number | null;
   sale_price: number | null;
   category_id: string | null;
@@ -151,7 +155,7 @@ export async function fetchProductsWithStock(
 export async function upsertProduct(product: Partial<Product> & { company_id: string; sku: string }) {
   const supabase = createClient();
 
-  const payload = {
+  const payload: Record<string, unknown> = {
     company_id: product.company_id,
     sku: product.sku,
     item_name: product.item_name,
@@ -162,6 +166,12 @@ export async function upsertProduct(product: Partial<Product> & { company_id: st
     category_id: product.category_id ?? null,
     sleep_trial_eligible: product.sleep_trial_eligible ?? null,
   };
+  // Only send commission_cost when the caller supplies it: undefined means
+  // "leave the stored value alone" (import rows without the column, or
+  // callers that never loaded it).
+  if (product.commission_cost !== undefined) {
+    payload.commission_cost = product.commission_cost;
+  }
 
   const { data, error } = await supabase
     .from("products")

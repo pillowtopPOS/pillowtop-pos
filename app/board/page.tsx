@@ -525,18 +525,47 @@ function BoardContent() {
   // subscribes to, so the panel refresh and drawer close refetch them for
   // just this journey.
   async function refreshTrialBadgeData(journeyId: string) {
-    const [countMap, evalMap, trialActions] = await Promise.all([
-      fetchReturnedTrialCounts([journeyId]),
-      // Panel actions (protector override, trial-start correction, an
-      // auto-completed return, ...) can change the item's evaluation -
-      // refresh just this journey's evals so the board card behind the
-      // panel isn't stale until the next loadData.
-      evaluateSleepTrialItems([journeyId]),
-      // The worklist feeds the Return-in-progress chip and the hide
-      // rule; a panel action can flip either one.
-      fetchOpenTrialActions(),
-    ]);
+    const boardJourney = journeys.find((j) => j.id === journeyId);
+    const [countMap, evalMap, trialActions, fulfillMap, unitMap] =
+      await Promise.all([
+        fetchReturnedTrialCounts([journeyId]),
+        // Panel actions (protector override, trial-start correction, an
+        // auto-completed return, ...) can change the item's evaluation -
+        // refresh just this journey's evals so the board card behind the
+        // panel isn't stale until the next loadData.
+        evaluateSleepTrialItems([journeyId]),
+        // The worklist feeds the Return-in-progress chip and the hide
+        // rule; a panel action can flip either one.
+        fetchOpenTrialActions(),
+        // A recorded pickup or delivery only writes
+        // journey_fulfillment_units, which nothing else on this path
+        // refetches - without this the "N of M" card chip stays stale
+        // until the next full loadJourneys.
+        fetchJourneysFulfillmentCounts([journeyId]),
+        // Line edits change the unit totals the chip divides by; the
+        // lookup needs the journey's fulfillment_type for override-free
+        // lines, so it only runs for journeys still on the board.
+        fetchJourneysLineItemQuantities(
+          boardJourney ? [boardJourney] : []
+        ),
+      ]);
     setReturnedTrialCounts((prev) => ({ ...prev, ...countMap }));
+    // Missing keys mean zero (a fully un-handed journey returns no
+    // rows), so write explicit values rather than merging.
+    setFulfillmentCounts((prev) => ({
+      ...prev,
+      [journeyId]: fulfillMap[journeyId] ?? 0,
+    }));
+    if (boardJourney) {
+      setJourneyUnitTotals((prev) => ({
+        ...prev,
+        [journeyId]: unitMap[journeyId] ?? {
+          units: 0,
+          hasPickupLine: false,
+          hasDeliveryLine: false,
+        },
+      }));
+    }
     setOpenActions(trialActions);
     setTrialEvals((prev) => {
       const next = new Map(prev);
@@ -811,7 +840,11 @@ function BoardContent() {
       state: "Ready for Pickup",
       journeys: boardJourneys.filter((j) => readyForPickupIds.has(j.id)),
     });
-    return cols;
+    // Hide the Sold column entirely when nothing lands there after the
+    // active search and filters; the remaining columns fill the width.
+    return cols.filter(
+      (c) => c.state !== "Sold" || c.journeys.length > 0
+    );
   }, [boardJourneys, readyForPickupIds]);
 
   const sensors = useSensors(
@@ -1597,7 +1630,13 @@ function BoardContent() {
 
       {!loading && view === "board" && (
         <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-          <div className="grid min-w-[1120px] grid-cols-7 gap-2 overflow-x-auto pb-2">
+          <div
+            className="grid gap-2 overflow-x-auto pb-2"
+            style={{
+              gridTemplateColumns: `repeat(${columns.length}, minmax(160px, 1fr))`,
+              minWidth: `${columns.length * 160}px`,
+            }}
+          >
             {columns.map((column) => (
               <Column
                 key={column.state}
@@ -2794,36 +2833,43 @@ function JourneyCard({
           {journey.employee.name}
         </p>
       )}
-      {trial && (
-        <p className="flex items-center gap-1 text-[10px] font-medium text-teal-700">
-          {trial.display?.night != null
-            ? `Night ${trial.display.night} of ${trial.display.length_nights}${
-                (trial.display.extension_nights ?? 0) > 0
-                  ? ` +${trial.display.extension_nights} ext`
-                  : ""
-              }`
-            : "Sleep trial"}
-          <TrialStatusChip trial={trial} />
-          {extraTrials > 0 && (
-            <span className="text-slate-500">+{extraTrials}</span>
+      {(trial ||
+        (unitsOut > 0 &&
+          (unitMeta?.units ?? 0) > 0 &&
+          unitsOut < (unitMeta?.units ?? 0))) && (
+        <p className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-[10px] font-medium text-teal-700">
+          {trial && (
+            <>
+              {trial.display?.night != null
+                ? `Night ${trial.display.night} of ${trial.display.length_nights}${
+                    (trial.display.extension_nights ?? 0) > 0
+                      ? ` +${trial.display.extension_nights} ext`
+                      : ""
+                  }`
+                : "Sleep trial"}
+              <TrialStatusChip trial={trial} />
+              {extraTrials > 0 && (
+                <span className="text-slate-500">+{extraTrials}</span>
+              )}
+            </>
           )}
+          {unitsOut > 0 &&
+            (unitMeta?.units ?? 0) > 0 &&
+            unitsOut < (unitMeta?.units ?? 0) && (
+              <span className="inline-block rounded-full bg-sky-100 px-1.5 py-px font-medium text-sky-700">
+                {fulfillmentCountLabel({
+                  out: unitsOut,
+                  total: unitMeta?.units ?? 0,
+                  method: journey.fulfillment_type,
+                  hasPickupLine: unitMeta?.hasPickupLine ?? false,
+                  hasDeliveryLine: unitMeta?.hasDeliveryLine ?? false,
+                })}
+              </span>
+            )}
         </p>
       )}
       {hasUnresolvedPayment && (
         <p className="text-[10px] font-medium text-amber-600">Unresolved payment</p>
-      )}
-      {unitsOut > 0 && (unitMeta?.units ?? 0) > 0 && unitsOut < (unitMeta?.units ?? 0) && (
-        <p>
-          <span className="inline-block rounded-full bg-sky-100 px-1.5 py-px text-[10px] font-medium text-sky-700">
-            {fulfillmentCountLabel({
-              out: unitsOut,
-              total: unitMeta?.units ?? 0,
-              method: journey.fulfillment_type,
-              hasPickupLine: unitMeta?.hasPickupLine ?? false,
-              hasDeliveryLine: unitMeta?.hasDeliveryLine ?? false,
-            })}
-          </span>
-        </p>
       )}
       {(returnedCounts?.returned ?? 0) > 0 &&
         returnedPillText(returnedCounts?.returned ?? 0, unitsOut) && (
