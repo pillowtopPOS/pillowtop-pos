@@ -818,13 +818,12 @@ export async function recordJourneyEvent(
     throw new Error("Not authenticated");
   }
 
-  const user = session.user;
-
-  const { error } = await supabase.from("journey_events").insert({
-    journey_id: journeyId,
-    event_type: eventType,
-    event_data: eventData,
-    triggered_by: user.id,
+  // m183: the table is closed to direct inserts; this definer RPC is the
+  // only write path and whitelists the client-owned event types itself.
+  const { error } = await supabase.rpc("record_journey_event", {
+    p_journey_id: journeyId,
+    p_event_type: eventType,
+    p_event_data: eventData,
   });
 
   if (error) {
@@ -1169,13 +1168,10 @@ export async function cancelJourney(journeyId: string, reason: string) {
     throw new Error("Not authenticated");
   }
 
-  const user = session.user;
-
-  const { error } = await supabase.from("journey_events").insert({
-    journey_id: journeyId,
-    event_type: "journey_cancelled",
-    event_data: { reason },
-    triggered_by: user.id,
+  const { error } = await supabase.rpc("record_journey_event", {
+    p_journey_id: journeyId,
+    p_event_type: "journey_cancelled",
+    p_event_data: { reason },
   });
 
   if (error) {
