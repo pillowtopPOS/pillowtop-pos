@@ -16,6 +16,7 @@ import {
   Settings as SettingsIcon,
   BadgeDollarSign,
   Wallet,
+  Gift,
   LogOut,
 } from "lucide-react";
 import CelebrationBanner from "@/components/CelebrationBanner";
@@ -61,6 +62,7 @@ export default function Sidebar({
   const [activeStoreId, setActiveStoreId] = useState<string | null>(null);
   const [canSeeCommission, setCanSeeCommission] = useState(false);
   const [canSeePayouts, setCanSeePayouts] = useState(false);
+  const [canSeeSpiffs, setCanSeeSpiffs] = useState(false);
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -107,11 +109,14 @@ export default function Sidebar({
         fetchStores(),
         hasPermission("commission.manage"),
         hasPermission("commission.payouts_view"),
-      ]).then(([e, s, canCommission, canPayouts]) => {
+        hasPermission("commission.spiffs_log_review"),
+        hasPermission("commission.spiffs_manage"),
+      ]).then(([e, s, canCommission, canPayouts, canLogSpiff, canManageSpiff]) => {
         setEmployee(e);
         setStores(s);
         setCanSeeCommission(canCommission === true);
         setCanSeePayouts(canPayouts === true);
+        setCanSeeSpiffs(canLogSpiff === true || canManageSpiff === true);
         setLoading(false);
       });
     });
@@ -244,6 +249,15 @@ export default function Sidebar({
                     href: "/payouts",
                     label: "Payouts",
                     icon: Wallet,
+                  },
+                ]
+              : []),
+            ...(canSeeSpiffs
+              ? [
+                  {
+                    href: "/spiffs",
+                    label: "Spiffs",
+                    icon: Gift,
                   },
                 ]
               : []),

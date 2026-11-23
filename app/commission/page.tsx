@@ -344,20 +344,33 @@ export default function CommissionPage() {
   const summary = useMemo(() => {
     const m = new Map<
       string,
-      { name: string; total: number; notCalculated: number }
+      {
+        name: string;
+        commission: number;
+        spiffs: number;
+        notCalculated: number;
+      }
     >();
     for (const r of rows ?? []) {
       const cur =
         m.get(r.employee_id) ??
-        ({ name: r.employee_name ?? "Unknown", total: 0, notCalculated: 0 } as {
+        ({
+          name: r.employee_name ?? "Unknown",
+          commission: 0,
+          spiffs: 0,
+          notCalculated: 0,
+        } as {
           name: string;
-          total: number;
+          commission: number;
+          spiffs: number;
           notCalculated: number;
         });
-      if (r.amount_cents == null) {
+      if (r.kind === "SPIFF") {
+        cur.spiffs += r.amount_cents ?? 0;
+      } else if (r.amount_cents == null) {
         cur.notCalculated += 1;
       } else {
-        cur.total += r.amount_cents;
+        cur.commission += r.amount_cents;
       }
       m.set(r.employee_id, cur);
     }
@@ -526,9 +539,15 @@ export default function CommissionPage() {
                       <span key={s.name} className="mr-6 inline-block py-0.5">
                         <span className="font-medium">{s.name}:</span>{" "}
                         <span
-                          className={s.total < 0 ? "text-red-600" : undefined}
+                          className={
+                            s.commission < 0 ? "text-red-600" : undefined
+                          }
                         >
-                          {money(s.total)}
+                          {money(s.commission)} commission
+                        </span>
+                        <span className="text-emerald-700">
+                          {" "}
+                          + {money(s.spiffs)} spiffs
                         </span>
                         {s.notCalculated > 0 && (
                           <span className="text-amber-700">
@@ -546,6 +565,7 @@ export default function CommissionPage() {
                       <th className="px-3 py-2">Date</th>
                       <th className="px-3 py-2">Employee</th>
                       <th className="px-3 py-2">Order</th>
+                      <th className="px-3 py-2">Type</th>
                       <th className="px-3 py-2">Item</th>
                       <th className="px-3 py-2 text-right">Revenue</th>
                       <th className="px-3 py-2 text-right">Cost</th>
@@ -568,6 +588,7 @@ export default function CommissionPage() {
                       </tr>
                     )}
                     {rows.map((r) => {
+                      const isSpiff = r.kind === "SPIFF";
                       const profit =
                         r.cost_cents == null || r.revenue_cents == null
                           ? null
@@ -588,14 +609,31 @@ export default function CommissionPage() {
                               {r.journey_number ?? "View order"}
                             </Link>
                           </td>
+                          <td className="whitespace-nowrap px-3 py-2">
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-xs ${
+                                isSpiff
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : r.kind === "ADJUSTMENT"
+                                    ? "bg-amber-100 text-amber-800"
+                                    : "bg-slate-100 text-slate-600"
+                              }`}
+                            >
+                              {isSpiff
+                                ? "Spiff"
+                                : r.kind === "ADJUSTMENT"
+                                  ? "Adjustment"
+                                  : "Commission"}
+                            </span>
+                          </td>
                           <td className="px-3 py-2 text-slate-700">
-                            {r.item_name ?? ""}
+                            {r.item_name ?? (isSpiff ? "Spiff" : "")}
                           </td>
                           <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">
-                            {money(r.revenue_cents)}
+                            {isSpiff ? "-" : money(r.revenue_cents)}
                           </td>
                           <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">
-                            {money(r.cost_cents)}
+                            {isSpiff ? "-" : money(r.cost_cents)}
                           </td>
                           <td
                             className={`whitespace-nowrap px-3 py-2 text-right ${
@@ -604,10 +642,10 @@ export default function CommissionPage() {
                                 : "text-slate-700"
                             }`}
                           >
-                            {profit == null ? "" : money(profit)}
+                            {isSpiff ? "-" : profit == null ? "" : money(profit)}
                           </td>
                           <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">
-                            {pct(r.rate_bp)}
+                            {isSpiff ? "-" : pct(r.rate_bp)}
                           </td>
                           <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">
                             {pct(r.credit_share_bp)}
@@ -621,14 +659,14 @@ export default function CommissionPage() {
                           >
                             {r.amount_cents == null ? (
                               <span className="text-slate-500">
-                                Not calculated
+                                {isSpiff ? "-" : "Not calculated"}
                               </span>
                             ) : (
                               money(r.amount_cents)
                             )}
                           </td>
                           <td className="px-3 py-2">
-                            <FlagPills flags={r.flags} />
+                            <FlagPills flags={isSpiff ? null : r.flags} />
                           </td>
                         </tr>
                       );
