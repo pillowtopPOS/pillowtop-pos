@@ -10,13 +10,12 @@ import {
   Lightbulb,
   Truck,
   Users,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Store as StoreIcon,
   Settings as SettingsIcon,
-  BadgeDollarSign,
-  Wallet,
-  Gift,
+  Briefcase,
   LogOut,
 } from "lucide-react";
 import CelebrationBanner from "@/components/CelebrationBanner";
@@ -62,7 +61,9 @@ export default function Sidebar({
   const [activeStoreId, setActiveStoreId] = useState<string | null>(null);
   const [canSeeCommission, setCanSeeCommission] = useState(false);
   const [canSeePayouts, setCanSeePayouts] = useState(false);
-  const [canSeeSpiffs, setCanSeeSpiffs] = useState(false);
+  const [canLogSpiffs, setCanLogSpiffs] = useState(false);
+  const [canManageSpiffs, setCanManageSpiffs] = useState(false);
+  const [backOfficeOpen, setBackOfficeOpen] = useState(false);
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -116,7 +117,8 @@ export default function Sidebar({
         setStores(s);
         setCanSeeCommission(canCommission === true);
         setCanSeePayouts(canPayouts === true);
-        setCanSeeSpiffs(canLogSpiff === true || canManageSpiff === true);
+        setCanLogSpiffs(canLogSpiff === true);
+        setCanManageSpiffs(canManageSpiff === true);
         setLoading(false);
       });
     });
@@ -192,6 +194,30 @@ export default function Sidebar({
   const activeStore = stores.find((s) => s.id === activeStoreId);
   const isAdmin = employee?.role === "owner" || employee?.role === "admin";
 
+  const navItemClass = (isActive: boolean) =>
+    `relative flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${
+      isActive
+        ? "bg-brand-50 text-brand-700"
+        : "text-slate-600 hover:bg-slate-100"
+    }`;
+
+  // The Back Office group holds every commission-facing route behind one
+  // collapsed-by-default disclosure. Children are gated individually so
+  // nobody sees a money word their permission does not cover; Reviews is
+  // the spiffs page under its rep-facing name for log-only users.
+  const backOfficeChildren = [
+    ...(canSeeCommission ? [{ href: "/commission", label: "Commission" }] : []),
+    ...(canSeePayouts ? [{ href: "/payouts", label: "Payouts" }] : []),
+    ...(canManageSpiffs ? [{ href: "/spiffs", label: "Spiffs" }] : []),
+    ...(canLogSpiffs && !canManageSpiffs
+      ? [{ href: "/spiffs", label: "Reviews" }]
+      : []),
+  ];
+  const backOfficeActive = ["/commission", "/payouts", "/spiffs"].some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`)
+  );
+  const backOfficeExpanded = backOfficeOpen || backOfficeActive;
+
   // Full navigation (not router.push) so every in-memory cache — employee,
   // store list, mounted page state — is dropped with the session.
   async function handleSignOut() {
@@ -232,39 +258,7 @@ export default function Sidebar({
         </div>
 
         <nav className="flex-1 space-y-1 overflow-y-auto p-2">
-          {[
-            ...NAV,
-            ...(canSeeCommission
-              ? [
-                  {
-                    href: "/commission",
-                    label: "Commission",
-                    icon: BadgeDollarSign,
-                  },
-                ]
-              : []),
-            ...(canSeePayouts
-              ? [
-                  {
-                    href: "/payouts",
-                    label: "Payouts",
-                    icon: Wallet,
-                  },
-                ]
-              : []),
-            ...(canSeeSpiffs
-              ? [
-                  {
-                    href: "/spiffs",
-                    label: "Spiffs",
-                    icon: Gift,
-                  },
-                ]
-              : []),
-            ...(isAdmin
-              ? [{ href: "/settings", label: "Settings", icon: SettingsIcon }]
-              : []),
-          ].map((item) => {
+          {[...NAV].map((item) => {
             const Icon = item.icon;
             const isActive =
               item.href === "/inventory"
@@ -303,6 +297,72 @@ export default function Sidebar({
               </Link>
             );
           })}
+
+          {backOfficeChildren.length > 0 && (
+            <div>
+              <button
+                onClick={() => {
+                  // In icon-collapsed mode the group has nowhere to
+                  // expand, so clicking it widens the sidebar and opens
+                  // the group in one step.
+                  if (collapsed) {
+                    setCollapsed(false);
+                    setBackOfficeOpen(true);
+                  } else {
+                    setBackOfficeOpen((o) => !o);
+                  }
+                }}
+                className={`w-full ${navItemClass(backOfficeActive)}`}
+              >
+                <Briefcase className="h-5 w-5 shrink-0" />
+                {!collapsed && (
+                  <>
+                    <span>Back Office</span>
+                    {backOfficeExpanded ? (
+                      <ChevronDown className="ml-auto h-4 w-4" />
+                    ) : (
+                      <ChevronRight className="ml-auto h-4 w-4" />
+                    )}
+                  </>
+                )}
+              </button>
+              {!collapsed && backOfficeExpanded && (
+                <div className="mt-0.5 space-y-0.5">
+                  {backOfficeChildren.map((c) => {
+                    const childActive =
+                      pathname === c.href ||
+                      pathname.startsWith(`${c.href}/`);
+                    return (
+                      <Link
+                        key={c.label}
+                        href={c.href}
+                        className={`block rounded-md py-2 pl-11 pr-3 text-sm font-medium transition-colors ${
+                          childActive
+                            ? "bg-brand-50 text-brand-700"
+                            : "text-slate-600 hover:bg-slate-100"
+                        }`}
+                      >
+                        {c.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {isAdmin && (
+            <Link
+              href="/settings"
+              className={navItemClass(
+                pathname === "/settings" ||
+                  pathname.startsWith("/settings/")
+              )}
+            >
+              <SettingsIcon className="h-5 w-5 shrink-0" />
+              {!collapsed && <span>Settings</span>}
+            </Link>
+          )}
         </nav>
 
         <div className="border-t border-slate-200 p-3">

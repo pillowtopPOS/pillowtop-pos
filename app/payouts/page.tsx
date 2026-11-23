@@ -462,6 +462,27 @@ export default function PayoutsPage() {
                   </td>
                   <td className="px-4 py-2 text-right tabular-nums text-slate-800">
                     {money(r.draw_cents)}
+                    {r.draw_cents > 0 && (
+                      <span className="mt-1 block">
+                        <span className="block h-1.5 w-full rounded-full bg-slate-100">
+                          <span
+                            className={`block h-1.5 rounded-full ${
+                              r.commission_cents >= r.draw_cents
+                                ? "bg-green-500"
+                                : "bg-slate-400"
+                            }`}
+                            style={{
+                              width: `${Math.min(Math.max(r.commission_cents, 0) / r.draw_cents, 1) * 100}%`,
+                            }}
+                          />
+                        </span>
+                        <span className="block text-xs text-slate-400">
+                          {r.commission_cents >= r.draw_cents
+                            ? `Over draw by ${money(r.commission_cents - r.draw_cents)}`
+                            : `${money(r.draw_cents - r.commission_cents)} to cover draw`}
+                        </span>
+                      </span>
+                    )}
                     {r.draw_covers_cents > 0 && (
                       <span className="block text-xs text-slate-400">
                         Draw covers {money(r.draw_covers_cents)}
