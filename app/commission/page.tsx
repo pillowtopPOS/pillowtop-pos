@@ -46,6 +46,20 @@ type CommissionSettings = {
   default_plan_rate_bp: number | null;
 };
 
+type EarningsVisibility = {
+  earnings_show_revenue: boolean;
+  earnings_show_rate: boolean;
+  earnings_show_profit: boolean;
+  earnings_show_cost: boolean;
+  earnings_show_draw_progress: boolean;
+  commission_cost_basis: string;
+};
+
+type SpiffSettings = {
+  spiffs_enabled: boolean;
+  google_reviews_enabled: boolean;
+};
+
 const FLAG_META: Record<string, { label: string; className: string }> = {
   MISSING_COST: {
     label: "Missing cost",
@@ -144,6 +158,30 @@ export default function CommissionPage() {
     err?: string;
   } | null>(null);
   const [periodMessage, setPeriodMessage] = useState<{
+    ok?: string;
+    err?: string;
+  } | null>(null);
+
+  // ---------- rep earnings visibility + spiff switches ----------
+  const [visEdit, setVisEdit] = useState({
+    revenue: false,
+    rate: false,
+    profit: false,
+    cost: false,
+    draw: false,
+  });
+  const [visBasis, setVisBasis] = useState<string>("WHOLESALE");
+  const [savingVis, setSavingVis] = useState(false);
+  const [visMessage, setVisMessage] = useState<{
+    ok?: string;
+    err?: string;
+  } | null>(null);
+  const [spiffEdit, setSpiffEdit] = useState({
+    spiffs: false,
+    reviews: false,
+  });
+  const [savingSpiffs, setSavingSpiffs] = useState(false);
+  const [spiffMessage, setSpiffMessage] = useState<{
     ok?: string;
     err?: string;
   } | null>(null);
@@ -270,6 +308,36 @@ export default function CommissionPage() {
         setAnchorInput(s.pay_period_anchor ?? "");
       }
     }
+    // The two switch panels load alongside the main settings so a save
+    // anywhere refreshes all of them from the database.
+    const [visRes, spiffRes] = await Promise.all([
+      supabase.rpc("get_earnings_visibility"),
+      supabase.rpc("get_spiff_settings"),
+    ]);
+    if (!visRes.error) {
+      const v = (Array.isArray(visRes.data)
+        ? visRes.data[0]
+        : visRes.data) as EarningsVisibility | undefined;
+      if (v) {
+        setVisEdit({
+          revenue: v.earnings_show_revenue === true,
+          rate: v.earnings_show_rate === true,
+          profit: v.earnings_show_profit === true,
+          cost: v.earnings_show_cost === true,
+          draw: v.earnings_show_draw_progress === true,
+        });
+        setVisBasis(v.commission_cost_basis);
+      }
+    }
+    if (!spiffRes.error) {
+      const ss = spiffRes.data as SpiffSettings | null;
+      if (ss) {
+        setSpiffEdit({
+          spiffs: ss.spiffs_enabled === true,
+          reviews: ss.google_reviews_enabled === true,
+        });
+      }
+    }
     setSettingsLoading(false);
   }, []);
 
@@ -336,6 +404,45 @@ export default function CommissionPage() {
       if (!datesEditedRef.current) {
         resolveCurrentPeriod();
       }
+    }
+  };
+
+  // Writes exactly what the switches show; the database stores it
+  // verbatim and warns never block.
+  const saveVisibility = async () => {
+    setVisMessage(null);
+    setSavingVis(true);
+    const supabase = createClient();
+    const { error } = await supabase.rpc("set_earnings_visibility", {
+      p_show_revenue: visEdit.revenue,
+      p_show_rate: visEdit.rate,
+      p_show_profit: visEdit.profit,
+      p_show_cost: visEdit.cost,
+      p_show_draw_progress: visEdit.draw,
+    });
+    setSavingVis(false);
+    if (error) {
+      setVisMessage({ err: error.message });
+    } else {
+      setVisMessage({ ok: "Saved." });
+      loadSettings();
+    }
+  };
+
+  const saveSpiffSwitches = async () => {
+    setSpiffMessage(null);
+    setSavingSpiffs(true);
+    const supabase = createClient();
+    const { error } = await supabase.rpc("set_spiff_settings", {
+      p_spiffs_enabled: spiffEdit.spiffs,
+      p_google_reviews_enabled: spiffEdit.reviews,
+    });
+    setSavingSpiffs(false);
+    if (error) {
+      setSpiffMessage({ err: error.message });
+    } else {
+      setSpiffMessage({ ok: "Saved." });
+      loadSettings();
     }
   };
 
@@ -844,6 +951,153 @@ export default function CommissionPage() {
                     : "wholesale cost"}
                   .
                 </p>
+              </section>
+
+              <section className="rounded-lg border border-slate-200 bg-white p-4">
+                <h2 className="mb-1 text-sm font-semibold text-slate-900">
+                  What reps see on My Earnings
+                </h2>
+                <p className="mb-3 text-xs text-slate-500">
+                  All switches are off by default. Reps always see their
+                  own commission per sale.
+                </p>
+                <p className="mb-3 text-xs text-slate-500">
+                  Cost basis:{" "}
+                  {visBasis === "COMMISSION_COST"
+                    ? "commission cost"
+                    : "wholesale cost"}
+                  .
+                </p>
+                <div className="space-y-2">
+                  {(
+                    [
+                      ["revenue", "Revenue"],
+                      ["rate", "Rate"],
+                      ["profit", "Profit"],
+                      ["cost", "Cost"],
+                      ["draw", "Draw progress bar"],
+                    ] as const
+                  ).map(([key, label]) => {
+                    const costLocked =
+                      key === "cost" && visBasis !== "COMMISSION_COST";
+                    return (
+                      <label
+                        key={key}
+                        className={`flex items-center gap-2 text-sm ${
+                          costLocked ? "text-slate-400" : "text-slate-700"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={visEdit[key]}
+                          disabled={costLocked}
+                          onChange={(e) =>
+                            setVisEdit((v) => ({
+                              ...v,
+                              [key]: e.target.checked,
+                            }))
+                          }
+                          className="h-4 w-4 rounded border-slate-300"
+                        />
+                        {label}
+                        {costLocked && (
+                          <span className="text-xs text-slate-400">
+                            Cost can only be shown when the calculation
+                            uses commission cost.
+                          </span>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+                {((visEdit.revenue && visEdit.rate) || visEdit.profit) && (
+                  <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                    Showing revenue with rate or profit lets reps work out
+                    your cost. Only turn this on if that is acceptable.
+                  </p>
+                )}
+                <div className="mt-3">
+                  <button
+                    type="button"
+                    onClick={saveVisibility}
+                    disabled={savingVis}
+                    className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                  >
+                    {savingVis ? "Saving…" : "Save"}
+                  </button>
+                </div>
+                {visMessage?.ok && (
+                  <p className="mt-3 text-sm text-green-700">
+                    {visMessage.ok}
+                  </p>
+                )}
+                {visMessage?.err && (
+                  <p className="mt-3 text-sm text-red-700">
+                    {visMessage.err}
+                  </p>
+                )}
+              </section>
+
+              <section className="rounded-lg border border-slate-200 bg-white p-4">
+                <h2 className="mb-1 text-sm font-semibold text-slate-900">
+                  Spiffs
+                </h2>
+                <p className="mb-3 text-xs text-slate-500">
+                  Turning a switch off stops new spiffs from being earned
+                  or logged. Spiffs already earned stay in the ledger and
+                  are still paid. Turning a switch back on does not add
+                  spiffs for past sales.
+                </p>
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={spiffEdit.spiffs}
+                      onChange={(e) =>
+                        setSpiffEdit((v) => ({
+                          ...v,
+                          spiffs: e.target.checked,
+                        }))
+                      }
+                      className="h-4 w-4 rounded border-slate-300"
+                    />
+                    Product, brand and category spiffs
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={spiffEdit.reviews}
+                      onChange={(e) =>
+                        setSpiffEdit((v) => ({
+                          ...v,
+                          reviews: e.target.checked,
+                        }))
+                      }
+                      className="h-4 w-4 rounded border-slate-300"
+                    />
+                    Google review spiffs
+                  </label>
+                </div>
+                <div className="mt-3">
+                  <button
+                    type="button"
+                    onClick={saveSpiffSwitches}
+                    disabled={savingSpiffs}
+                    className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                  >
+                    {savingSpiffs ? "Saving…" : "Save"}
+                  </button>
+                </div>
+                {spiffMessage?.ok && (
+                  <p className="mt-3 text-sm text-green-700">
+                    {spiffMessage.ok}
+                  </p>
+                )}
+                {spiffMessage?.err && (
+                  <p className="mt-3 text-sm text-red-700">
+                    {spiffMessage.err}
+                  </p>
+                )}
               </section>
             </>
           )}

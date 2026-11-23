@@ -16,6 +16,7 @@ import {
   Store as StoreIcon,
   Settings as SettingsIcon,
   Briefcase,
+  Coins,
   LogOut,
 } from "lucide-react";
 import CelebrationBanner from "@/components/CelebrationBanner";
@@ -38,6 +39,7 @@ const HIDDEN_PATHS = ["/", "/login", "/logout", "/store-select"];
 const NAV = [
   { href: "/board", label: "Board", icon: LayoutGrid },
   { href: "/my-work", label: "My Work", icon: Calendar },
+  { href: "/my-earnings", label: "My Earnings", icon: Coins },
   { href: "/inventory", label: "Inventory", icon: Package },
   { href: "/opportunities", label: "Opportunities", icon: Lightbulb },
   { href: "/delivery", label: "Delivery", icon: Truck },
@@ -64,6 +66,12 @@ export default function Sidebar({
   const [canLogSpiffs, setCanLogSpiffs] = useState(false);
   const [canManageSpiffs, setCanManageSpiffs] = useState(false);
   const [backOfficeOpen, setBackOfficeOpen] = useState(false);
+  // null until get_spiff_settings answers so gated Back Office children
+  // never flash in and out while it loads.
+  const [spiffSettings, setSpiffSettings] = useState<{
+    spiffs_enabled: boolean;
+    google_reviews_enabled: boolean;
+  } | null>(null);
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -112,13 +120,22 @@ export default function Sidebar({
         hasPermission("commission.payouts_view"),
         hasPermission("commission.spiffs_log_review"),
         hasPermission("commission.spiffs_manage"),
-      ]).then(([e, s, canCommission, canPayouts, canLogSpiff, canManageSpiff]) => {
+        supabase.rpc("get_spiff_settings"),
+      ]).then(([e, s, canCommission, canPayouts, canLogSpiff, canManageSpiff, spiffRes]) => {
         setEmployee(e);
         setStores(s);
         setCanSeeCommission(canCommission === true);
         setCanSeePayouts(canPayouts === true);
         setCanLogSpiffs(canLogSpiff === true);
         setCanManageSpiffs(canManageSpiff === true);
+        if (!spiffRes.error) {
+          setSpiffSettings(
+            (spiffRes.data as {
+              spiffs_enabled: boolean;
+              google_reviews_enabled: boolean;
+            } | null) ?? null
+          );
+        }
         setLoading(false);
       });
     });
@@ -208,8 +225,16 @@ export default function Sidebar({
   const backOfficeChildren = [
     ...(canSeeCommission ? [{ href: "/commission", label: "Commission" }] : []),
     ...(canSeePayouts ? [{ href: "/payouts", label: "Payouts" }] : []),
-    ...(canManageSpiffs ? [{ href: "/spiffs", label: "Spiffs" }] : []),
-    ...(canLogSpiffs && !canManageSpiffs
+    // The Spiffs children additionally wait on the company switches so a
+    // turned-off feature never shows a money word in the menu.
+    ...(canManageSpiffs &&
+    spiffSettings !== null &&
+    (spiffSettings.spiffs_enabled || spiffSettings.google_reviews_enabled)
+      ? [{ href: "/spiffs", label: "Spiffs" }]
+      : []),
+    ...(canLogSpiffs &&
+    !canManageSpiffs &&
+    spiffSettings?.google_reviews_enabled === true
       ? [{ href: "/spiffs", label: "Reviews" }]
       : []),
   ];

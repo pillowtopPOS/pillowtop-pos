@@ -122,6 +122,13 @@ function ruleAppliesTo(r: RuleRow): string {
 export default function SpiffsPage() {
   const [canLog, setCanLog] = useState<boolean | null>(null);
   const [canManage, setCanManage] = useState<boolean | null>(null);
+  // undefined while get_spiff_settings is still in flight so neither tab
+  // can flash before the company switches are known.
+  const [spiffSettings, setSpiffSettings] = useState<
+    | { spiffs_enabled: boolean; google_reviews_enabled: boolean }
+    | null
+    | undefined
+  >(undefined);
   const [tab, setTab] = useState<"reviews" | "rules">("reviews");
 
   // ---------- shared state ----------
@@ -182,10 +189,23 @@ export default function SpiffsPage() {
     Promise.all([
       hasPermission("commission.spiffs_log_review"),
       hasPermission("commission.spiffs_manage"),
-    ]).then(([log, manage]) => {
+      createClient().rpc("get_spiff_settings"),
+    ]).then(([log, manage, settingsRes]) => {
+      const ss = settingsRes.error
+        ? null
+        : (settingsRes.data as {
+            spiffs_enabled: boolean;
+            google_reviews_enabled: boolean;
+          } | null);
       setCanLog(log === true);
       setCanManage(manage === true);
-      if (log !== true && manage === true) setTab("rules");
+      setSpiffSettings(ss);
+      // Land on the first tab that can actually render: reviews for
+      // anyone with it enabled, rules otherwise.
+      const reviewsTab =
+        log === true && ss?.google_reviews_enabled === true;
+      const rulesTab = manage === true && ss?.spiffs_enabled === true;
+      if (!reviewsTab && rulesTab) setTab("rules");
     });
   }, []);
 
@@ -207,9 +227,12 @@ export default function SpiffsPage() {
     setReviewsLoading(false);
   }, [supabase, fromDate, toDate]);
 
+  // Reviews are only fetched while the company switch keeps them on;
+  // when it is off the history listing is not needed on this page.
   useEffect(() => {
-    if (canLog === true) loadReviews();
-  }, [canLog, loadReviews]);
+    if (canLog === true && spiffSettings?.google_reviews_enabled === true)
+      loadReviews();
+  }, [canLog, spiffSettings, loadReviews]);
 
   // ---------- rules load ----------
   const loadRules = useCallback(async () => {
@@ -419,7 +442,11 @@ export default function SpiffsPage() {
 
   // ---------- render ----------
 
-  if (canLog === null || canManage === null) {
+  if (
+    canLog === null ||
+    canManage === null ||
+    spiffSettings === undefined
+  ) {
     return <p className="p-8 text-sm text-slate-500">Loading…</p>;
   }
 
@@ -433,16 +460,39 @@ export default function SpiffsPage() {
     );
   }
 
+  const reviewsOn = spiffSettings?.google_reviews_enabled === true;
+  const spiffsOn = spiffSettings?.spiffs_enabled === true;
+  const showReviewsTab = canLog && reviewsOn;
+  const showRulesTab = canManage && spiffsOn;
+  const tabs = [
+    ...(showReviewsTab ? (["reviews"] as const) : []),
+    ...(showRulesTab ? (["rules"] as const) : []),
+  ];
+
+  // Direct URL case: the visitor has permission but every tab is gated
+  // off by the company switches.
+  if (tabs.length === 0) {
+    return (
+      <div className="p-8">
+        <div className="max-w-md rounded-lg border border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-600">
+          Spiffs are turned off for this company.
+        </div>
+      </div>
+    );
+  }
+
   const inputCls =
     "rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500";
 
   return (
     <div className="mx-auto max-w-5xl p-6">
-      <h1 className="mb-4 text-xl font-semibold text-slate-900">Spiffs</h1>
+      <h1 className="mb-4 text-xl font-semibold text-slate-900">
+        {canManage ? "Spiffs" : "Reviews"}
+      </h1>
 
-      {canManage && (
+      {tabs.length > 1 && (
         <div className="mb-4 flex gap-1 border-b border-slate-200">
-          {(["reviews", "rules"] as const).map((t) => (
+          {tabs.map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -469,7 +519,7 @@ export default function SpiffsPage() {
         </p>
       )}
 
-      {tab === "reviews" && canLog && (
+      {tab === "reviews" && showReviewsTab && (
         <>
           {/* ---------- log a review ---------- */}
           <div className="mb-6 rounded-lg border border-slate-200 bg-white p-4">
@@ -676,7 +726,7 @@ export default function SpiffsPage() {
         </>
       )}
 
-      {tab === "rules" && canManage && (
+      {tab === "rules" && showRulesTab && (
         <>
           <div className="mb-3 flex items-center justify-between">
             <p className="text-sm text-slate-500">

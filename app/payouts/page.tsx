@@ -127,6 +127,13 @@ export default function PayoutsPage() {
   const router = useRouter();
   const [allowed, setAllowed] = useState<boolean | null>(null);
   const [canManage, setCanManage] = useState<boolean | null>(null);
+  // undefined until get_spiff_settings answers, so the Spiffs column
+  // never flashes in for a company that has the feature off.
+  const [spiffSettings, setSpiffSettings] = useState<
+    | { spiffs_enabled: boolean; google_reviews_enabled: boolean }
+    | null
+    | undefined
+  >(undefined);
 
   // pDate: the p_date last sent (kept only so saves can refetch the same
   // period). period: boundaries and closed state from get_payout_period,
@@ -165,12 +172,21 @@ export default function PayoutsPage() {
         router.push("/login");
         return;
       }
-      const [view, manage] = await Promise.all([
+      const [view, manage, spiffRes] = await Promise.all([
         hasPermission("commission.payouts_view"),
         hasPermission("commission.payouts_manage"),
+        supabase.rpc("get_spiff_settings"),
       ]);
       setAllowed(view === true);
       setCanManage(manage === true);
+      setSpiffSettings(
+        spiffRes.error
+          ? null
+          : (spiffRes.data as {
+              spiffs_enabled: boolean;
+              google_reviews_enabled: boolean;
+            } | null)
+      );
     });
   }, [router]);
 
@@ -265,6 +281,16 @@ export default function PayoutsPage() {
     [rows]
   );
 
+  // The Spiffs column hides only when the company has both switches off
+  // AND this period has no spiff money. It also stays hidden while the
+  // settings call is in flight so the column never flashes.
+  const spiffsOff =
+    spiffSettings == null ||
+    (!spiffSettings.spiffs_enabled &&
+      !spiffSettings.google_reviews_enabled);
+  const showSpiffsCol =
+    spiffSettings !== undefined && (!spiffsOff || totals.spiffs !== 0);
+
   const exportCsv = () => {
     if (!rows || rows.length === 0 || !period) return;
     const header = [
@@ -275,7 +301,7 @@ export default function PayoutsPage() {
       "Entries",
       "Commission",
       "Draw",
-      "Spiffs",
+      ...(showSpiffsCol ? ["Spiffs"] : []),
       "Pay",
       "Not calculated",
     ];
@@ -289,7 +315,7 @@ export default function PayoutsPage() {
         String(r.entry_count),
         money2(r.commission_cents),
         money2(r.draw_cents),
-        money2(r.spiff_cents),
+        ...(showSpiffsCol ? [money2(r.spiff_cents)] : []),
         money2(r.pay_cents),
         String(r.not_calculated_count),
       ]
@@ -427,7 +453,9 @@ export default function PayoutsPage() {
                 <th className="px-4 py-2 text-right">Entries</th>
                 <th className="px-4 py-2 text-right">Commission</th>
                 <th className="px-4 py-2 text-right">Draw</th>
-                <th className="px-4 py-2 text-right">Spiffs</th>
+                {showSpiffsCol && (
+                  <th className="px-4 py-2 text-right">Spiffs</th>
+                )}
                 <th className="px-4 py-2 text-right">Pay</th>
                 {canManage === true && <th className="px-4 py-2" />}
               </tr>
@@ -489,9 +517,11 @@ export default function PayoutsPage() {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-2 text-right tabular-nums text-slate-800">
-                    {money(r.spiff_cents)}
-                  </td>
+                  {showSpiffsCol && (
+                    <td className="px-4 py-2 text-right tabular-nums text-slate-800">
+                      {money(r.spiff_cents)}
+                    </td>
+                  )}
                   <td className="px-4 py-2 text-right font-semibold tabular-nums text-slate-900">
                     {money(r.pay_cents)}
                   </td>
