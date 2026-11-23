@@ -180,7 +180,21 @@ export default function CommissionPage() {
     spiffs: false,
     reviews: false,
   });
+  // Both panels stay read-only until their RPC answers so a default
+  // unchecked box can never be saved over real settings by mistake.
+  const [visLoaded, setVisLoaded] = useState(false);
+  const [visLoadFailed, setVisLoadFailed] = useState(false);
+  const [spiffsLoaded, setSpiffsLoaded] = useState(false);
+  const [spiffsLoadFailed, setSpiffsLoadFailed] = useState(false);
   const [savingSpiffs, setSavingSpiffs] = useState(false);
+  const [lagInput, setLagInput] = useState("");
+  const [paySchedLoaded, setPaySchedLoaded] = useState(false);
+  const [paySchedLoadFailed, setPaySchedLoadFailed] = useState(false);
+  const [savingLag, setSavingLag] = useState(false);
+  const [lagMessage, setLagMessage] = useState<{
+    ok?: string;
+    err?: string;
+  } | null>(null);
   const [spiffMessage, setSpiffMessage] = useState<{
     ok?: string;
     err?: string;
@@ -310,11 +324,14 @@ export default function CommissionPage() {
     }
     // The two switch panels load alongside the main settings so a save
     // anywhere refreshes all of them from the database.
-    const [visRes, spiffRes] = await Promise.all([
+    const [visRes, spiffRes, lagRes] = await Promise.all([
       supabase.rpc("get_earnings_visibility"),
       supabase.rpc("get_spiff_settings"),
+      supabase.rpc("get_pay_schedule"),
     ]);
-    if (!visRes.error) {
+    if (visRes.error) {
+      setVisLoadFailed(true);
+    } else {
       const v = (Array.isArray(visRes.data)
         ? visRes.data[0]
         : visRes.data) as EarningsVisibility | undefined;
@@ -327,15 +344,38 @@ export default function CommissionPage() {
           draw: v.earnings_show_draw_progress === true,
         });
         setVisBasis(v.commission_cost_basis);
+        setVisLoadFailed(false);
+        setVisLoaded(true);
+      } else {
+        setVisLoadFailed(true);
       }
     }
-    if (!spiffRes.error) {
+    if (spiffRes.error) {
+      setSpiffsLoadFailed(true);
+    } else {
       const ss = spiffRes.data as SpiffSettings | null;
       if (ss) {
         setSpiffEdit({
           spiffs: ss.spiffs_enabled === true,
           reviews: ss.google_reviews_enabled === true,
         });
+        setSpiffsLoadFailed(false);
+        setSpiffsLoaded(true);
+      } else {
+        setSpiffsLoadFailed(true);
+      }
+    }
+    if (lagRes.error) {
+      setPaySchedLoadFailed(true);
+    } else {
+      const lag = (lagRes.data as { pay_date_lag_days: number } | null)
+        ?.pay_date_lag_days;
+      if (typeof lag === "number") {
+        setLagInput(String(lag));
+        setPaySchedLoadFailed(false);
+        setPaySchedLoaded(true);
+      } else {
+        setPaySchedLoadFailed(true);
       }
     }
     setSettingsLoading(false);
@@ -442,6 +482,34 @@ export default function CommissionPage() {
       setSpiffMessage({ err: error.message });
     } else {
       setSpiffMessage({ ok: "Saved." });
+      loadSettings();
+    }
+  };
+
+  const savePaySchedule = async () => {
+    setLagMessage(null);
+    const days = Number(lagInput);
+    if (
+      lagInput.trim() === "" ||
+      !Number.isInteger(days) ||
+      days < 0 ||
+      days > 60
+    ) {
+      setLagMessage({
+        err: "Enter a whole number of days between 0 and 60.",
+      });
+      return;
+    }
+    setSavingLag(true);
+    const supabase = createClient();
+    const { error } = await supabase.rpc("set_pay_schedule", {
+      p_lag_days: days,
+    });
+    setSavingLag(false);
+    if (error) {
+      setLagMessage({ err: error.message });
+    } else {
+      setLagMessage({ ok: "Saved." });
       loadSettings();
     }
   };
@@ -984,13 +1052,15 @@ export default function CommissionPage() {
                       <label
                         key={key}
                         className={`flex items-center gap-2 text-sm ${
-                          costLocked ? "text-slate-400" : "text-slate-700"
+                          costLocked || !visLoaded
+                            ? "text-slate-400"
+                            : "text-slate-700"
                         }`}
                       >
                         <input
                           type="checkbox"
                           checked={visEdit[key]}
-                          disabled={costLocked}
+                          disabled={costLocked || !visLoaded}
                           onChange={(e) =>
                             setVisEdit((v) => ({
                               ...v,
@@ -1020,12 +1090,17 @@ export default function CommissionPage() {
                   <button
                     type="button"
                     onClick={saveVisibility}
-                    disabled={savingVis}
+                    disabled={savingVis || !visLoaded}
                     className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
                   >
                     {savingVis ? "Saving…" : "Save"}
                   </button>
                 </div>
+                {visLoadFailed && (
+                  <p className="mt-3 text-sm text-red-700">
+                    Could not load. Reload to try again.
+                  </p>
+                )}
                 {visMessage?.ok && (
                   <p className="mt-3 text-sm text-green-700">
                     {visMessage.ok}
@@ -1049,10 +1124,15 @@ export default function CommissionPage() {
                   spiffs for past sales.
                 </p>
                 <div className="space-y-2">
-                  <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <label
+                    className={`flex items-center gap-2 text-sm ${
+                      spiffsLoaded ? "text-slate-700" : "text-slate-400"
+                    }`}
+                  >
                     <input
                       type="checkbox"
                       checked={spiffEdit.spiffs}
+                      disabled={!spiffsLoaded}
                       onChange={(e) =>
                         setSpiffEdit((v) => ({
                           ...v,
@@ -1063,10 +1143,15 @@ export default function CommissionPage() {
                     />
                     Product, brand and category spiffs
                   </label>
-                  <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <label
+                    className={`flex items-center gap-2 text-sm ${
+                      spiffsLoaded ? "text-slate-700" : "text-slate-400"
+                    }`}
+                  >
                     <input
                       type="checkbox"
                       checked={spiffEdit.reviews}
+                      disabled={!spiffsLoaded}
                       onChange={(e) =>
                         setSpiffEdit((v) => ({
                           ...v,
@@ -1082,12 +1167,17 @@ export default function CommissionPage() {
                   <button
                     type="button"
                     onClick={saveSpiffSwitches}
-                    disabled={savingSpiffs}
+                    disabled={savingSpiffs || !spiffsLoaded}
                     className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
                   >
                     {savingSpiffs ? "Saving…" : "Save"}
                   </button>
                 </div>
+                {spiffsLoadFailed && (
+                  <p className="mt-3 text-sm text-red-700">
+                    Could not load. Reload to try again.
+                  </p>
+                )}
                 {spiffMessage?.ok && (
                   <p className="mt-3 text-sm text-green-700">
                     {spiffMessage.ok}
@@ -1096,6 +1186,56 @@ export default function CommissionPage() {
                 {spiffMessage?.err && (
                   <p className="mt-3 text-sm text-red-700">
                     {spiffMessage.err}
+                  </p>
+                )}
+              </section>
+
+              <section className="rounded-lg border border-slate-200 bg-white p-4">
+                <h2 className="mb-3 text-sm font-semibold text-slate-900">
+                  Pay schedule
+                </h2>
+                <div className="flex flex-wrap items-end gap-3">
+                  <label
+                    className={`text-sm ${
+                      paySchedLoaded ? "text-slate-600" : "text-slate-400"
+                    }`}
+                  >
+                    <span className="mb-1 block text-xs text-slate-500">
+                      Days from the end of a pay period to the pay date
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={60}
+                      step={1}
+                      value={lagInput}
+                      disabled={!paySchedLoaded}
+                      onChange={(e) => setLagInput(e.target.value)}
+                      className="w-28 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={savePaySchedule}
+                    disabled={savingLag || !paySchedLoaded}
+                    className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                  >
+                    {savingLag ? "Saving…" : "Save"}
+                  </button>
+                </div>
+                {paySchedLoadFailed && (
+                  <p className="mt-3 text-sm text-red-700">
+                    Could not load. Reload to try again.
+                  </p>
+                )}
+                {lagMessage?.ok && (
+                  <p className="mt-3 text-sm text-green-700">
+                    {lagMessage.ok}
+                  </p>
+                )}
+                {lagMessage?.err && (
+                  <p className="mt-3 text-sm text-red-700">
+                    {lagMessage.err}
                   </p>
                 )}
               </section>

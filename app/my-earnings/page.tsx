@@ -39,6 +39,7 @@ type MyEarnings = {
     draw_cents: number;
     commission_cents: number;
   } | null;
+  pay_date?: string | null;
   visibility: {
     earnings_show_revenue: boolean;
     earnings_show_rate: boolean;
@@ -61,6 +62,7 @@ type MySpiffs = {
   month_end: string;
   lines: SpiffLine[];
   total_cents: number;
+  paid_on?: string | null;
 };
 
 type SpiffSettings = {
@@ -79,6 +81,14 @@ function shortDate(iso: string | null | undefined): string {
   return new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString(
     undefined,
     { month: "short", day: "numeric", year: "numeric" }
+  );
+}
+
+function payDateFmt(iso: string | null | undefined): string {
+  if (!iso) return "";
+  return new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString(
+    undefined,
+    { weekday: "short", month: "short", day: "numeric", year: "numeric" }
   );
 }
 
@@ -220,6 +230,11 @@ export default function MyEarningsPage() {
               {shortDate(earnings.period_start)} -{" "}
               {shortDate(earnings.period_end)}
             </span>
+            {earnings.pay_date && (
+              <span className="text-xs text-slate-500">
+                Pay date: {payDateFmt(earnings.pay_date)}
+              </span>
+            )}
             <button
               onClick={() =>
                 loadEarnings(addDaysISO(earnings.period_end, 1))
@@ -414,6 +429,11 @@ export default function MyEarningsPage() {
             <h2 className="text-sm font-semibold text-slate-900">
               Spiffs this month
             </h2>
+            {spiffs?.paid_on && (
+              <span className="text-xs text-slate-500">
+                Paid on {payDateFmt(spiffs.paid_on)}
+              </span>
+            )}
             {spiffs != null && (
               <>
                 <button

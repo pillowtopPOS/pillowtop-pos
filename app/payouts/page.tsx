@@ -37,6 +37,11 @@ type PayoutRow = {
   is_closed: boolean;
   closed_at: string | null;
   late_entry_count: number;
+  pay_date: string | null;
+  spiff_month_start: string | null;
+  spiff_month_end: string | null;
+  spiffs_cents: number;
+  spiffs_negative_not_deducted: boolean;
 };
 
 type CloseRow = {
@@ -78,6 +83,22 @@ function shortDate(iso: string | null): string {
   return new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString(
     undefined,
     { month: "short", day: "numeric", year: "numeric" }
+  );
+}
+
+function payDateFmt(iso: string | null | undefined): string {
+  if (!iso) return "";
+  return new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString(
+    undefined,
+    { weekday: "short", month: "short", day: "numeric", year: "numeric" }
+  );
+}
+
+function monthName(iso: string | null | undefined): string {
+  if (!iso) return "";
+  return new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString(
+    undefined,
+    { month: "long" }
   );
 }
 
@@ -304,6 +325,8 @@ export default function PayoutsPage() {
       ...(showSpiffsCol ? ["Spiffs"] : []),
       "Pay",
       "Not calculated",
+      "Pay date",
+      "Spiff month",
     ];
     const money2 = (c: number) => (c / 100).toFixed(2);
     const lines = rows.map((r) =>
@@ -318,6 +341,13 @@ export default function PayoutsPage() {
         ...(showSpiffsCol ? [money2(r.spiff_cents)] : []),
         money2(r.pay_cents),
         String(r.not_calculated_count),
+        r.pay_date ?? "",
+        r.spiff_month_start
+          ? new Date(`${r.spiff_month_start}T00:00:00`).toLocaleDateString(
+              undefined,
+              { month: "short", year: "numeric" }
+            )
+          : "",
       ]
         .map(csvEscape)
         .join(",")
@@ -421,6 +451,16 @@ export default function PayoutsPage() {
               ? `Closed on ${shortDate(closedAt)}. These numbers are frozen.`
               : "Open. These numbers are live until you close the period."}
           </p>
+          {rows?.[0]?.pay_date && (
+            <p className="mt-1 text-slate-500">
+              Pay date: {payDateFmt(rows[0].pay_date)}
+            </p>
+          )}
+          {showSpiffsCol && rows?.[0]?.spiff_month_start && (
+            <p className="mt-1 text-slate-500">
+              Includes {monthName(rows[0].spiff_month_start)} spiffs
+            </p>
+          )}
           {isClosed && lateEntries > 0 && (
             <p className="mt-1 inline-block rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-amber-800">
               {lateEntries}{" "}
@@ -519,7 +559,12 @@ export default function PayoutsPage() {
                   </td>
                   {showSpiffsCol && (
                     <td className="px-4 py-2 text-right tabular-nums text-slate-800">
-                      {money(r.spiff_cents)}
+                      {r.spiff_month_start ? money(r.spiffs_cents) : "-"}
+                      {r.spiffs_negative_not_deducted && (
+                        <span className="block text-xs font-normal text-slate-400">
+                          Net negative, not deducted
+                        </span>
+                      )}
                     </td>
                   )}
                   <td className="px-4 py-2 text-right font-semibold tabular-nums text-slate-900">
@@ -552,9 +597,11 @@ export default function PayoutsPage() {
                 <td className="px-4 py-2 text-right tabular-nums">
                   {money(totals.draw)}
                 </td>
-                <td className="px-4 py-2 text-right tabular-nums">
-                  {money(totals.spiffs)}
-                </td>
+                {showSpiffsCol && (
+                  <td className="px-4 py-2 text-right tabular-nums">
+                    {money(totals.spiffs)}
+                  </td>
+                )}
                 <td className="px-4 py-2 text-right font-semibold tabular-nums">
                   {money(totals.pay)}
                 </td>
