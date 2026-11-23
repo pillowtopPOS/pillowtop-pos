@@ -3097,6 +3097,14 @@ export default function JourneyWorkspace({
                   ? `Delivered ${shortDate(journey.delivered_at)}`
                   : scheduledDate
                   ? `Scheduled ${shortDate(scheduledDate)}`
+                  : journey.fulfillment_type === "pickup" &&
+                    !lineItems.some(
+                      (li) =>
+                        effectiveLineFulfillment(li, "pickup") === "delivery"
+                    )
+                  ? totalHanded === 0
+                    ? "Waiting for pickup"
+                    : `${totalHanded} of ${totalUnits(lineItems)} picked up`
                   : "Not yet scheduled"}
               </p>
               <div className="mt-1 text-sm text-slate-600">

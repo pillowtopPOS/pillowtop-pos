@@ -140,6 +140,11 @@ import { hasPermission } from "@/lib/inventory/queries";
 // the journey still opens by id. The rule itself lives in
 // lib/journeys/exchange (hiddenByInProgressAction).
 
+// The six real journey states plus the derived "Ready for Pickup"
+// column, which owns its journeys (they do not also appear in Sold or
+// Ready to Schedule). The derived column is never a drop target.
+type BoardColumnState = SleepJourneyState | "Ready for Pickup";
+
 function BoardContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -765,12 +770,49 @@ function BoardContent() {
     );
   }, [journeys, hiddenJourneyIds, selectedJourney?.id, search]);
 
+  // Derived "Ready for Pickup" column (4d): owns a pickup order that is
+  // paid, in stock, and still has pickup units waiting. Membership:
+  //   * not cancelled
+  //   * current_state Sold or Ready to Schedule
+  //   * has a pickup line (hasPickupLine)
+  //   * NO delivery line at all (hasDeliveryLine false) - a mixed order
+  //     always stays in its real-state column, even once its delivery
+  //     units are all out, because the board only tracks total units
+  //   * units out < total units (pickup units remaining)
+  // Pure-pickup journeys have no delivery units by definition, so the
+  // two remaining-unit tests collapse to "something still waits".
+  const readyForPickupIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const j of boardJourneys) {
+      if (j.cancelled_at) continue;
+      if (
+        j.current_state !== "Sold" &&
+        j.current_state !== "Ready to Schedule"
+      )
+        continue;
+      const meta = journeyUnitTotals[j.id];
+      if (!meta?.hasPickupLine || meta.hasDeliveryLine) continue;
+      if ((fulfillmentCounts[j.id] ?? 0) < (meta.units ?? 0)) ids.add(j.id);
+    }
+    return ids;
+  }, [boardJourneys, journeyUnitTotals, fulfillmentCounts]);
+
   const columns = useMemo(() => {
-    return BOARD_STATES.map((state) => ({
-      state,
-      journeys: boardJourneys.filter((j) => j.current_state === state),
-    }));
-  }, [boardJourneys]);
+    const cols: { state: BoardColumnState; journeys: JourneyWithDetails[] }[] =
+      BOARD_STATES.map((state) => ({
+        state,
+        journeys: boardJourneys.filter(
+          (j) => j.current_state === state && !readyForPickupIds.has(j.id)
+        ),
+      }));
+    // Insert the derived column right after "Ready to Schedule".
+    const readyIdx = cols.findIndex((c) => c.state === "Ready to Schedule");
+    cols.splice(readyIdx < 0 ? cols.length : readyIdx + 1, 0, {
+      state: "Ready for Pickup",
+      journeys: boardJourneys.filter((j) => readyForPickupIds.has(j.id)),
+    });
+    return cols;
+  }, [boardJourneys, readyForPickupIds]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -782,7 +824,9 @@ function BoardContent() {
     if (!over) return;
 
     const journeyId = active.id as string;
-    const targetState = over.id as SleepJourneyState;
+    const targetState = over.id as BoardColumnState;
+    // The derived "Ready for Pickup" column is never a drop target.
+    if (targetState === "Ready for Pickup") return;
     const journey = journeys.find((j) => j.id === journeyId);
     if (!journey) return;
 
@@ -1553,7 +1597,7 @@ function BoardContent() {
 
       {!loading && view === "board" && (
         <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-          <div className="grid min-w-[960px] grid-cols-6 gap-2 overflow-x-auto pb-2">
+          <div className="grid min-w-[1120px] grid-cols-7 gap-2 overflow-x-auto pb-2">
             {columns.map((column) => (
               <Column
                 key={column.state}
@@ -2538,7 +2582,7 @@ function Column({
   returnChips,
   onSelect,
 }: {
-  state: SleepJourneyState;
+  state: BoardColumnState;
   journeys: JourneyWithDetails[];
   unresolvedJourneyIds: Set<string>;
   trialEvals: Map<string, SleepTrialEvaluation[]>;
@@ -2551,7 +2595,12 @@ function Column({
   returnChips: Map<string, { step: string | null }>;
   onSelect: (j: JourneyWithDetails) => void;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: state });
+  // The derived "Ready for Pickup" column stays droppable-registered so
+  // the hook order never changes, but disabled: it is never a target.
+  const { setNodeRef, isOver } = useDroppable({
+    id: state,
+    disabled: state === "Ready for Pickup",
+  });
 
   return (
     <div
@@ -2569,6 +2618,11 @@ function Column({
         </span>
       </div>
       <div className="min-h-[80px] space-y-1.5">
+        {journeys.length === 0 && state === "Ready for Pickup" && (
+          <p className="px-1 py-2 text-xs text-slate-400">
+            Nothing waiting for pickup
+          </p>
+        )}
         {journeys.map((j) => (
           <JourneyCard
             key={j.id}
