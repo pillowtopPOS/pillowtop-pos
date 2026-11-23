@@ -75,6 +75,40 @@ type LineItem = {
   pickup_location_id: string | null;
 };
 
+// Money input that keeps the raw typed string while it has focus and only
+// reformats on blur. A fully controlled value={price.toFixed(2)} rewrites
+// the field on every keystroke, so digits land after the reformatted
+// decimals and get truncated ("932" read as "9.00"). The numeric value
+// still updates on every valid keystroke so totals stay live; an empty or
+// half-typed field counts as 0 without showing "0.00".
+function UnitPriceInput({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  const [text, setText] = useState<string | null>(null);
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={text ?? value.toFixed(2)}
+      onFocus={() => setText(value.toFixed(2))}
+      onChange={(e) => {
+        const s = e.target.value;
+        // Digits with at most one dot: "", "9", "9.", ".5" all stay legal.
+        if (!/^\d*\.?\d*$/.test(s)) return;
+        setText(s);
+        const n = parseFloat(s);
+        onChange(Number.isFinite(n) ? n : 0);
+      }}
+      onBlur={() => setText(null)}
+      className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+    />
+  );
+}
+
 export default function NewJourneyPage() {
   const router = useRouter();
   const [stores, setStores] = useState<Store[]>([]);
@@ -1533,15 +1567,11 @@ export default function NewJourneyPage() {
                           />
                         </div>
                         <div className="col-span-2">
-                          <input
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            value={item.unit_price.toFixed(2)}
-                            onChange={(e) =>
-                              updateLineItem(item.id, { unit_price: parseFloat(e.target.value) || 0 })
+                          <UnitPriceInput
+                            value={item.unit_price}
+                            onChange={(v) =>
+                              updateLineItem(item.id, { unit_price: v })
                             }
-                            className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                           />
                         </div>
                         <div className="col-span-2 flex items-center justify-end gap-1 text-slate-600">

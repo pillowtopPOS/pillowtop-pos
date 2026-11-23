@@ -674,12 +674,14 @@ export default function CommissionPage() {
                 <h2 className="mb-3 text-sm font-semibold text-slate-900">
                   Default commission rate
                 </h2>
-                {settings.default_plan_id === null && (
-                  <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                    No commission plan yet. Entries are recorded without an
-                    amount until you set one.
-                  </p>
-                )}
+                {settings.default_plan_id === null &&
+                  !savingPlan &&
+                  !settingsLoading && (
+                    <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                      No commission plan yet. Entries are recorded without
+                      an amount until you set one.
+                    </p>
+                  )}
                 {settings.default_plan_id !== null && (
                   <p className="mb-3 text-sm text-slate-600">
                     Current plan: {settings.default_plan_name} (

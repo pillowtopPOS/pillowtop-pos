@@ -241,7 +241,11 @@ export default function SleepTrialSection({
   const [corrections, setCorrections] = useState<TrialStartCorrection[]>([]);
   const [contacts, setContacts] = useState<CustomerContact[]>([]);
   const [pageError, setPageError] = useState<string | null>(null);
-  const [evals, setEvals] = useState<SleepTrialEvaluation[]>([]);
+  // null until the first evaluateSleepTrialItems call lands (empty list
+  // and swallowed RPC errors both count as a loaded result). The loading
+  // window after a handover shows a neutral line instead of the "no trial
+  // items" message that used to flash before the evaluation returned.
+  const [evals, setEvals] = useState<SleepTrialEvaluation[] | null>(null);
   const [expandedConcern, setExpandedConcern] = useState<string | null>(null);
   const [showConcernForm, setShowConcernForm] = useState(false);
   const [showEntryForm, setShowEntryForm] = useState<string | null>(null);
@@ -286,9 +290,12 @@ export default function SleepTrialSection({
 
   // The evaluator is the single source of trial truth (ST-4). Heroes render
   // most-urgent-first (spec 19.1); "+N more" expands the rest.
-  const orderedEvals = useMemo(() => sortEvaluationsByUrgency(evals), [evals]);
+  const orderedEvals = useMemo(
+    () => sortEvaluationsByUrgency(evals ?? []),
+    [evals]
+  );
 
-  const hasTrial = journey.delivered_at != null || evals.length > 0;
+  const hasTrial = journey.delivered_at != null || (evals?.length ?? 0) > 0;
 
   const load = async () => {
     const evalMap = await evaluateSleepTrialItems([journey.id]);
@@ -442,7 +449,7 @@ export default function SleepTrialSection({
   // "Customer wants an exchange" is enabled when any live item's exchange
   // action evaluates ELIGIBLE (an approved exception already folds into
   // ELIGIBLE inside the evaluator).
-  const canExchange = evals.some(
+  const canExchange = (evals ?? []).some(
     (e) => e.actions?.EXCHANGE?.status === "ELIGIBLE"
   );
   const isManager = canModerate;
@@ -609,6 +616,10 @@ export default function SleepTrialSection({
               </button>
             ))}
         </>
+      ) : evals === null ? (
+        <p className="text-sm text-slate-500">
+          Checking trial eligibility
+        </p>
       ) : (
         <p className="text-sm font-medium text-teal-800">
           Can&apos;t determine eligibility - no trial items on this order
@@ -940,7 +951,7 @@ export default function SleepTrialSection({
         <ExceptionDecisionModal
           exception={decideException}
           evaluation={
-            evals.find(
+            evals?.find(
               (e) => e.trial_item_id === decideException.trial_item_id
             ) ?? null
           }
