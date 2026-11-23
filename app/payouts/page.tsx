@@ -14,7 +14,13 @@
 // get_payout_period (177): the report can return zero rows for an empty
 // period, so nothing on this page derives dates itself.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
 import Modal from "@/components/Modal";
 import { createClient } from "@/lib/supabase/client";
@@ -142,7 +148,82 @@ function DollarInput({
   );
 }
 
+type BonusIndRow = {
+  employee_id: string;
+  name: string | null;
+  store_id: string | null;
+  sales_cents: number;
+  cost_cents: number;
+  margin_bp: number | null;
+  margin_ok: boolean;
+  needs_cost_count: number;
+  plan_name: string | null;
+  tier_threshold_cents: number | null;
+  bonus_cents: number | null;
+  next_threshold_cents: number | null;
+  to_next_cents: number | null;
+  status: string;
+};
+
+type BonusStoreRow = {
+  store_id: string;
+  store_name: string;
+  sales_cents: number;
+  cost_cents: number;
+  margin_bp: number | null;
+  margin_ok: boolean;
+  needs_cost_count: number;
+  plan_name: string | null;
+  tier_threshold_cents: number | null;
+  bonus_cents: number | null;
+  next_threshold_cents: number | null;
+  to_next_cents: number | null;
+  status: string;
+  manager_employee_ids: string[];
+};
+
+type BonusPreview = {
+  month_start: string;
+  month_end: string;
+  paid_on: string | null;
+  individual: BonusIndRow[];
+  store: BonusStoreRow[];
+};
+
 type DrawTarget = { employee_id: string; name: string; draw_cents: number };
+
+function bonusStatusLabel(status: string, needs: number): string {
+  switch (status) {
+    case "PAID_TIER":
+      return "Qualifies";
+    case "BELOW_MARGIN":
+      return "Below minimum margin";
+    case "BELOW_TIER":
+      return "Below first tier";
+    case "NEEDS_COST":
+      return `Needs cost (${needs} ${needs === 1 ? "sale" : "sales"})`;
+    case "NO_PLAN":
+      return "No plan for this month";
+    default:
+      return status;
+  }
+}
+
+function BonusChip({ status, needs }: { status: string; needs: number }) {
+  const cls =
+    status === "PAID_TIER"
+      ? "bg-green-100 text-green-800"
+      : status === "BELOW_MARGIN" || status === "NEEDS_COST"
+        ? "bg-amber-100 text-amber-800"
+        : "bg-slate-100 text-slate-600";
+  return (
+    <span
+      className={`rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}
+    >
+      {bonusStatusLabel(status, needs)}
+    </span>
+  );
+}
 
 export default function PayoutsPage() {
   const router = useRouter();
@@ -180,6 +261,20 @@ export default function PayoutsPage() {
   const [confirmClose, setConfirmClose] = useState(false);
   const [confirmReopen, setConfirmReopen] = useState(false);
   const [employees, setEmployees] = useState<Employee[] | null>(null);
+
+  // ---------------- bonuses tab ----------------
+  const [tab, setTab] = useState<"pay" | "bonuses">("pay");
+  const [bonusMonth, setBonusMonth] = useState<string>(
+    () => `${localTodayISO().slice(0, 7)}-01`
+  );
+  const [bonus, setBonus] = useState<BonusPreview | null>(null);
+  const [bonusLoading, setBonusLoading] = useState(false);
+  const [bonusError, setBonusError] = useState<string | null>(null);
+  // null until list_bonus_plans answers; distinguishes "no plans at
+  // all" from a month where every row is just NO_PLAN.
+  const [hasBonusPlans, setHasBonusPlans] = useState<boolean | null>(
+    null
+  );
 
   // ---------------- permission gate ----------------
   // The sidebar hides this page without payouts_view and the same check
@@ -368,6 +463,125 @@ export default function PayoutsPage() {
     setEmployees(await fetchEmployees());
   }, [employees]);
 
+  // Bonus preview is a separate read: cleared to null up front so a
+  // month change never shows the previous month's numbers while the
+  // new preview is in flight.
+  const loadBonus = useCallback(async (month: string) => {
+    setBonusLoading(true);
+    setBonusError(null);
+    setBonus(null);
+    const supabase = createClient();
+    const [previewRes, plansRes] = await Promise.all([
+      supabase.rpc("get_bonus_preview", { p_month: month }),
+      supabase.rpc("list_bonus_plans"),
+    ]);
+    if (previewRes.error) {
+      setBonusError(previewRes.error.message);
+    } else {
+      setBonus(previewRes.data as BonusPreview | null);
+    }
+    if (!plansRes.error) {
+      setHasBonusPlans(
+        ((plansRes.data as { plan_id: string }[] | null) ?? [])
+          .length > 0
+      );
+    }
+    setBonusLoading(false);
+  }, []);
+
+  const bonusTabRequested = useRef(false);
+  useEffect(() => {
+    if (allowed !== true || tab !== "bonuses" || bonusTabRequested.current)
+      return;
+    bonusTabRequested.current = true;
+    ensureEmployees();
+    loadBonus(bonusMonth);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowed, tab]);
+
+  const shiftBonusMonth = (dir: -1 | 1) => {
+    const d = new Date(`${bonusMonth}T00:00:00`);
+    d.setMonth(d.getMonth() + dir);
+    const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+      2,
+      "0"
+    )}-01`;
+    setBonusMonth(m);
+    loadBonus(m);
+  };
+
+  const bonusMonthLabel = new Date(
+    `${bonusMonth}T00:00:00`
+  ).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+
+  const isCurrentBonusMonth =
+    bonusMonth === `${localTodayISO().slice(0, 7)}-01`;
+
+  const employeeName = useCallback(
+    (id: string) =>
+      (employees ?? []).find((e) => e.id === id)?.name ?? "Unknown",
+    [employees]
+  );
+
+  const exportBonusCsv = () => {
+    if (!bonus) return;
+    const header = [
+      "Type",
+      "Name",
+      "Delivered sales",
+      "Cost",
+      "Margin",
+      "Status",
+      "Bonus",
+      "To next tier",
+      "Managers",
+    ];
+    const money2 = (c: number | null) =>
+      c == null ? "" : (c / 100).toFixed(2);
+    const pct2 = (bp: number | null) =>
+      bp == null ? "" : (bp / 100).toFixed(2);
+    const ind = bonus.individual.map((r) =>
+      [
+        "Individual",
+        r.name ?? "Unknown",
+        money2(r.sales_cents),
+        money2(r.cost_cents),
+        pct2(r.margin_bp),
+        bonusStatusLabel(r.status, r.needs_cost_count),
+        r.status === "PAID_TIER" ? money2(r.bonus_cents) : "",
+        r.to_next_cents == null ? "" : money2(r.to_next_cents),
+        "",
+      ]
+        .map(csvEscape)
+        .join(",")
+    );
+    const sto = bonus.store.map((r) =>
+      [
+        "Store manager",
+        r.store_name,
+        money2(r.sales_cents),
+        money2(r.cost_cents),
+        pct2(r.margin_bp),
+        bonusStatusLabel(r.status, r.needs_cost_count),
+        r.status === "PAID_TIER" ? money2(r.bonus_cents) : "",
+        r.to_next_cents == null ? "" : money2(r.to_next_cents),
+        r.manager_employee_ids.map(employeeName).join("; "),
+      ]
+        .map(csvEscape)
+        .join(",")
+    );
+    const blob = new Blob(
+      [[header.map(csvEscape).join(","), ...ind, ...sto].join("\n")],
+      { type: "text/csv" }
+    );
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `bonuses_${bonusMonth.slice(0, 7)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // ---------------- render ----------------
 
   if (allowed === null) {
@@ -390,8 +604,39 @@ export default function PayoutsPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6" data-testid="payouts-page">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold text-slate-900">Payouts</h1>
+        <div
+          className="flex rounded-md border border-slate-300 text-sm"
+          role="group"
+          aria-label="Payouts sections"
+        >
+          {(
+            [
+              ["pay", "Pay"],
+              ["bonuses", "Bonuses"],
+            ] as ["pay" | "bonuses", string][]
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setTab(value)}
+              aria-pressed={tab === value}
+              className={`px-3 py-1.5 ${
+                tab === value
+                  ? "bg-slate-900 font-medium text-white"
+                  : "text-slate-600 hover:bg-slate-50"
+              } ${value === "pay" ? "rounded-l-md" : "rounded-r-md border-l border-slate-300"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {tab === "pay" ? (
+        <>
+      <div className="mb-4 flex flex-wrap items-center justify-end gap-3">
         <div className="flex items-center gap-2 text-sm">
           <button
             onClick={() => navigate(-1)}
@@ -694,6 +939,205 @@ export default function PayoutsPage() {
             }}
           />
         </Modal>
+      )}
+
+        </>
+      ) : (
+        <>
+          <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+            <button
+              onClick={() => shiftBonusMonth(-1)}
+              className="rounded-md border border-slate-300 px-2.5 py-1 text-slate-700 hover:bg-slate-50"
+            >
+              Prev
+            </button>
+            <span className="min-w-36 text-center font-medium text-slate-700">
+              {bonusMonthLabel}
+            </span>
+            <button
+              onClick={() => shiftBonusMonth(1)}
+              disabled={isCurrentBonusMonth}
+              className="rounded-md border border-slate-300 px-2.5 py-1 text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+            >
+              Next
+            </button>
+            <button
+              onClick={exportBonusCsv}
+              disabled={
+                !bonus ||
+                (bonus.individual.length === 0 &&
+                  bonus.store.length === 0)
+              }
+              className="rounded-md border border-slate-300 px-2.5 py-1 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              Export CSV
+            </button>
+          </div>
+
+          <div className="mb-3 text-sm">
+            {bonus?.paid_on && (
+              <p className="text-slate-500">
+                Paid on {payDateFmt(bonus.paid_on)}
+              </p>
+            )}
+            <p className="mt-1 text-xs text-slate-400">
+              Preview only. Bonuses are not included in pay yet.
+            </p>
+          </div>
+
+          {bonusLoading ? (
+            <div className="rounded-lg border border-slate-200 bg-white">
+              <p className="px-4 py-10 text-center text-sm text-slate-500">
+                Loading…
+              </p>
+            </div>
+          ) : bonusError ? (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-6 text-center">
+              <p className="text-sm text-red-700">{bonusError}</p>
+              <button
+                onClick={() => loadBonus(bonusMonth)}
+                className="mt-3 rounded-md border border-red-300 px-3 py-1.5 text-sm text-red-700 hover:bg-red-100"
+              >
+                Try again
+              </button>
+            </div>
+          ) : bonus === null ? (
+            <div className="rounded-lg border border-slate-200 bg-white">
+              <p className="px-4 py-10 text-center text-sm text-slate-500">
+                Loading…
+              </p>
+            </div>
+          ) : hasBonusPlans === false ? (
+            <p className="rounded-lg border border-slate-200 bg-white px-6 py-10 text-center text-sm text-slate-600">
+              No bonus plans yet. Add one in Commission, Settings.
+            </p>
+          ) : bonus.individual.length === 0 &&
+            bonus.store.length === 0 ? (
+            <p className="rounded-lg border border-slate-200 bg-white px-6 py-10 text-center text-sm text-slate-600">
+              No sales delivered this month.
+            </p>
+          ) : (
+            <>
+              <div className="mb-4 overflow-hidden rounded-lg border border-slate-200 bg-white">
+                <h2 className="border-b border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700">
+                  Individual
+                </h2>
+                <table className="min-w-full divide-y divide-slate-200 text-sm">
+                  <thead className="bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-4 py-2">Employee</th>
+                      <th className="px-4 py-2 text-right">
+                        Delivered sales
+                      </th>
+                      <th className="px-4 py-2 text-right">Cost</th>
+                      <th className="px-4 py-2 text-right">Margin</th>
+                      <th className="px-4 py-2">Status</th>
+                      <th className="px-4 py-2 text-right">Bonus</th>
+                      <th className="px-4 py-2 text-right">
+                        To next tier
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {bonus.individual.map((r) => (
+                      <tr key={r.employee_id}>
+                        <td className="px-4 py-2 font-medium text-slate-800">
+                          {r.name ?? "Unknown"}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums text-slate-800">
+                          {money(r.sales_cents)}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums text-slate-600">
+                          {money(r.cost_cents)}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums text-slate-600">
+                          {r.margin_bp == null
+                            ? "-"
+                            : `${(r.margin_bp / 100).toFixed(2)}%`}
+                        </td>
+                        <td className="px-4 py-2">
+                          <BonusChip
+                            status={r.status}
+                            needs={r.needs_cost_count}
+                          />
+                        </td>
+                        <td className="px-4 py-2 text-right font-medium tabular-nums text-slate-800">
+                          {r.status === "PAID_TIER"
+                            ? money(r.bonus_cents)
+                            : "-"}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums text-slate-600">
+                          {r.to_next_cents == null
+                            ? "-"
+                            : money(r.to_next_cents)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                <h2 className="border-b border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700">
+                  Store managers
+                </h2>
+                <table className="min-w-full divide-y divide-slate-200 text-sm">
+                  <thead className="bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-4 py-2">Store</th>
+                      <th className="px-4 py-2 text-right">
+                        Delivered sales
+                      </th>
+                      <th className="px-4 py-2 text-right">Cost</th>
+                      <th className="px-4 py-2 text-right">Margin</th>
+                      <th className="px-4 py-2">Status</th>
+                      <th className="px-4 py-2 text-right">Bonus</th>
+                      <th className="px-4 py-2">Manager(s)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {bonus.store.map((r) => (
+                      <tr key={r.store_id}>
+                        <td className="px-4 py-2 font-medium text-slate-800">
+                          {r.store_name}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums text-slate-800">
+                          {money(r.sales_cents)}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums text-slate-600">
+                          {money(r.cost_cents)}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums text-slate-600">
+                          {r.margin_bp == null
+                            ? "-"
+                            : `${(r.margin_bp / 100).toFixed(2)}%`}
+                        </td>
+                        <td className="px-4 py-2">
+                          <BonusChip
+                            status={r.status}
+                            needs={r.needs_cost_count}
+                          />
+                        </td>
+                        <td className="px-4 py-2 text-right font-medium tabular-nums text-slate-800">
+                          {r.status === "PAID_TIER"
+                            ? money(r.bonus_cents)
+                            : "-"}
+                        </td>
+                        <td className="px-4 py-2 text-slate-600">
+                          {r.manager_employee_ids.length === 0
+                            ? "-"
+                            : r.manager_employee_ids
+                                .map(employeeName)
+                                .join(", ")}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </>
       )}
 
       {confirmReopen && period && (

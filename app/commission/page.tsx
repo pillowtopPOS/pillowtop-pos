@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import Modal from "@/components/Modal";
 import { createClient } from "@/lib/supabase/client";
 import { hasPermission } from "@/lib/inventory/queries";
 import { localDateISO, localTodayISO } from "@/lib/dates";
@@ -60,6 +61,39 @@ type SpiffSettings = {
   google_reviews_enabled: boolean;
 };
 
+type BonusPlanTier = {
+  threshold_cents: number;
+  base_cents: number;
+  step_cents: number;
+  step_bonus_cents: number;
+};
+
+type BonusPlan = {
+  plan_id: string;
+  scope: "INDIVIDUAL" | "STORE";
+  name: string;
+  margin_floor_bp: number;
+  starts_on: string;
+  created_at: string;
+  tiers: BonusPlanTier[];
+};
+
+// Form rows hold dollars (typed strings via DollarInput); cents happen
+// only at save.
+type BonusTierForm = {
+  threshold: number | null;
+  base: number | null;
+  step: number | null;
+  stepBonus: number | null;
+};
+
+const EMPTY_TIER: BonusTierForm = {
+  threshold: null,
+  base: null,
+  step: null,
+  stepBonus: null,
+};
+
 const FLAG_META: Record<string, { label: string; className: string }> = {
   MISSING_COST: {
     label: "Missing cost",
@@ -81,6 +115,20 @@ function money(cents: number | null): string {
   return cents < 0 ? `-$${dollars}` : `$${dollars}`;
 }
 
+function moneyLong(cents: number): string {
+  return `$${(cents / 100).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function monthYear(iso: string): string {
+  return new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString(
+    undefined,
+    { month: "long", year: "numeric" }
+  );
+}
+
 function pct(bp: number | null): string {
   if (bp == null) return "";
   return `${parseFloat((bp / 100).toFixed(2))}%`;
@@ -97,6 +145,36 @@ function daysBetweenInclusive(from: string, to: string): number {
     new Date(`${to}T00:00:00`).getTime() -
     new Date(`${from}T00:00:00`).getTime();
   return Math.round(ms / 86400000) + 1;
+}
+
+// Same typed-string handling as the payouts page: the raw string stays
+// while the field has focus so digits are never reformatted away, and
+// blur snaps to 2 decimals. null means empty or half-typed.
+function DollarInput({
+  value,
+  onChange,
+}: {
+  value: number | null;
+  onChange: (v: number | null) => void;
+}) {
+  const [text, setText] = useState<string | null>(null);
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={text ?? (value == null ? "" : value.toFixed(2))}
+      onFocus={() => setText(value == null ? "" : value.toFixed(2))}
+      onChange={(e) => {
+        const s = e.target.value;
+        if (!/^\d*\.?\d*$/.test(s)) return;
+        setText(s);
+        const n = parseFloat(s);
+        onChange(Number.isFinite(n) ? n : null);
+      }}
+      onBlur={() => setText(null)}
+      className="w-28 rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+    />
+  );
 }
 
 function FlagPills({ flags }: { flags: string[] | null }) {
@@ -199,6 +277,33 @@ export default function CommissionPage() {
     ok?: string;
     err?: string;
   } | null>(null);
+
+  // ---------- sales bonus plans ----------
+  // Read-only until list_bonus_plans answers, same loaded-before-
+  // editable rule as the switch panels.
+  const [bonusPlans, setBonusPlans] = useState<BonusPlan[] | null>(null);
+  const [bonusPlansLoaded, setBonusPlansLoaded] = useState(false);
+  const [bonusPlansLoadFailed, setBonusPlansLoadFailed] = useState(false);
+  const [bonusOpen, setBonusOpen] = useState(false);
+  const [bonusDirty, setBonusDirty] = useState(false);
+  const [bonusScope, setBonusScope] = useState<"INDIVIDUAL" | "STORE">(
+    "INDIVIDUAL"
+  );
+  const [bonusName, setBonusName] = useState("");
+  const [bonusMarginPct, setBonusMarginPct] = useState("55");
+  const [bonusStartsMonth, setBonusStartsMonth] = useState("");
+  const [bonusTiers, setBonusTiers] = useState<BonusTierForm[]>([
+    { ...EMPTY_TIER },
+  ]);
+  const [savingBonus, setSavingBonus] = useState(false);
+  const [bonusMessage, setBonusMessage] = useState<{
+    ok?: string;
+    err?: string;
+  } | null>(null);
+  const [bonusFormError, setBonusFormError] = useState<string | null>(
+    null
+  );
+  const bonusCloseRef = useRef<(() => void) | null>(null);
 
   // Permission gate: the sidebar only shows this page to commission.manage,
   // and the same check runs here so a direct URL visit gets the same answer
@@ -324,10 +429,11 @@ export default function CommissionPage() {
     }
     // The two switch panels load alongside the main settings so a save
     // anywhere refreshes all of them from the database.
-    const [visRes, spiffRes, lagRes] = await Promise.all([
+    const [visRes, spiffRes, lagRes, bonusRes] = await Promise.all([
       supabase.rpc("get_earnings_visibility"),
       supabase.rpc("get_spiff_settings"),
       supabase.rpc("get_pay_schedule"),
+      supabase.rpc("list_bonus_plans"),
     ]);
     if (visRes.error) {
       setVisLoadFailed(true);
@@ -377,6 +483,13 @@ export default function CommissionPage() {
       } else {
         setPaySchedLoadFailed(true);
       }
+    }
+    if (bonusRes.error) {
+      setBonusPlansLoadFailed(true);
+    } else {
+      setBonusPlans((bonusRes.data as BonusPlan[] | null) ?? []);
+      setBonusPlansLoadFailed(false);
+      setBonusPlansLoaded(true);
     }
     setSettingsLoading(false);
   }, []);
@@ -510,6 +623,112 @@ export default function CommissionPage() {
       setLagMessage({ err: error.message });
     } else {
       setLagMessage({ ok: "Saved." });
+      loadSettings();
+    }
+  };
+
+  // ---------------- bonus plan modal ----------------
+
+  const openBonusModal = () => {
+    setBonusScope("INDIVIDUAL");
+    setBonusName("");
+    setBonusMarginPct("55");
+    setBonusStartsMonth("");
+    setBonusTiers([{ ...EMPTY_TIER }]);
+    setBonusFormError(null);
+    setBonusDirty(false);
+    setBonusOpen(true);
+  };
+
+  const fillBonusExample = (scope: "INDIVIDUAL" | "STORE") => {
+    setBonusScope(scope);
+    setBonusMarginPct("55");
+    setBonusTiers(
+      scope === "INDIVIDUAL"
+        ? [
+            { threshold: 35000, base: 250, step: 5000, stepBonus: 50 },
+            { threshold: 50000, base: 500, step: 5000, stepBonus: 50 },
+          ]
+        : [
+            { threshold: 90000, base: 250, step: 5000, stepBonus: 50 },
+            { threshold: 100000, base: 500, step: 5000, stepBonus: 50 },
+            { threshold: 120000, base: 1000, step: 5000, stepBonus: 50 },
+          ]
+    );
+    setBonusDirty(true);
+  };
+
+  const saveBonusPlan = async () => {
+    setBonusFormError(null);
+    if (bonusName.trim() === "") {
+      setBonusFormError("Enter a plan name.");
+      return;
+    }
+    const margin = Number(bonusMarginPct);
+    if (
+      bonusMarginPct.trim() === "" ||
+      !Number.isFinite(margin) ||
+      margin < 0 ||
+      margin > 100
+    ) {
+      setBonusFormError("Enter a minimum margin between 0 and 100.");
+      return;
+    }
+    if (!bonusStartsMonth) {
+      setBonusFormError("Choose the month the plan starts.");
+      return;
+    }
+    const tiers: BonusPlanTier[] = [];
+    for (const t of bonusTiers) {
+      if (
+        t.threshold == null ||
+        t.base == null ||
+        t.step == null ||
+        t.stepBonus == null
+      ) {
+        setBonusFormError(
+          "Fill in every field on every tier, or remove the row."
+        );
+        return;
+      }
+      const threshold = Math.round(t.threshold * 100);
+      const step = Math.round(t.step * 100);
+      if (threshold <= 0) {
+        setBonusFormError("Sales at least must be above zero.");
+        return;
+      }
+      if (step <= 0) {
+        setBonusFormError("Each extra sales step must be above zero.");
+        return;
+      }
+      tiers.push({
+        threshold_cents: threshold,
+        base_cents: Math.round(t.base * 100),
+        step_cents: step,
+        step_bonus_cents: Math.round(t.stepBonus * 100),
+      });
+    }
+    for (let i = 1; i < tiers.length; i++) {
+      if (tiers[i].threshold_cents <= tiers[i - 1].threshold_cents) {
+        setBonusFormError("Sales at least must go up row by row.");
+        return;
+      }
+    }
+    setSavingBonus(true);
+    const supabase = createClient();
+    const { error } = await supabase.rpc("save_bonus_plan", {
+      p_scope: bonusScope,
+      p_name: bonusName.trim(),
+      p_margin_floor_bp: Math.round(margin * 100),
+      p_starts_on: `${bonusStartsMonth}-01`,
+      p_tiers: tiers,
+    });
+    setSavingBonus(false);
+    if (error) {
+      setBonusFormError(error.message);
+    } else {
+      setBonusOpen(false);
+      setBonusMessage({ ok: "Plan added." });
       loadSettings();
     }
   };
@@ -1239,9 +1458,278 @@ export default function CommissionPage() {
                   </p>
                 )}
               </section>
+
+              <section className="rounded-lg border border-slate-200 bg-white p-4">
+                <h2 className="mb-1 text-sm font-semibold text-slate-900">
+                  Sales bonus plans
+                </h2>
+                <p className="mb-3 text-xs text-slate-500">
+                  Plans are never edited. Adding a new version applies
+                  from the month you choose. Earlier months keep the
+                  rules they had.
+                </p>
+                {!bonusPlansLoaded ? (
+                  <p className="text-sm text-slate-500">Loading…</p>
+                ) : (
+                  <>
+                    {(["INDIVIDUAL", "STORE"] as const).map((scope) => {
+                      const group = (bonusPlans ?? []).filter(
+                        (p) => p.scope === scope
+                      );
+                      if (group.length === 0) return null;
+                      return (
+                        <div key={scope} className="mb-3">
+                          <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            {scope === "INDIVIDUAL"
+                              ? "Individual"
+                              : "Store manager"}
+                          </h3>
+                          <ul className="space-y-2">
+                            {group.map((p) => (
+                              <li
+                                key={p.plan_id}
+                                className="rounded-md border border-slate-200 px-3 py-2 text-sm"
+                              >
+                                <div className="flex flex-wrap items-baseline gap-x-3">
+                                  <span className="font-medium text-slate-800">
+                                    {p.name}
+                                  </span>
+                                  <span className="text-xs text-slate-500">
+                                    Starts {monthYear(p.starts_on)}
+                                  </span>
+                                  <span className="text-xs text-slate-500">
+                                    Margin at least{" "}
+                                    {pct(p.margin_floor_bp)}
+                                  </span>
+                                </div>
+                                <ul className="mt-1 space-y-0.5 text-xs text-slate-600">
+                                  {p.tiers.map((t) => (
+                                    <li key={t.threshold_cents}>
+                                      From {moneyLong(t.threshold_cents)}:{" "}
+                                      {moneyLong(t.base_cents)}, then +
+                                      {moneyLong(t.step_bonus_cents)} for
+                                      each extra {moneyLong(t.step_cents)}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={openBonusModal}
+                      className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700"
+                    >
+                      Add plan version
+                    </button>
+                  </>
+                )}
+                {bonusPlansLoadFailed && (
+                  <p className="mt-3 text-sm text-red-700">
+                    Could not load. Reload to try again.
+                  </p>
+                )}
+                {bonusMessage?.ok && (
+                  <p className="mt-3 text-sm text-green-700">
+                    {bonusMessage.ok}
+                  </p>
+                )}
+                {bonusMessage?.err && (
+                  <p className="mt-3 text-sm text-red-700">
+                    {bonusMessage.err}
+                  </p>
+                )}
+              </section>
             </>
           )}
         </div>
+      )}
+
+      {bonusOpen && (
+        <Modal
+          onClose={() => setBonusOpen(false)}
+          dirty={bonusDirty}
+          saving={savingBonus}
+          closeRequestRef={bonusCloseRef}
+        >
+          <div className="w-full max-w-2xl rounded-lg bg-white p-4 shadow-xl">
+            <h2 className="mb-3 text-base font-semibold text-slate-900">
+              Add plan version
+            </h2>
+            <div className="mb-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => fillBonusExample("INDIVIDUAL")}
+                className="rounded-md border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
+              >
+                Fill with example: individual
+              </button>
+              <button
+                type="button"
+                onClick={() => fillBonusExample("STORE")}
+                className="rounded-md border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
+              >
+                Fill with example: store manager
+              </button>
+            </div>
+            <div className="mb-3 flex flex-wrap items-end gap-3">
+              <label className="text-sm text-slate-600">
+                <span className="mb-1 block text-xs text-slate-500">
+                  Plan type
+                </span>
+                <select
+                  value={bonusScope}
+                  onChange={(e) => {
+                    setBonusScope(
+                      e.target.value as "INDIVIDUAL" | "STORE"
+                    );
+                    setBonusDirty(true);
+                  }}
+                  className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                >
+                  <option value="INDIVIDUAL">Individual</option>
+                  <option value="STORE">Store manager</option>
+                </select>
+              </label>
+              <label className="text-sm text-slate-600">
+                <span className="mb-1 block text-xs text-slate-500">
+                  Name
+                </span>
+                <input
+                  type="text"
+                  value={bonusName}
+                  onChange={(e) => {
+                    setBonusName(e.target.value);
+                    setBonusDirty(true);
+                  }}
+                  className="w-48 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                />
+              </label>
+              <label className="text-sm text-slate-600">
+                <span className="mb-1 block text-xs text-slate-500">
+                  Minimum margin for the month (%)
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={0.01}
+                  value={bonusMarginPct}
+                  onChange={(e) => {
+                    setBonusMarginPct(e.target.value);
+                    setBonusDirty(true);
+                  }}
+                  className="w-24 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                />
+              </label>
+              <label className="text-sm text-slate-600">
+                <span className="mb-1 block text-xs text-slate-500">
+                  Starts with the month of
+                </span>
+                <input
+                  type="month"
+                  value={bonusStartsMonth}
+                  onChange={(e) => {
+                    setBonusStartsMonth(e.target.value);
+                    setBonusDirty(true);
+                  }}
+                  className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                />
+              </label>
+            </div>
+            <table className="mb-2 min-w-full divide-y divide-slate-200 text-sm">
+              <thead>
+                <tr className="text-left text-xs font-medium uppercase tracking-wide text-slate-500">
+                  <th className="py-1 pr-2">Sales at least ($)</th>
+                  <th className="py-1 pr-2">Bonus at that level ($)</th>
+                  <th className="py-1 pr-2">Extra sales step ($)</th>
+                  <th className="py-1 pr-2">
+                    Extra bonus per step ($)
+                  </th>
+                  <th className="py-1" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {bonusTiers.map((t, i) => (
+                  <tr key={i}>
+                    {(
+                      [
+                        "threshold",
+                        "base",
+                        "step",
+                        "stepBonus",
+                      ] as const
+                    ).map((key) => (
+                      <td key={key} className="py-1 pr-2">
+                        <DollarInput
+                          value={t[key]}
+                          onChange={(v) => {
+                            setBonusTiers((rows) =>
+                              rows.map((r, j) =>
+                                j === i ? { ...r, [key]: v } : r
+                              )
+                            );
+                            setBonusDirty(true);
+                          }}
+                        />
+                      </td>
+                    ))}
+                    <td className="py-1">
+                      <button
+                        type="button"
+                        disabled={bonusTiers.length <= 1}
+                        onClick={() => {
+                          setBonusTiers((rows) =>
+                            rows.filter((_, j) => j !== i)
+                          );
+                          setBonusDirty(true);
+                        }}
+                        className="text-xs text-slate-500 hover:text-red-600 disabled:opacity-30"
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <button
+              type="button"
+              onClick={() => {
+                setBonusTiers((rows) => [...rows, { ...EMPTY_TIER }]);
+                setBonusDirty(true);
+              }}
+              className="mb-3 text-sm font-medium text-brand-600 hover:underline"
+            >
+              Add tier
+            </button>
+            {bonusFormError && (
+              <p className="mb-3 text-sm text-red-700">
+                {bonusFormError}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => bonusCloseRef.current?.()}
+                className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveBonusPlan}
+                disabled={savingBonus}
+                className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+              >
+                {savingBonus ? "Saving…" : "Save plan"}
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );
