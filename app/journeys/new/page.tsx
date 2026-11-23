@@ -65,15 +65,41 @@ function paymentOutcomeForMethod(method: string): PaymentOutcome {
   return "SUCCEEDED";
 }
 
+type LineDiscount = {
+  mode: "dollar" | "percent";
+  value: number;
+  base: "sale" | "regular";
+};
+
 type LineItem = {
   id: string;
   product_id: string | null;
   item_name: string;
   quantity: number;
   unit_price: number;
+  // Regular and sale catalog prices kept client-side so the discount
+  // control has a base to compute from. Only unit_price is submitted;
+  // the database snapshots the regular price itself.
+  regular_price: number | null;
+  sale_price: number | null;
+  // Null means the price was typed directly ("Custom price").
+  discount: LineDiscount | null;
   fulfillment_type_override: "delivery" | "pickup" | null;
   pickup_location_id: string | null;
 };
+
+function priceForDiscount(item: LineItem, discount: LineDiscount): number {
+  const base =
+    discount.base === "sale" && item.sale_price != null
+      ? item.sale_price
+      : item.regular_price;
+  if (base == null) return item.unit_price;
+  const raw =
+    discount.mode === "percent"
+      ? base * (1 - discount.value / 100)
+      : base - discount.value;
+  return Math.max(0, Math.round(raw * 100) / 100);
+}
 
 // Money input that keeps the raw typed string while it has focus and only
 // reformats on blur. A fully controlled value={price.toFixed(2)} rewrites
@@ -518,10 +544,29 @@ export default function NewJourneyPage() {
       item_name: selection.productSummary,
       quantity: 1,
       unit_price: unitPrice,
+      regular_price: selection.price,
+      sale_price: selection.salePrice,
+      discount:
+        selection.price != null
+          ? {
+              mode: "dollar",
+              value: 0,
+              base: selection.salePrice != null ? "sale" : "regular",
+            }
+          : null,
       fulfillment_type_override: null,
       pickup_location_id: null,
     };
     setLineItems((prev) => [...prev, item]);
+  }
+
+  function setLineDiscount(item: LineItem, discount: LineDiscount | null) {
+    updateLineItem(item.id, {
+      discount,
+      unit_price: discount
+        ? priceForDiscount(item, discount)
+        : item.unit_price,
+    });
   }
 
   function updateLineItem(id: string, updates: Partial<LineItem>) {
@@ -1499,6 +1544,14 @@ export default function NewJourneyPage() {
                     >
                       <div className="mb-1 min-w-0 text-slate-900">
                         <div className="truncate">{item.item_name}</div>
+                        {item.regular_price != null && (
+                          <div className="text-xs text-slate-500">
+                            Regular ${item.regular_price.toFixed(2)}
+                            {item.sale_price != null && (
+                              <> · Sale ${item.sale_price.toFixed(2)}</>
+                            )}
+                          </div>
+                        )}
                       </div>
                       <div className="grid grid-cols-12 items-stretch gap-2">
                         <div className="col-span-4 min-w-0">
@@ -1570,7 +1623,12 @@ export default function NewJourneyPage() {
                           <UnitPriceInput
                             value={item.unit_price}
                             onChange={(v) =>
-                              updateLineItem(item.id, { unit_price: v })
+                              // A hand-typed price clears the discount
+                              // control and reads "Custom price".
+                              updateLineItem(item.id, {
+                                unit_price: v,
+                                discount: null,
+                              })
                             }
                           />
                         </div>
@@ -1585,6 +1643,99 @@ export default function NewJourneyPage() {
                           </button>
                         </div>
                       </div>
+                      {item.regular_price != null && (
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                          {item.discount ? (
+                            <>
+                              {item.sale_price != null && (
+                                <label className="flex items-center gap-1">
+                                  Off:
+                                  <select
+                                    value={item.discount.base}
+                                    onChange={(e) =>
+                                      setLineDiscount(item, {
+                                        ...item.discount!,
+                                        base: e.target.value as
+                                          | "sale"
+                                          | "regular",
+                                      })
+                                    }
+                                    className="rounded border border-slate-300 bg-white px-1 py-0.5"
+                                  >
+                                    <option value="sale">Sale price</option>
+                                    <option value="regular">Regular price</option>
+                                  </select>
+                                </label>
+                              )}
+                              <span>Discount</span>
+                              <span className="w-20">
+                                <UnitPriceInput
+                                  value={item.discount.value}
+                                  onChange={(v) =>
+                                    setLineDiscount(item, {
+                                      ...item.discount!,
+                                      value: v,
+                                    })
+                                  }
+                                />
+                              </span>
+                              <span className="inline-flex overflow-hidden rounded border border-slate-300">
+                                {(["dollar", "percent"] as const).map((m) => (
+                                  <button
+                                    key={m}
+                                    onClick={() =>
+                                      setLineDiscount(item, {
+                                        ...item.discount!,
+                                        mode: m,
+                                      })
+                                    }
+                                    className={`px-2 py-0.5 ${
+                                      item.discount!.mode === m
+                                        ? "bg-brand-600 text-white"
+                                        : "bg-white text-slate-600 hover:bg-slate-100"
+                                    }`}
+                                  >
+                                    {m === "dollar" ? "$" : "%"}
+                                  </button>
+                                ))}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-slate-500">Custom price</span>
+                              <button
+                                onClick={() =>
+                                  setLineDiscount(item, {
+                                    mode: "dollar",
+                                    value: 0,
+                                    base:
+                                      item.sale_price != null
+                                        ? "sale"
+                                        : "regular",
+                                  })
+                                }
+                                className="text-brand-600 hover:underline"
+                              >
+                                Set discount
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      )}
+                      {item.regular_price != null &&
+                        item.regular_price > 0 &&
+                        item.unit_price < item.regular_price && (
+                          <div className="mt-1 text-xs text-slate-500">
+                            Discount from regular price: $
+                            {(item.regular_price - item.unit_price).toFixed(2)} (
+                            {(
+                              ((item.regular_price - item.unit_price) /
+                                item.regular_price) *
+                              100
+                            ).toFixed(1)}
+                            %)
+                          </div>
+                        )}
                       {pickupIsWarehouse(item) && (
                         <div className="mt-2 text-xs text-amber-700">
                           Pickup is set to the warehouse. The customer will collect it there, no transfer will be made.

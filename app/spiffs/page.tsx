@@ -53,6 +53,8 @@ type RuleRow = {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  max_discount_type: "DOLLAR" | "PERCENT" | null;
+  max_discount_value: number | null;
 };
 
 type CategoryOption = { id: string; name: string };
@@ -175,6 +177,10 @@ export default function SpiffsPage() {
   const [productQuery, setProductQuery] = useState("");
   const [productHits, setProductHits] = useState<Product[]>([]);
   const [ruleAmount, setRuleAmount] = useState<number | null>(null);
+  const [ruleMaxType, setRuleMaxType] = useState<"DOLLAR" | "PERCENT">(
+    "DOLLAR"
+  );
+  const [ruleMaxValue, setRuleMaxValue] = useState<number | null>(null);
   const [ruleStart, setRuleStart] = useState("");
   const [ruleEnd, setRuleEnd] = useState("");
   const [ruleActive, setRuleActive] = useState(true);
@@ -379,6 +385,8 @@ export default function SpiffsPage() {
       setProductQuery("");
       setProductHits([]);
       setRuleAmount(editing.amount_cents / 100);
+      setRuleMaxType(editing.max_discount_type ?? "DOLLAR");
+      setRuleMaxValue(editing.max_discount_value);
       setRuleStart(editing.starts_on ?? "");
       setRuleEnd(editing.ends_on ?? "");
       setRuleActive(editing.is_active);
@@ -390,6 +398,8 @@ export default function SpiffsPage() {
       setProductQuery("");
       setProductHits([]);
       setRuleAmount(null);
+      setRuleMaxType("DOLLAR");
+      setRuleMaxValue(null);
       setRuleStart("");
       setRuleEnd("");
       setRuleActive(true);
@@ -411,6 +421,8 @@ export default function SpiffsPage() {
       p_product_id: ruleScope === "PRODUCT" ? ruleProduct?.id ?? null : null,
       p_scope_value: ruleScope === "PRODUCT" ? null : ruleScopeValue.trim(),
       p_amount_cents: Math.round((ruleAmount ?? 0) * 100),
+      p_max_discount_type: ruleMaxValue == null ? null : ruleMaxType,
+      p_max_discount_value: ruleMaxValue,
       p_starts_on: ruleStart || null,
       p_ends_on: ruleEnd || null,
       p_is_active: ruleActive,
@@ -746,6 +758,7 @@ export default function SpiffsPage() {
                   <th className="px-3 py-2">Name</th>
                   <th className="px-3 py-2">Applies to</th>
                   <th className="px-3 py-2 text-right">Amount per unit</th>
+                  <th className="px-3 py-2">Max discount</th>
                   <th className="px-3 py-2">Dates</th>
                   <th className="px-3 py-2">Status</th>
                   <th className="px-3 py-2" />
@@ -755,7 +768,7 @@ export default function SpiffsPage() {
                 {rulesLoading && (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={7}
                       className="px-3 py-3 text-center text-sm text-slate-500"
                     >
                       Loading…
@@ -765,7 +778,7 @@ export default function SpiffsPage() {
                 {!rulesLoading && (rules ?? []).length === 0 && (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={7}
                       className="px-3 py-6 text-center text-sm text-slate-500"
                     >
                       No spiff rules yet.
@@ -782,6 +795,13 @@ export default function SpiffsPage() {
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-right text-slate-700">
                       {money(r.amount_cents)}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-slate-700">
+                      {r.max_discount_value == null
+                        ? "No limit"
+                        : r.max_discount_type === "PERCENT"
+                          ? `${r.max_discount_value}% off regular`
+                          : `$${r.max_discount_value.toFixed(2)} per unit`}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-slate-700">
                       {ruleDates(r)}
@@ -1001,6 +1021,33 @@ export default function SpiffsPage() {
                 <div className="mt-1">
                   <DollarInput value={ruleAmount} onChange={setRuleAmount} />
                 </div>
+              </label>
+              <label className="block text-xs font-medium text-slate-600">
+                Maximum discount (optional)
+                <div className="mt-1 flex gap-2">
+                  <div className="flex-1">
+                    <DollarInput
+                      value={ruleMaxValue}
+                      onChange={setRuleMaxValue}
+                    />
+                  </div>
+                  <select
+                    value={ruleMaxType}
+                    onChange={(e) =>
+                      setRuleMaxType(
+                        e.target.value as "DOLLAR" | "PERCENT"
+                      )
+                    }
+                    className={inputCls}
+                  >
+                    <option value="DOLLAR">$ per unit</option>
+                    <option value="PERCENT">% off regular price</option>
+                  </select>
+                </div>
+                <span className="mt-1 block font-normal text-slate-500">
+                  If the discount on a sale is above this limit, no spiff is
+                  paid on that item for this rule. Leave blank for no limit.
+                </span>
               </label>
               <div className="grid grid-cols-2 gap-3">
                 <label className="block text-xs font-medium text-slate-600">
