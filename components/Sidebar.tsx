@@ -15,6 +15,7 @@ import {
   Store as StoreIcon,
   Settings as SettingsIcon,
   BadgeDollarSign,
+  Wallet,
   LogOut,
 } from "lucide-react";
 import CelebrationBanner from "@/components/CelebrationBanner";
@@ -59,6 +60,7 @@ export default function Sidebar({
   const myWorkBadge = workCount + overdue.count;
   const [activeStoreId, setActiveStoreId] = useState<string | null>(null);
   const [canSeeCommission, setCanSeeCommission] = useState(false);
+  const [canSeePayouts, setCanSeePayouts] = useState(false);
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -104,10 +106,12 @@ export default function Sidebar({
         fetchCurrentEmployee(),
         fetchStores(),
         hasPermission("commission.manage"),
-      ]).then(([e, s, canCommission]) => {
+        hasPermission("commission.payouts_view"),
+      ]).then(([e, s, canCommission, canPayouts]) => {
         setEmployee(e);
         setStores(s);
         setCanSeeCommission(canCommission === true);
+        setCanSeePayouts(canPayouts === true);
         setLoading(false);
       });
     });
@@ -231,6 +235,15 @@ export default function Sidebar({
                     href: "/commission",
                     label: "Commission",
                     icon: BadgeDollarSign,
+                  },
+                ]
+              : []),
+            ...(canSeePayouts
+              ? [
+                  {
+                    href: "/payouts",
+                    label: "Payouts",
+                    icon: Wallet,
                   },
                 ]
               : []),
