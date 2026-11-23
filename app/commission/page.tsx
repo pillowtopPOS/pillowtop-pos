@@ -9,7 +9,7 @@
 // get_commission_settings and writes through save_commission_plan /
 // set_commission_settings. Everything else here is display only.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -117,6 +117,9 @@ export default function CommissionPage() {
     null
   );
   const [periodDays, setPeriodDays] = useState(14);
+  // True once the user picks a From/To date by hand: saving new pay-period
+  // settings must not yank their chosen range out from under them.
+  const datesEditedRef = useRef(false);
   const [employeeId, setEmployeeId] = useState<string | null>(null);
   const [employeeOptions, setEmployeeOptions] = useState<
     { id: string; name: string }[]
@@ -160,36 +163,32 @@ export default function CommissionPage() {
   }, [router]);
 
   // Default range: the current pay period; last 14 days when the period
-  // RPC fails or returns nothing (fresh company, no anchor data).
+  // RPC fails or returns nothing (fresh company, no anchor data). Also
+  // rerun after a pay-period settings save so the ledger lands on the
+  // new period, unless the user picked dates by hand this visit.
+  const resolveCurrentPeriod = useCallback(async () => {
+    const supabase = createClient();
+    try {
+      const { data, error } = await supabase.rpc("commission_pay_period", {
+        p_date: localTodayISO(),
+      });
+      const row = Array.isArray(data) ? data[0] : null;
+      if (error || !row?.period_start || !row?.period_end) {
+        throw error ?? new Error("no pay period");
+      }
+      setPeriodDays(daysBetweenInclusive(row.period_start, row.period_end));
+      setRange({ from: row.period_start, to: row.period_end });
+    } catch {
+      const to = localTodayISO();
+      setPeriodDays(14);
+      setRange({ from: addDaysISO(to, -13), to });
+    }
+  }, []);
+
   useEffect(() => {
     if (allowed !== true || range !== null) return;
-    let cancelled = false;
-    (async () => {
-      const supabase = createClient();
-      try {
-        const { data, error } = await supabase.rpc("commission_pay_period", {
-          p_date: localTodayISO(),
-        });
-        const row = Array.isArray(data) ? data[0] : null;
-        if (error || !row?.period_start || !row?.period_end) {
-          throw error ?? new Error("no pay period");
-        }
-        if (cancelled) return;
-        setPeriodDays(
-          daysBetweenInclusive(row.period_start, row.period_end)
-        );
-        setRange({ from: row.period_start, to: row.period_end });
-      } catch {
-        if (cancelled) return;
-        const to = localTodayISO();
-        setPeriodDays(14);
-        setRange({ from: addDaysISO(to, -13), to });
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [allowed, range]);
+    resolveCurrentPeriod();
+  }, [allowed, range, resolveCurrentPeriod]);
 
   const loadEntries = useCallback(
     async (from: string, to: string, empId: string | null) => {
@@ -334,6 +333,9 @@ export default function CommissionPage() {
     } else {
       setPeriodMessage({ ok: "Pay period settings saved." });
       loadSettings();
+      if (!datesEditedRef.current) {
+        resolveCurrentPeriod();
+      }
     }
   };
 
@@ -438,13 +440,14 @@ export default function CommissionPage() {
               <input
                 type="date"
                 value={range?.from ?? ""}
-                onChange={(e) =>
-                  e.target.value &&
+                onChange={(e) => {
+                  if (!e.target.value) return;
+                  datesEditedRef.current = true;
                   setRange((r) => ({
                     from: e.target.value,
                     to: r?.to ?? e.target.value,
-                  }))
-                }
+                  }));
+                }}
                 className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
               />
             </label>
@@ -453,13 +456,14 @@ export default function CommissionPage() {
               <input
                 type="date"
                 value={range?.to ?? ""}
-                onChange={(e) =>
-                  e.target.value &&
+                onChange={(e) => {
+                  if (!e.target.value) return;
+                  datesEditedRef.current = true;
                   setRange((r) => ({
                     from: r?.from ?? e.target.value,
                     to: e.target.value,
-                  }))
-                }
+                  }));
+                }}
                 className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
               />
             </label>

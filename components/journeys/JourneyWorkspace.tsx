@@ -794,6 +794,16 @@ export default function JourneyWorkspace({
     [fulfillmentSummary]
   );
 
+  // A completed order can have been handed over either way: the closing
+  // fulfillment record carries the real method. fulfillment_type is the
+  // fallback while the summary is still loading (and for legacy orders
+  // with no fulfillment records).
+  const completedVerb =
+    (fulfillmentSummary?.fulfillments.find((f) => f.is_closing)?.method ??
+      journey.fulfillment_type) === "pickup"
+      ? "Picked up"
+      : "Delivered";
+
   const completionGoesTo = useMemo(
     () =>
       completionDestinationFor({
@@ -3125,7 +3135,7 @@ export default function JourneyWorkspace({
             <RailCard title="Fulfillment">
               <p className="text-sm font-semibold text-slate-900">
                 {journey.delivered_at
-                  ? `Delivered ${shortDate(journey.delivered_at)}`
+                  ? `${completedVerb} ${shortDate(journey.delivered_at)}`
                   : scheduledDate
                   ? `Scheduled ${shortDate(scheduledDate)}`
                   : journey.fulfillment_type === "pickup" &&
