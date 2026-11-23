@@ -16,7 +16,6 @@ import {
   Store as StoreIcon,
   Settings as SettingsIcon,
   Briefcase,
-  Coins,
   LogOut,
 } from "lucide-react";
 import CelebrationBanner from "@/components/CelebrationBanner";
@@ -36,10 +35,18 @@ import { hasPermission } from "@/lib/inventory/queries";
 
 const HIDDEN_PATHS = ["/", "/login", "/logout", "/store-select"];
 
+// Routes inside the Back Office group; also drives the auto-open on
+// navigation and the active-child highlight on the group button.
+const BACK_OFFICE_ROUTES = [
+  "/my-earnings",
+  "/commission",
+  "/payouts",
+  "/spiffs",
+];
+
 const NAV = [
   { href: "/board", label: "Board", icon: LayoutGrid },
   { href: "/my-work", label: "My Work", icon: Calendar },
-  { href: "/my-earnings", label: "My Earnings", icon: Coins },
   { href: "/inventory", label: "Inventory", icon: Package },
   { href: "/opportunities", label: "Opportunities", icon: Lightbulb },
   { href: "/delivery", label: "Delivery", icon: Truck },
@@ -196,6 +203,19 @@ export default function Sidebar({
     };
   }, [hide, pathname]);
 
+  // One open/closed state, owned by the user: landing on or navigating
+  // into a Back Office route opens the group once; after that the
+  // toggle always wins and is never re-forced by the active page.
+  useEffect(() => {
+    if (
+      BACK_OFFICE_ROUTES.some(
+        (p) => pathname === p || pathname.startsWith(`${p}/`)
+      )
+    ) {
+      setBackOfficeOpen(true);
+    }
+  }, [pathname]);
+
   if (hide) {
     return <>{children}</>;
   }
@@ -219,10 +239,13 @@ export default function Sidebar({
     }`;
 
   // The Back Office group holds every commission-facing route behind one
-  // collapsed-by-default disclosure. Children are gated individually so
-  // nobody sees a money word their permission does not cover; Reviews is
-  // the spiffs page under its rep-facing name for log-only users.
+  // collapsed-by-default disclosure. My Earnings comes first and is
+  // visible to every signed-in employee, so the group always shows.
+  // The rest are gated individually so nobody sees a money word their
+  // permission does not cover; Reviews is the spiffs page under its
+  // rep-facing name for log-only users.
   const backOfficeChildren = [
+    { href: "/my-earnings", label: "My Earnings" },
     ...(canSeeCommission ? [{ href: "/commission", label: "Commission" }] : []),
     ...(canSeePayouts ? [{ href: "/payouts", label: "Payouts" }] : []),
     // The Spiffs children additionally wait on the company switches so a
@@ -238,10 +261,10 @@ export default function Sidebar({
       ? [{ href: "/spiffs", label: "Reviews" }]
       : []),
   ];
-  const backOfficeActive = ["/commission", "/payouts", "/spiffs"].some(
+  const backOfficeActive = BACK_OFFICE_ROUTES.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`)
   );
-  const backOfficeExpanded = backOfficeOpen || backOfficeActive;
+  const backOfficeExpanded = backOfficeOpen;
 
   // Full navigation (not router.push) so every in-memory cache — employee,
   // store list, mounted page state — is dropped with the session.

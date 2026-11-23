@@ -218,6 +218,11 @@ export default function MyEarningsPage() {
         <>
           {/* ---------- period bar ---------- */}
           <div className="mb-4 flex flex-wrap items-center gap-3">
+            <h2 className="text-sm font-semibold text-slate-900">
+              Commission for pay period:{" "}
+              {shortDate(earnings.period_start)} -{" "}
+              {shortDate(earnings.period_end)}
+            </h2>
             <button
               onClick={() =>
                 loadEarnings(addDaysISO(earnings.period_start, -1))
@@ -226,15 +231,6 @@ export default function MyEarningsPage() {
             >
               Prev
             </button>
-            <span className="text-sm font-medium text-slate-900">
-              {shortDate(earnings.period_start)} -{" "}
-              {shortDate(earnings.period_end)}
-            </span>
-            {earnings.pay_date && (
-              <span className="text-xs text-slate-500">
-                Pay date: {payDateFmt(earnings.pay_date)}
-              </span>
-            )}
             <button
               onClick={() =>
                 loadEarnings(addDaysISO(earnings.period_end, 1))
@@ -253,6 +249,11 @@ export default function MyEarningsPage() {
             >
               {earnings.is_closed ? "Closed" : "Open"}
             </span>
+            {earnings.pay_date && (
+              <span className="text-xs text-slate-500">
+                Pay date: {payDateFmt(earnings.pay_date)}
+              </span>
+            )}
           </div>
 
           {/* ---------- lines ---------- */}
