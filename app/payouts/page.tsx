@@ -1,14 +1,18 @@
 "use client";
 
-// C3c: payout report for commission.payouts_view (bookkeeper-grade read)
-// with manage actions behind a separate commission.payouts_manage check.
-// The page checks has_permission first and never touches a payout RPC
-// without it; the functions enforce the same gate server-side.
+// C3c/C3d: payout report for commission.payouts_view (bookkeeper-grade
+// read) with manage actions behind a separate commission.payouts_manage
+// check. The page checks has_permission first and never touches a payout
+// RPC without it; the functions enforce the same gate server-side.
 //
-// Reads: get_payout_report, list_commission_closes, list_employee_draws.
-// Writes: set_employee_draw, close_commission_period,
-// reopen_commission_period. No commission ledger RPC is ever called and
-// no cost field exists on this page.
+// Reads: get_payout_period, get_payout_report, list_commission_closes,
+// list_employee_draws. Writes: set_employee_draw,
+// close_commission_period, reopen_commission_period. No commission
+// ledger RPC is ever called and no cost field exists on this page.
+//
+// Period boundaries, closed state and closed_at come from
+// get_payout_period (177): the report can return zero rows for an empty
+// period, so nothing on this page derives dates itself.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -124,17 +128,16 @@ export default function PayoutsPage() {
   const [allowed, setAllowed] = useState<boolean | null>(null);
   const [canManage, setCanManage] = useState<boolean | null>(null);
 
-  // probeDate: the p_date last sent. period: boundaries returned by the
-  // last non-empty report; they are the only dates ever displayed, never
-  // derived. On an empty report the period is unknown, so navigation
-  // steps the probe by the last known period length until a non-empty
-  // response re-anchors it exactly.
-  const [probeDate, setProbeDate] = useState<string>(localTodayISO());
+  // pDate: the p_date last sent (kept only so saves can refetch the same
+  // period). period: boundaries and closed state from get_payout_period,
+  // present even when the report below it is empty.
+  const [pDate, setPDate] = useState<string>(localTodayISO());
   const [period, setPeriod] = useState<{
     start: string;
     end: string;
+    isClosed: boolean;
+    closedAt: string | null;
   } | null>(null);
-  const [periodDays, setPeriodDays] = useState(14);
 
   const [rows, setRows] = useState<PayoutRow[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -173,38 +176,41 @@ export default function PayoutsPage() {
 
   // ---------------- loads ----------------
 
-  const loadReport = useCallback(async (pDate: string) => {
-    setProbeDate(pDate);
+  // get_payout_period and get_payout_report always go together: the
+  // period call is what carries boundaries for an empty period.
+  const loadPeriod = useCallback(async (d: string) => {
+    setPDate(d);
     setLoading(true);
     setError(null);
     const supabase = createClient();
-    const { data, error: rpcError } = await supabase.rpc(
-      "get_payout_report",
-      { p_date: pDate }
-    );
+    const [periodRes, reportRes] = await Promise.all([
+      supabase.rpc("get_payout_period", { p_date: d }),
+      supabase.rpc("get_payout_report", { p_date: d }),
+    ]);
+    const rpcError = periodRes.error ?? reportRes.error;
     if (rpcError) {
       setRows(null);
       setError(rpcError.message);
     } else {
-      const list = (data as PayoutRow[]) ?? [];
-      setRows(list);
-      if (list.length > 0) {
-        const p = {
-          start: list[0].period_start,
-          end: list[0].period_end,
-        };
-        setPeriod(p);
-        setPeriodDays(
-          Math.max(
-            1,
-            Math.round(
-              (new Date(`${p.end}T00:00:00`).getTime() -
-                new Date(`${p.start}T00:00:00`).getTime()) /
-                86400000
-            ) + 1
-          )
-        );
-      }
+      const prow = (Array.isArray(periodRes.data)
+        ? periodRes.data[0]
+        : null) as {
+        period_start: string;
+        period_end: string;
+        is_closed: boolean;
+        closed_at: string | null;
+      } | null;
+      setPeriod(
+        prow?.period_start && prow?.period_end
+          ? {
+              start: prow.period_start,
+              end: prow.period_end,
+              isClosed: prow.is_closed === true,
+              closedAt: prow.closed_at,
+            }
+          : null
+      );
+      setRows((reportRes.data as PayoutRow[]) ?? []);
     }
     setLoading(false);
   }, []);
@@ -222,27 +228,25 @@ export default function PayoutsPage() {
 
   useEffect(() => {
     if (allowed === true) {
-      loadReport(localTodayISO());
+      loadPeriod(localTodayISO());
       loadCloses();
     }
-  }, [allowed, loadReport, loadCloses]);
+  }, [allowed, loadPeriod, loadCloses]);
 
   const refetchAll = useCallback(() => {
-    loadReport(probeDate);
+    loadPeriod(pDate);
     loadCloses();
-  }, [loadReport, loadCloses, probeDate]);
+  }, [loadPeriod, loadCloses, pDate]);
 
   const navigate = (dir: -1 | 1) => {
-    const target = period
-      ? addDaysISO(dir < 0 ? period.start : period.end, dir)
-      : addDaysISO(probeDate, dir * periodDays);
-    loadReport(target);
+    if (!period) return;
+    loadPeriod(addDaysISO(dir < 0 ? period.start : period.end, dir));
   };
 
   // ---------------- derived ----------------
 
-  const isClosed = rows?.[0]?.is_closed === true;
-  const closedAt = rows?.[0]?.closed_at ?? null;
+  const isClosed = period?.isClosed === true;
+  const closedAt = period?.closedAt ?? null;
   const lateEntries = useMemo(
     () => (rows ?? []).reduce((s, r) => s + r.late_entry_count, 0),
     [rows]
@@ -342,7 +346,7 @@ export default function PayoutsPage() {
           <span className="min-w-40 text-center font-medium text-slate-700">
             {period
               ? `${shortDate(period.start)} - ${shortDate(period.end)}`
-              : `Period containing ${shortDate(probeDate)}`}
+              : `Period containing ${shortDate(pDate)}`}
           </span>
           <button
             onClick={() => navigate(1)}
@@ -384,7 +388,7 @@ export default function PayoutsPage() {
         </p>
       )}
 
-      {rows && rows.length > 0 && (
+      {period && (
         <div className="mb-3 text-sm">
           <p className={isClosed ? "text-slate-700" : "text-slate-500"}>
             {isClosed
@@ -533,7 +537,7 @@ export default function PayoutsPage() {
                 {closes.map((c) => (
                   <tr
                     key={c.close_id}
-                    onClick={() => loadReport(c.period_start)}
+                    onClick={() => loadPeriod(c.period_start)}
                     className="cursor-pointer hover:bg-slate-50"
                   >
                     <td className="px-4 py-2 text-slate-800">

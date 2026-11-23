@@ -2959,7 +2959,7 @@ export default function JourneyWorkspace({
                         ? exchangeAction?.refund_recorded_at
                           ? "A refund was already recorded. Void it first if the order needs to change."
                           : "This exchange is closed - its order lines can't be changed."
-                        : "Delivered - use Start Exchange to change items."}
+                        : `${completedVerb} - use Start Exchange to change items.`}
                     </span>
                   )}
                 </span>

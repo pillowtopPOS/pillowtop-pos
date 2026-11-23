@@ -1884,7 +1884,11 @@ export default function NewJourneyPage() {
 
             {paid > 0 && paid >= total && (
               <div className="rounded-md bg-green-50 p-3 text-sm text-green-700">
-                Paid in full. The journey will land in Sold.
+                Paid in full. The journey will land in{" "}
+                {fulfillmentType === "pickup"
+                  ? "Ready for Pickup"
+                  : "Ready to Schedule"}
+                .
               </div>
             )}
 
