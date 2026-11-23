@@ -14,6 +14,7 @@ import {
   ChevronRight,
   Store as StoreIcon,
   Settings as SettingsIcon,
+  BadgeDollarSign,
   LogOut,
 } from "lucide-react";
 import CelebrationBanner from "@/components/CelebrationBanner";
@@ -29,6 +30,7 @@ import {
 } from "@/lib/journeys/queries";
 import { useConfirmationCallCount } from "@/lib/delivery/useConfirmationCallCount";
 import { useOverdueFulfillments } from "@/lib/pickup/useOverdueFulfillments";
+import { hasPermission } from "@/lib/inventory/queries";
 
 const HIDDEN_PATHS = ["/", "/login", "/logout", "/store-select"];
 
@@ -56,6 +58,7 @@ export default function Sidebar({
   const overdue = useOverdueFulfillments();
   const myWorkBadge = workCount + overdue.count;
   const [activeStoreId, setActiveStoreId] = useState<string | null>(null);
+  const [canSeeCommission, setCanSeeCommission] = useState(false);
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -97,9 +100,14 @@ export default function Sidebar({
       cronInterval = setInterval(tick, 60000);
 
       setActiveStoreId(session.user.user_metadata?.active_store_id ?? null);
-      Promise.all([fetchCurrentEmployee(), fetchStores()]).then(([e, s]) => {
+      Promise.all([
+        fetchCurrentEmployee(),
+        fetchStores(),
+        hasPermission("commission.manage"),
+      ]).then(([e, s, canCommission]) => {
         setEmployee(e);
         setStores(s);
+        setCanSeeCommission(canCommission === true);
         setLoading(false);
       });
     });
@@ -215,7 +223,21 @@ export default function Sidebar({
         </div>
 
         <nav className="flex-1 space-y-1 overflow-y-auto p-2">
-          {[...NAV, ...(isAdmin ? [{ href: "/settings", label: "Settings", icon: SettingsIcon }] : [])].map((item) => {
+          {[
+            ...NAV,
+            ...(canSeeCommission
+              ? [
+                  {
+                    href: "/commission",
+                    label: "Commission",
+                    icon: BadgeDollarSign,
+                  },
+                ]
+              : []),
+            ...(isAdmin
+              ? [{ href: "/settings", label: "Settings", icon: SettingsIcon }]
+              : []),
+          ].map((item) => {
             const Icon = item.icon;
             const isActive =
               item.href === "/inventory"
