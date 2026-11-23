@@ -112,6 +112,7 @@ import {
   effectiveLineFulfillment,
   fulfillmentCountLabel,
   fulfillmentMethodChip,
+  isReadyForPickup,
   linePickupLocationId,
   anyRequirementPending,
   completionClosesWithChoice,
@@ -813,15 +814,16 @@ function BoardContent() {
   const readyForPickupIds = useMemo(() => {
     const ids = new Set<string>();
     for (const j of boardJourneys) {
-      if (j.cancelled_at) continue;
+      // The panel's header pill reads the same rule (isReadyForPickup in
+      // lib/journeys/completion.ts) so the two labels can never disagree.
       if (
-        j.current_state !== "Sold" &&
-        j.current_state !== "Ready to Schedule"
+        isReadyForPickup(
+          j,
+          journeyUnitTotals[j.id],
+          fulfillmentCounts[j.id] ?? 0
+        )
       )
-        continue;
-      const meta = journeyUnitTotals[j.id];
-      if (!meta?.hasPickupLine || meta.hasDeliveryLine) continue;
-      if ((fulfillmentCounts[j.id] ?? 0) < (meta.units ?? 0)) ids.add(j.id);
+        ids.add(j.id);
     }
     return ids;
   }, [boardJourneys, journeyUnitTotals, fulfillmentCounts]);

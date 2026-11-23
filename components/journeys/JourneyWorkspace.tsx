@@ -98,6 +98,7 @@ import {
   completionDestination as completionDestinationFor,
   effectiveLineFulfillment,
   fulfillmentCountLabel,
+  isReadyForPickup,
   lineStatusText,
   type CompletionButtonDecision,
 } from "@/lib/journeys/completion";
@@ -285,6 +286,7 @@ function HeaderMenu({ items }: { items: MenuItem[] }) {
 
 function JourneyWorkspaceHeader({
   journey,
+  displayState,
   exchangeParent,
   exchangeAction,
   onOpenParent,
@@ -292,6 +294,7 @@ function JourneyWorkspaceHeader({
   menuItems,
 }: {
   journey: JourneyWithDetails;
+  displayState: string;
   exchangeParent: ExchangeParentLink | null;
   exchangeAction: ExchangeActionRead | null;
   onOpenParent: () => void;
@@ -308,7 +311,7 @@ function JourneyWorkspaceHeader({
               : "Unknown customer"}
           </h2>
           <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
-            {journey.current_state}
+            {displayState}
           </span>
           {journey.journey_number && (
             <span className="inline-flex items-center gap-1 font-mono text-xs text-slate-500">
@@ -416,6 +419,7 @@ type AttentionItem = { text: string; tone: "red" | "amber" };
 
 function JourneyStateSummaryBar({
   journey,
+  displayState,
   nextFollowUp,
   stateDetail,
   transferNote,
@@ -427,6 +431,7 @@ function JourneyStateSummaryBar({
   onAction,
 }: {
   journey: JourneyWithDetails;
+  displayState: string;
   nextFollowUp: FollowUp | undefined;
   stateDetail: string | null;
   transferNote: { kind: "requested" | "scheduled" | "shipped"; text: string; requestId: string; destName?: string | null } | null;
@@ -462,7 +467,7 @@ function JourneyStateSummaryBar({
     <div className="mt-3 grid grid-cols-3 divide-x divide-slate-200 rounded-md border border-slate-200 bg-slate-50">
       <SummaryCell label="Current State">
         <span className="inline-flex items-center gap-1.5">
-          {journey.current_state}
+          {displayState}
           {journey.cancelled_at && (
             <span className="text-xs font-normal text-red-600">(cancelled)</span>
           )}
@@ -995,6 +1000,30 @@ export default function JourneyWorkspace({
   // background refetches (every events change re-runs the fetch) must not
   // flash "Loading items…" or hide the empty state again.
   const [lineItemsLoaded, setLineItemsLoaded] = useState(false);
+
+  // 4f: the panel shows the same derived state the board column uses.
+  // The board's unit map is rebuilt here from the panel's own line items
+  // with the same rule (line override, else the order's fulfillment
+  // type); a pure-pickup order still waiting on units reads "Ready for
+  // Pickup" in the header pill and the Current state cell. Stored data
+  // is untouched.
+  const displayState = useMemo(() => {
+    const unitMeta = {
+      units: 0,
+      hasPickupLine: false,
+      hasDeliveryLine: false,
+    };
+    for (const li of lineItems) {
+      unitMeta.units += li.quantity ?? 0;
+      const eff = li.fulfillment_type_override ?? journey.fulfillment_type;
+      if (eff === "pickup") unitMeta.hasPickupLine = true;
+      if (eff === "delivery") unitMeta.hasDeliveryLine = true;
+    }
+    return isReadyForPickup(journey, unitMeta, totalHanded)
+      ? "Ready for Pickup"
+      : journey.current_state;
+  }, [lineItems, journey, totalHanded]);
+
   // Completion permissions, fetched once per panel open (m149). The RPC
   // re-checks every rule on write; these only decide which control to
   // show so the panel never offers a button that cannot succeed.
@@ -2233,6 +2262,7 @@ export default function JourneyWorkspace({
         <div className="sticky top-0 z-10 border-b border-slate-200 bg-white px-6 pt-4 pb-3">
           <JourneyWorkspaceHeader
             journey={journey}
+            displayState={displayState}
             exchangeParent={exchangeParent}
             exchangeAction={exchangeAction}
             onOpenParent={() => {
@@ -2245,6 +2275,7 @@ export default function JourneyWorkspace({
           />
           <JourneyStateSummaryBar
             journey={journey}
+            displayState={displayState}
             nextFollowUp={nextFollowUp}
             stateDetail={stateDetail}
             transferNote={transferNote}

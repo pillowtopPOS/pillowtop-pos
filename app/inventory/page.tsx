@@ -383,38 +383,43 @@ export default function InventoryPage() {
         return;
       }
 
+      // Optional columns are only written when the file maps them and the
+      // cell holds a value. An unmapped column or a blank cell omits the
+      // key entirely, so the stored value is left alone; on a new product
+      // the column simply inserts null.
       const rec: Partial<Product & { company_id: string }> = {
         company_id: companyId,
         sku,
         item_name: itemName,
-        brand,
-        cost,
-        price,
-        sale_price: salePrice,
       };
-      // When the file maps a Commission Cost column, a number sets it and a
-      // blank cell omits the key so the stored value is left alone. With no
-      // mapped column the key never appears in any record.
-      if (commissionCost !== null) {
-        rec.commission_cost = commissionCost;
-      }
+      if (brand !== null) rec.brand = brand;
+      if (cost !== null) rec.cost = cost;
+      if (commissionCost !== null) rec.commission_cost = commissionCost;
+      if (price !== null) rec.price = price;
+      if (salePrice !== null) rec.sale_price = salePrice;
       records.push(rec);
     });
 
     const supabase = createClient();
     // PostgREST pads missing keys with null across a bulk upsert, so
-    // records that carry commission_cost go in their own call - a blank
-    // cell must never wipe a stored value. With no mapped column the
-    // first batch is every record, same single call as before.
-    const withCommission = records.filter((r) => "commission_cost" in r);
-    const withoutCommission = records.filter(
-      (r) => !("commission_cost" in r)
-    );
-    for (const batch of [withoutCommission, withCommission]) {
-      if (batch.length === 0) continue;
+    // records are grouped by their exact key set and each group is
+    // upserted on its own. A key that is absent - unmapped column or
+    // blank cell - can never wipe a stored value. A uniform file lands
+    // every record in one group, the same single call as before.
+    const groups = new Map<string, typeof records>();
+    for (const rec of records) {
+      const key = Object.keys(rec).sort().join("|");
+      const batch = groups.get(key);
+      if (batch) batch.push(rec);
+      else groups.set(key, [rec]);
+    }
+    for (const batch of Array.from(groups.values())) {
       const { error } = await supabase
         .from("products")
-        .upsert(batch, { onConflict: "company_id,sku", ignoreDuplicates: false });
+        .upsert(batch, {
+          onConflict: "company_id,sku",
+          ignoreDuplicates: false,
+        });
       if (error) {
         setPageError(error.message);
         return;
@@ -1013,6 +1018,9 @@ export default function InventoryPage() {
                     </tbody>
                   </table>
                 </div>
+                <p className="text-sm text-slate-600">
+                  Columns not in your file will not be changed.
+                </p>
                 <div className="flex gap-2">
                   <button
                     onClick={runImport}

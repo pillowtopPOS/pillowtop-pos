@@ -459,6 +459,32 @@ export function fulfillmentMethodChip(opts: {
   return opts.fulfillment === "pickup" ? "Pickup" : "Delivery";
 }
 
+// Derived "Ready for Pickup" state (4d/4f): a paid, in-stock pure-pickup
+// order that still has units waiting is labelled "Ready for Pickup" on
+// the board column and the order panel even though its stored state is
+// Sold or Ready to Schedule. Both surfaces call this one rule so they
+// can never disagree. "No delivery line" is literal - a mixed order
+// always keeps its stored-state label, even once every delivery unit is
+// out, because only total units are tracked. unitMeta is the same shape
+// fetchJourneysLineItemQuantities returns; the panel builds an identical
+// one from its line items.
+export function isReadyForPickup(
+  journey: { cancelled_at: string | null; current_state: string },
+  unitMeta:
+    | { units: number; hasPickupLine: boolean; hasDeliveryLine: boolean }
+    | undefined,
+  unitsOut: number
+): boolean {
+  if (journey.cancelled_at) return false;
+  if (
+    journey.current_state !== "Sold" &&
+    journey.current_state !== "Ready to Schedule"
+  )
+    return false;
+  if (!unitMeta?.hasPickupLine || unitMeta.hasDeliveryLine) return false;
+  return unitsOut < (unitMeta.units ?? 0);
+}
+
 export type CompletionControl =
   | { kind: "button"; fulfillment: "pickup" | "delivery" }
   | { kind: "note"; text: string };
