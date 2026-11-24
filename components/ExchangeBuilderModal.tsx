@@ -10,6 +10,8 @@ import {
   updateExchangeDraft,
   commitSleepTrialAction,
   getExchangeAction,
+  getExchangeCreditInfo,
+  setExchangeCreditEmployee,
   dollarsToCents,
   centsToDollars,
   type ExchangeQuote,
@@ -22,6 +24,7 @@ import {
 } from "@/lib/journeys/sleepTrial";
 import {
   fetchStores,
+  fetchEmployees,
   type JourneyWithDetails,
   type Employee,
   type Store,
@@ -96,6 +99,10 @@ export default function ExchangeBuilderModal({
   const [storeId, setStoreId] = useState<string>(journey.store_id);
   const [stores, setStores] = useState<Store[]>([]);
   const [catEligible, setCatEligible] = useState<Record<string, boolean> | null>(null);
+  const [creditEmployees, setCreditEmployees] = useState<Employee[]>([]);
+  const [creditEmpId, setCreditEmpId] = useState<string | null>(null);
+  const [creditLabel, setCreditLabel] = useState("Original seller");
+  const [creditLoaded, setCreditLoaded] = useState(false);
   const committedRef = useRef(false);
   // A draft created by this builder session is discarded on close; a draft
   // that existed before (someone else's or an older one of mine) is left
@@ -126,6 +133,7 @@ export default function ExchangeBuilderModal({
       if (active) setStoreId(active);
     });
     fetchStores().then(setStores);
+    fetchEmployees(true).then(setCreditEmployees).catch(() => {});
     supabase
       .from("product_categories")
       .select("id, sleep_trial_eligible")
@@ -178,6 +186,39 @@ export default function ExchangeBuilderModal({
     loadQuote(null).catch((e) => setQuoteError(friendlyError(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trialItemId]);
+
+  // The credit select feeds off the draft: once an action exists (fresh
+  // draft or resumed), load its current choice and the default label.
+  useEffect(() => {
+    if (!actionId) {
+      setCreditLoaded(false);
+      return;
+    }
+    let cancelled = false;
+    getExchangeCreditInfo(actionId)
+      .then((info) => {
+        if (cancelled) return;
+        setCreditEmpId(info.credit_employee_id);
+        setCreditLabel(info.default_credit_label || "Original seller");
+        setCreditLoaded(true);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [actionId]);
+
+  async function saveCreditEmployee(empId: string | null) {
+    const id = actionId;
+    if (!id) return;
+    setCreditEmpId(empId);
+    markDirty();
+    try {
+      await setExchangeCreditEmployee(id, empId);
+    } catch (e) {
+      setError(friendlyError(e));
+    }
+  }
 
   // Resume an existing draft: pull its stored values into the builder.
   async function resumeDraft() {
@@ -752,6 +793,28 @@ export default function ExchangeBuilderModal({
                     {" · "}
                     <span className="capitalize">{fulfillment}</span>
                   </p>
+                </div>
+                <div className="mt-2">
+                  <label className="block text-sm text-slate-700">
+                    <span className="mb-1 block text-slate-600">
+                      Credit for the replacement sale
+                    </span>
+                    <select
+                      value={creditEmpId ?? ""}
+                      disabled={!creditLoaded || busy}
+                      onChange={(e) =>
+                        void saveCreditEmployee(e.target.value || null)
+                      }
+                      className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm disabled:opacity-50"
+                    >
+                      <option value="">{creditLabel}</option>
+                      {creditEmployees.map((emp) => (
+                        <option key={emp.id} value={emp.id}>
+                          {emp.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 </div>
                 {(taxCents ?? 0) > 0 && (
                   <p className="text-xs text-slate-500">

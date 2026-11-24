@@ -33,6 +33,7 @@ type CommissionEntry = {
   rate_bp: number | null;
   credit_share_bp: number | null;
   flags: string[] | null;
+  type_label: string | null;
 };
 
 type CommissionSettings = {
@@ -106,6 +107,22 @@ const FLAG_META: Record<string, { label: string; className: string }> = {
   NEGATIVE_PROFIT: {
     label: "Below cost",
     className: "bg-red-100 text-red-700",
+  },
+  RETURN_CLAWBACK: {
+    label: "Return clawback",
+    className: "bg-red-100 text-red-700",
+  },
+  UNLINKED_REFUND: {
+    label: "Unlinked refund",
+    className: "bg-red-100 text-red-700",
+  },
+  CLAWBACK_VOIDED: {
+    label: "Clawback voided",
+    className: "bg-slate-100 text-slate-600",
+  },
+  LANDED_IN_LATER_PERIOD: {
+    label: "Landed in later period",
+    className: "bg-amber-100 text-amber-800",
   },
 };
 
@@ -258,6 +275,10 @@ export default function CommissionPage() {
     spiffs: false,
     reviews: false,
   });
+  const [spiffReturnMode, setSpiffReturnMode] = useState<string>("NEVER");
+  const [spiffReturnLoaded, setSpiffReturnLoaded] = useState(false);
+  const [spiffReturnLoadFailed, setSpiffReturnLoadFailed] =
+    useState(false);
   // Both panels stay read-only until their RPC answers so a default
   // unchecked box can never be saved over real settings by mistake.
   const [visLoaded, setVisLoaded] = useState(false);
@@ -429,12 +450,14 @@ export default function CommissionPage() {
     }
     // The two switch panels load alongside the main settings so a save
     // anywhere refreshes all of them from the database.
-    const [visRes, spiffRes, lagRes, bonusRes] = await Promise.all([
-      supabase.rpc("get_earnings_visibility"),
-      supabase.rpc("get_spiff_settings"),
-      supabase.rpc("get_pay_schedule"),
-      supabase.rpc("list_bonus_plans"),
-    ]);
+    const [visRes, spiffRes, lagRes, bonusRes, retRes] =
+      await Promise.all([
+        supabase.rpc("get_earnings_visibility"),
+        supabase.rpc("get_spiff_settings"),
+        supabase.rpc("get_pay_schedule"),
+        supabase.rpc("list_bonus_plans"),
+        supabase.rpc("get_spiff_return_mode"),
+      ]);
     if (visRes.error) {
       setVisLoadFailed(true);
     } else {
@@ -470,6 +493,15 @@ export default function CommissionPage() {
       } else {
         setSpiffsLoadFailed(true);
       }
+    }
+    if (retRes.error) {
+      setSpiffReturnLoadFailed(true);
+    } else if (typeof retRes.data === "string") {
+      setSpiffReturnMode(retRes.data);
+      setSpiffReturnLoadFailed(false);
+      setSpiffReturnLoaded(true);
+    } else {
+      setSpiffReturnLoadFailed(true);
     }
     if (lagRes.error) {
       setPaySchedLoadFailed(true);
@@ -590,9 +622,14 @@ export default function CommissionPage() {
       p_spiffs_enabled: spiffEdit.spiffs,
       p_google_reviews_enabled: spiffEdit.reviews,
     });
+    const retRes = error
+      ? { error }
+      : await supabase.rpc("set_spiff_return_mode", {
+          p_mode: spiffReturnMode,
+        });
     setSavingSpiffs(false);
-    if (error) {
-      setSpiffMessage({ err: error.message });
+    if (retRes.error) {
+      setSpiffMessage({ err: retRes.error.message });
     } else {
       setSpiffMessage({ ok: "Saved." });
       loadSettings();
@@ -1013,11 +1050,12 @@ export default function CommissionPage() {
                                     : "bg-slate-100 text-slate-600"
                               }`}
                             >
-                              {isSpiff
-                                ? "Spiff"
-                                : r.kind === "ADJUSTMENT"
-                                  ? "Adjustment"
-                                  : "Commission"}
+                              {r.type_label ??
+                                (isSpiff
+                                  ? "Spiff"
+                                  : r.kind === "ADJUSTMENT"
+                                    ? "Adjustment"
+                                    : "Commission")}
                             </span>
                           </td>
                           <td className="px-3 py-2 text-slate-700">
@@ -1381,18 +1419,42 @@ export default function CommissionPage() {
                     />
                     Google review spiffs
                   </label>
+                  <label
+                    className={`block text-sm ${
+                      spiffReturnLoaded ? "text-slate-700" : "text-slate-400"
+                    }`}
+                  >
+                    <span className="mb-1 block">
+                      When a whole bed is returned or exchanged
+                    </span>
+                    <select
+                      value={spiffReturnMode}
+                      disabled={!spiffReturnLoaded}
+                      onChange={(e) => setSpiffReturnMode(e.target.value)}
+                      className="rounded-md border border-slate-300 px-2 py-1.5 text-sm disabled:opacity-50"
+                    >
+                      <option value="NEVER">
+                        Do not reverse spiffs (default)
+                      </option>
+                      <option value="FULL_RETURN">
+                        Reverse the spiff
+                      </option>
+                    </select>
+                  </label>
                 </div>
                 <div className="mt-3">
                   <button
                     type="button"
                     onClick={saveSpiffSwitches}
-                    disabled={savingSpiffs || !spiffsLoaded}
+                    disabled={
+                      savingSpiffs || !spiffsLoaded || !spiffReturnLoaded
+                    }
                     className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
                   >
                     {savingSpiffs ? "Saving…" : "Save"}
                   </button>
                 </div>
-                {spiffsLoadFailed && (
+                {(spiffsLoadFailed || spiffReturnLoadFailed) && (
                   <p className="mt-3 text-sm text-red-700">
                     Could not load. Reload to try again.
                   </p>

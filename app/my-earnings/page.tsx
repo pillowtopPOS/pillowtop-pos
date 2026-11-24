@@ -35,6 +35,7 @@ type MyEarnings = {
   lines: EarningsLine[];
   total_cents: number;
   pending_count: number;
+  returns_cents?: number | null;
   draw_progress: {
     draw_cents: number;
     commission_cents: number;
@@ -354,6 +355,30 @@ export default function MyEarningsPage() {
               </tbody>
               {earnings.lines.length > 0 && (
                 <tfoot className="border-t border-slate-200 bg-slate-50">
+                  {earnings.returns_cents != null &&
+                    earnings.returns_cents !== 0 && (
+                      <tr>
+                        <td
+                          colSpan={3}
+                          className="px-4 py-2 text-sm text-slate-600"
+                        >
+                          Returns
+                        </td>
+                        {showRevenue && <td />}
+                        {showRate && <td />}
+                        {showProfit && <td />}
+                        {showCost && <td />}
+                        <td
+                          className={`px-4 py-2 text-right tabular-nums ${
+                            earnings.returns_cents < 0
+                              ? "text-red-600"
+                              : "text-slate-800"
+                          }`}
+                        >
+                          {money(earnings.returns_cents)}
+                        </td>
+                      </tr>
+                    )}
                   <tr>
                     <td
                       colSpan={3}

@@ -102,6 +102,42 @@ export async function discardExchangeDraft(actionId: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+export type ExchangeCreditInfo = {
+  /** The chosen credit employee, or null when the default (original
+   *  seller(s)) applies. */
+  credit_employee_id: string | null;
+  /** Ready-made label for the default option, e.g.
+   *  "Original seller (Sam)" or "Original sellers" for a split. */
+  default_credit_label: string;
+};
+
+/** Current credit choice and the default label for the exchange
+ *  builder's credit select (185). */
+export async function getExchangeCreditInfo(
+  actionId: string
+): Promise<ExchangeCreditInfo> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("get_exchange_credit_info", {
+    p_action_id: actionId,
+  });
+  if (error) throw new Error(error.message);
+  return data as ExchangeCreditInfo;
+}
+
+/** Sets the replacement-sale credit employee on a DRAFT exchange (185).
+ *  Null restores the default (the original journey's seller(s)). */
+export async function setExchangeCreditEmployee(
+  actionId: string,
+  employeeId: string | null
+): Promise<void> {
+  const supabase = createClient();
+  const { error } = await supabase.rpc("set_exchange_credit_employee", {
+    p_action_id: actionId,
+    p_employee_id: employeeId,
+  });
+  if (error) throw new Error(error.message);
+}
+
 // ---------------------------------------------------------------------------
 // EB-2 (migration 088): commit / edit / cancel / refund / complete.
 // ---------------------------------------------------------------------------
