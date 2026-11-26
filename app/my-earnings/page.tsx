@@ -26,6 +26,7 @@ type EarningsLine = {
   credit_share_bp?: number | null;
   profit_cents?: number | null;
   cost_cents?: number | null;
+  type_label?: string | null;
 };
 
 type MyEarnings = {
@@ -305,8 +306,18 @@ export default function MyEarningsPage() {
                       )}
                     </td>
                     <td className="px-4 py-2 text-slate-600">
-                      {l.item_name ??
-                        (l.kind === "ADJUSTMENT" ? "Adjustment" : "-")}
+                      {l.kind === "ADJUSTMENT" ? (
+                        <>
+                          <div>{l.type_label ?? "Adjustment"}</div>
+                          {l.item_name && (
+                            <div className="text-xs text-slate-500">
+                              {l.item_name}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        (l.item_name ?? "-")
+                      )}
                     </td>
                     {showRevenue && (
                       <td className="px-4 py-2 text-right tabular-nums text-slate-600">

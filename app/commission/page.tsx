@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Modal from "@/components/Modal";
+import MoveCreditModal from "@/components/MoveCreditModal";
 import { createClient } from "@/lib/supabase/client";
 import { hasPermission } from "@/lib/inventory/queries";
 import { localDateISO, localTodayISO } from "@/lib/dates";
@@ -109,20 +110,24 @@ const FLAG_META: Record<string, { label: string; className: string }> = {
     className: "bg-red-100 text-red-700",
   },
   RETURN_CLAWBACK: {
-    label: "Return clawback",
+    label: "Return adjustment",
     className: "bg-red-100 text-red-700",
   },
   UNLINKED_REFUND: {
-    label: "Unlinked refund",
+    label: "Refund",
     className: "bg-red-100 text-red-700",
   },
   CLAWBACK_VOIDED: {
-    label: "Clawback voided",
+    label: "Reversed",
     className: "bg-slate-100 text-slate-600",
   },
   LANDED_IN_LATER_PERIOD: {
     label: "Landed in later period",
     className: "bg-amber-100 text-amber-800",
+  },
+  CREDIT_MOVED: {
+    label: "Credit moved",
+    className: "bg-blue-100 text-blue-700",
   },
 };
 
@@ -219,6 +224,11 @@ function FlagPills({ flags }: { flags: string[] | null }) {
 export default function CommissionPage() {
   const router = useRouter();
   const [allowed, setAllowed] = useState<boolean | null>(null);
+  const [canMoveCredit, setCanMoveCredit] = useState(false);
+  const [moveTarget, setMoveTarget] = useState<{
+    journeyId: string;
+    orderNumber: string | null;
+  } | null>(null);
   const [tab, setTab] = useState<"ledger" | "settings">("ledger");
 
   // ---------------- ledger state ----------------
@@ -336,7 +346,12 @@ export default function CommissionPage() {
         router.push("/login");
         return;
       }
-      setAllowed(await hasPermission("commission.manage"));
+      const [manage, payoutsManage] = await Promise.all([
+        hasPermission("commission.manage"),
+        hasPermission("commission.payouts_manage"),
+      ]);
+      setAllowed(manage);
+      setCanMoveCredit(payoutsManage === true);
     });
   }, [router]);
 
@@ -1039,6 +1054,20 @@ export default function CommissionPage() {
                             >
                               {r.journey_number ?? "View order"}
                             </Link>
+                            {canMoveCredit && r.journey_id && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setMoveTarget({
+                                    journeyId: r.journey_id,
+                                    orderNumber: r.journey_number,
+                                  })
+                                }
+                                className="ml-2 text-xs font-medium text-brand-600 hover:underline"
+                              >
+                                Move credit
+                              </button>
+                            )}
                           </td>
                           <td className="whitespace-nowrap px-3 py-2">
                             <span
@@ -1608,6 +1637,17 @@ export default function CommissionPage() {
             </>
           )}
         </div>
+      )}
+
+      {moveTarget && (
+        <MoveCreditModal
+          journeyId={moveTarget.journeyId}
+          orderNumber={moveTarget.orderNumber}
+          onClose={() => setMoveTarget(null)}
+          onSaved={() => {
+            if (range) loadEntries(range.from, range.to, employeeId);
+          }}
+        />
       )}
 
       {bonusOpen && (
