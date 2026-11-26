@@ -199,24 +199,42 @@ function DollarInput({
   );
 }
 
-function FlagPills({ flags }: { flags: string[] | null }) {
+function FlagPills({
+  flags,
+  typeLabel,
+}: {
+  flags: string[] | null;
+  typeLabel?: string | null;
+}) {
   if (!flags || flags.length === 0) return null;
+  const seenLabels = new Set<string>();
+  const pills = flags.flatMap((f) => {
+    const meta = FLAG_META[f] ?? {
+      label: f,
+      className: "bg-slate-100 text-slate-600",
+    };
+    let label = meta.label;
+    if (f === "RETURN_CLAWBACK") {
+      label = typeLabel ?? meta.label;
+    } else if (f === "UNLINKED_REFUND") {
+      label = "Refund adjustment";
+    } else if (f === "CLAWBACK_VOIDED") {
+      label = "Adjustment reversed";
+    }
+    if (seenLabels.has(label)) return [];
+    seenLabels.add(label);
+    return [{ flag: f, label, className: meta.className }];
+  });
   return (
     <span className="flex flex-wrap gap-1">
-      {flags.map((f) => {
-        const meta = FLAG_META[f] ?? {
-          label: f,
-          className: "bg-slate-100 text-slate-600",
-        };
-        return (
-          <span
-            key={f}
-            className={`rounded-full px-2 py-0.5 text-xs font-medium ${meta.className}`}
-          >
-            {meta.label}
-          </span>
-        );
-      })}
+      {pills.map((pill) => (
+        <span
+          key={pill.flag}
+          className={`rounded-full px-2 py-0.5 text-xs font-medium ${pill.className}`}
+        >
+          {pill.label}
+        </span>
+      ))}
     </span>
   );
 }
@@ -1048,26 +1066,28 @@ export default function CommissionPage() {
                             {r.employee_name ?? "Unknown"}
                           </td>
                           <td className="whitespace-nowrap px-3 py-2">
-                            <Link
-                              href={`/board?journey=${r.journey_id}`}
-                              className="text-brand-600 hover:text-brand-700 hover:underline"
-                            >
-                              {r.journey_number ?? "View order"}
-                            </Link>
-                            {canMoveCredit && r.journey_id && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setMoveTarget({
-                                    journeyId: r.journey_id,
-                                    orderNumber: r.journey_number,
-                                  })
-                                }
-                                className="ml-2 text-xs font-medium text-brand-600 hover:underline"
+                            <div className="flex flex-col items-start gap-0.5">
+                              <Link
+                                href={`/board?journey=${r.journey_id}`}
+                                className="leading-tight text-brand-600 hover:text-brand-700 hover:underline"
                               >
-                                Move credit
-                              </button>
-                            )}
+                                {r.journey_number ?? "View order"}
+                              </Link>
+                              {canMoveCredit && r.journey_id && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setMoveTarget({
+                                      journeyId: r.journey_id,
+                                      orderNumber: r.journey_number,
+                                    })
+                                  }
+                                  className="text-xs font-medium leading-tight text-brand-600 hover:underline"
+                                >
+                                  Move credit
+                                </button>
+                              )}
+                            </div>
                           </td>
                           <td className="whitespace-nowrap px-3 py-2">
                             <span
@@ -1127,7 +1147,10 @@ export default function CommissionPage() {
                             )}
                           </td>
                           <td className="px-3 py-2">
-                            <FlagPills flags={isSpiff ? null : r.flags} />
+                            <FlagPills
+                              flags={isSpiff ? null : r.flags}
+                              typeLabel={r.type_label}
+                            />
                           </td>
                         </tr>
                       );

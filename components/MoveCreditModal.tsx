@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Modal from "@/components/Modal";
 import { createClient } from "@/lib/supabase/client";
 
@@ -46,6 +46,13 @@ type SplitShareRow = {
   percent: string;
 };
 
+function initialSplitRows(): SplitShareRow[] {
+  return [
+    { employeeId: "", percent: "50" },
+    { employeeId: "", percent: "50" },
+  ];
+}
+
 function pct(bp: number): string {
   return `${parseFloat((bp / 100).toFixed(2))}%`;
 }
@@ -79,19 +86,43 @@ export default function MoveCreditModal({
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<"one" | "split">("one");
   const [singleEmployeeId, setSingleEmployeeId] = useState("");
-  const [splitRows, setSplitRows] = useState<SplitShareRow[]>([
-    { employeeId: "", percent: "50" },
-    { employeeId: "", percent: "50" },
-  ]);
+  const [splitRows, setSplitRows] = useState<SplitShareRow[]>(
+    initialSplitRows
+  );
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [result, setResult] = useState<CreditMoveResult | null>(null);
   const [dirty, setDirty] = useState(false);
 
+  const clearInputs = useCallback(() => {
+    setMode("one");
+    setSingleEmployeeId("");
+    setSplitRows(initialSplitRows());
+    setReason("");
+    setSaving(false);
+    setSaveError(null);
+    setResult(null);
+    setDirty(false);
+  }, []);
+
+  const resetForm = useCallback(() => {
+    setInfo(null);
+    setEmployees([]);
+    setLoadError(null);
+    setLoading(true);
+    clearInputs();
+  }, [clearInputs]);
+
+  const closeAndReset = useCallback(() => {
+    setLoadError(null);
+    clearInputs();
+    onClose();
+  }, [clearInputs, onClose]);
+
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    resetForm();
     supabase
       .rpc("get_credit_move_info", { p_journey_id: journeyId })
       .then((infoRes) => {
@@ -108,7 +139,7 @@ export default function MoveCreditModal({
     return () => {
       active = false;
     };
-  }, [journeyId, supabase]);
+  }, [journeyId, resetForm, supabase]);
 
   const splitValues = splitRows.map((r) => {
     const n = Number(r.percent);
@@ -195,7 +226,7 @@ export default function MoveCreditModal({
 
   return (
     <Modal
-      onClose={onClose}
+      onClose={closeAndReset}
       dirty={dirty && result == null}
       saving={saving}
       closeRequestRef={closeRef}
@@ -207,7 +238,9 @@ export default function MoveCreditModal({
           </h2>
           <button
             type="button"
-            onClick={() => (result ? onClose() : closeRef.current?.())}
+            onClick={() =>
+              result ? closeAndReset() : closeRef.current?.()
+            }
             className="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100"
             aria-label="Close"
           >
@@ -401,11 +434,17 @@ export default function MoveCreditModal({
             )}
             {result && (
               <div className="mb-3 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
-                <p>Moved {result.moved_units} beds.</p>
+                <p>
+                  Moved {result.moved_units}{" "}
+                  {result.moved_units === 1 ? "bed" : "beds"}.
+                </p>
                 {result.skipped_units > 0 && (
                   <p>
-                    {result.skipped_units} beds could not be moved because
-                    their commission has not been calculated yet.
+                    {result.skipped_units}{" "}
+                    {result.skipped_units === 1 ? "bed" : "beds"} could not
+                    be moved because{" "}
+                    {result.skipped_units === 1 ? "its" : "their"} commission
+                    has not been calculated yet.
                   </p>
                 )}
               </div>
@@ -414,7 +453,9 @@ export default function MoveCreditModal({
             <div className="flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => (result ? onClose() : closeRef.current?.())}
+                onClick={() =>
+                  result ? closeAndReset() : closeRef.current?.()
+                }
                 className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
               >
                 {result ? "Done" : "Cancel"}
