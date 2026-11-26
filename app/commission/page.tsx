@@ -207,7 +207,11 @@ function FlagPills({
   typeLabel?: string | null;
 }) {
   if (!flags || flags.length === 0) return null;
+  const normalizeLabel = (value: string) => value.trim().toLowerCase();
   const seenLabels = new Set<string>();
+  if (typeLabel?.trim()) {
+    seenLabels.add(normalizeLabel(typeLabel));
+  }
   const pills = flags.flatMap((f) => {
     const meta = FLAG_META[f] ?? {
       label: f,
@@ -221,10 +225,12 @@ function FlagPills({
     } else if (f === "CLAWBACK_VOIDED") {
       label = "Adjustment reversed";
     }
-    if (seenLabels.has(label)) return [];
-    seenLabels.add(label);
+    const labelKey = normalizeLabel(label);
+    if (seenLabels.has(labelKey)) return [];
+    seenLabels.add(labelKey);
     return [{ flag: f, label, className: meta.className }];
   });
+  if (pills.length === 0) return null;
   return (
     <span className="flex flex-wrap gap-1">
       {pills.map((pill) => (
